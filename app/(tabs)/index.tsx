@@ -1,98 +1,462 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { SegmentedControl } from "@/components/SegmentedControl";
+import { SessionCard } from "@/components/SessionCard";
+import { StatsCard } from "@/components/StatsCard";
+import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Animated, FlatList, Text, TouchableOpacity, View } from "react-native";
+import {
+  getActiveSession,
+  getSessions,
+  getSetting,
+  Session,
+  SessionType,
+  setSetting,
+} from "../../db/database";
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+type DashboardFilter = "all" | SessionType;
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  const { colors, spacing, radius, typography } = usePokerTheme();
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [activeSession, setActiveSession] = useState<Session | null>(null);
+  const [streakResetDate, setStreakResetDate] = useState<string | null>(null);
+  const [dashboardFilter, setDashboardFilter] = useState<DashboardFilter>("all");
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+  // Live dot pulse
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const pulseRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  // Staggered entrance animations
+  const anim1 = useRef(new Animated.Value(0)).current;
+  const anim2 = useRef(new Animated.Value(0)).current;
+  const anim3 = useRef(new Animated.Value(0)).current;
+  const anim4 = useRef(new Animated.Value(0)).current;
+
+  // Profit count-up
+  const profitCountAnim = useRef(new Animated.Value(0)).current;
+  const [displayProfit, setDisplayProfit] = useState(0);
+  const listenerRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    Animated.stagger(80, [
+      Animated.spring(anim1, { toValue: 1, useNativeDriver: true, tension: 70, friction: 11 }),
+      Animated.spring(anim2, { toValue: 1, useNativeDriver: true, tension: 70, friction: 11 }),
+      Animated.spring(anim3, { toValue: 1, useNativeDriver: true, tension: 70, friction: 11 }),
+      Animated.spring(anim4, { toValue: 1, useNativeDriver: true, tension: 70, friction: 11 }),
+    ]).start();
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      setSessions(getSessions() || []);
+      setStreakResetDate(getSetting("streakResetDate"));
+      const savedFilter = (getSetting("dashboardView") ?? "all") as DashboardFilter;
+      const validFilter = ["all", "cash", "tournament"].includes(savedFilter)
+        ? savedFilter
+        : "all";
+      setDashboardFilter(validFilter);
+      const live = getActiveSession();
+      setActiveSession(live);
+
+      if (live) {
+        pulseRef.current = Animated.loop(
+          Animated.sequence([
+            Animated.timing(pulseAnim, { toValue: 0.2, duration: 900, useNativeDriver: true }),
+            Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
+          ])
+        );
+        pulseRef.current.start();
+      }
+
+      return () => {
+        pulseRef.current?.stop();
+        pulseAnim.setValue(1);
+      };
+    }, [])
+  );
+
+  const openLive = () => router.push("/live");
+  const openAdd  = () => router.push("/add");
+
+  const handleFilterChange = (f: DashboardFilter) => {
+    setDashboardFilter(f);
+    setSetting("dashboardView", f);
+  };
+
+  // Sessions filtered to selected type
+  const enabledSessions = useMemo(() => sessions, [sessions]);
+
+  // Sessions matching current filter tab
+  const filteredSessions = useMemo(() => {
+    if (dashboardFilter === "all") return enabledSessions;
+    return enabledSessions.filter((s) => (s.type ?? "cash") === dashboardFilter);
+  }, [enabledSessions, dashboardFilter]);
+
+  // Core stats (from filtered set)
+  const totalProfit = useMemo(
+    () => filteredSessions.reduce((s, x) => s + (x.profit || 0), 0),
+    [filteredSessions]
+  );
+  const totalHours = useMemo(
+    () => filteredSessions.reduce((s, x) => s + (x.duration || 0), 0),
+    [filteredSessions]
+  );
+  const hourly = totalHours ? totalProfit / totalHours : 0;
+
+  // Cash win rate (hidden on tournament-only tab)
+  const cashWinRate = useMemo(() => {
+    if (dashboardFilter === "tournament") return null;
+    const cashRows = filteredSessions.filter((s) => (s.type ?? "cash") === "cash");
+    if (!cashRows.length) return null;
+    return Math.round((cashRows.filter((s) => s.profit >= 0).length / cashRows.length) * 100);
+  }, [filteredSessions, dashboardFilter]);
+
+  const performanceLabel =
+    dashboardFilter === "all"
+      ? "Overall Performance"
+      : dashboardFilter === "cash"
+      ? "Cash Performance"
+      : "Tournament Performance";
+
+  // Streak always uses all sessions regardless of filter
+  const streak = useMemo(() => {
+    const relevant = streakResetDate
+      ? sessions.filter((s) => new Date(s.date) > new Date(streakResetDate))
+      : sessions;
+    if (!relevant.length) return 0;
+    const dates = relevant
+      .map((s) => new Date(s.date).toDateString())
+      .filter((v, i, arr) => arr.indexOf(v) === i)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
+    let count = 0;
+    let current = new Date();
+    for (const dateStr of dates) {
+      const d = new Date(dateStr);
+      const diff = (current.setHours(0, 0, 0, 0) - d.setHours(0, 0, 0, 0)) / 86400000;
+      if (diff === 0 || diff === 1) { count++; current = d; }
+      else break;
+    }
+    return count;
+  }, [sessions, streakResetDate]);
+
+  // Count-up animation re-fires whenever totalProfit changes (including on filter switch)
+  useEffect(() => {
+    if (listenerRef.current) profitCountAnim.removeListener(listenerRef.current);
+    profitCountAnim.setValue(0);
+    const id = profitCountAnim.addListener(({ value }) => setDisplayProfit(Math.round(value)));
+    listenerRef.current = id;
+    Animated.timing(profitCountAnim, {
+      toValue: totalProfit,
+      duration: 700,
+      useNativeDriver: false,
+    }).start();
+    return () => { profitCountAnim.removeListener(id); };
+  }, [totalProfit]);
+
+  const slide = (anim: Animated.Value) => ({
+    opacity: anim,
+    transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+  });
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+      <FlatList
+        data={filteredSessions.slice(0, 5)}
+        keyExtractor={(i) => i.id.toString()}
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: 148 }}
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          <>
+            <View style={{ marginBottom: spacing.lg }}>
+              <Text style={{
+                color: colors.text.primary,
+                ...typography.body,
+                fontWeight: "700",
+                fontSize: 20,
+                textAlign: "left",
+              }}>
+                Welcome back
+              </Text>
+            </View>
+
+            {/* ── Filter tabs ── */}
+            <SegmentedControl
+              options={[
+                { value: "all", label: "All" },
+                { value: "cash", label: "Cash" },
+                { value: "tournament", label: "Tournament" },
+              ]}
+              selected={dashboardFilter}
+              onChange={handleFilterChange}
+              style={{ marginBottom: spacing.lg }}
+            />
+
+            {/* ── Active session banner ── */}
+            {activeSession && (
+              <Animated.View style={slide(anim1)}>
+                <TouchableOpacity
+                  onPress={() => router.push("/live/active")}
+                  activeOpacity={0.85}
+                  style={{
+                    backgroundColor: colors.bg.secondary,
+                    borderRadius: radius.lg,
+                    padding: spacing.lg,
+                    marginBottom: spacing.lg,
+                    borderWidth: 1,
+                    borderColor: colors.border.success,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                    <Animated.View style={{
+                      width: 8, height: 8, borderRadius: 4,
+                      backgroundColor: colors.bg.success,
+                      opacity: pulseAnim,
+                    }} />
+                    <View>
+                      <Text style={{ color: colors.text.success, ...typography.bodySm, fontWeight: "700" }}>
+                        Session in progress
+                      </Text>
+                      <Text style={{ color: colors.text.secondary, ...typography.caption, marginTop: 2 }}>
+                        {activeSession.type === "tournament"
+                          ? `${activeSession.tournamentName || "Tournament"} · $${activeSession.buyIn} buy-in`
+                          : `${activeSession.stakes}${activeSession.venue ? ` • ${activeSession.venue}` : ""} · $${activeSession.buyIn} buy-in`}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={{ color: colors.text.brand, ...typography.bodySm, fontWeight: "600" }}>
+                    Resume →
+                  </Text>
+                </TouchableOpacity>
+              </Animated.View>
+            )}
+
+            {filteredSessions.length > 0 && (
+              <>
+                <Text style={{
+                  color: colors.text.secondary,
+                  ...typography.caption,
+                  letterSpacing: 1.5,
+                  textTransform: "uppercase",
+                  fontWeight: "700",
+                  marginBottom: spacing.sm,
+                }}>
+                  {performanceLabel}
+                </Text>
+
+                {/* ── Total profit card ── */}
+                <Animated.View style={[slide(anim2), {
+                  backgroundColor: colors.bg.secondary,
+                  borderRadius: 20,
+                  padding: spacing.lg,
+                  marginBottom: spacing.lg,
+                  borderWidth: 1,
+                  borderColor: colors.border.default,
+                }]}>
+                  <Text style={{
+                    color: colors.text.primary,
+                    fontSize: 12,
+                    letterSpacing: 1.5,
+                    textTransform: "uppercase",
+                    fontWeight: "400",
+                    lineHeight: 16,
+                  }}>
+                    {dashboardFilter === "all"
+                      ? "TOTAL PROFIT"
+                      : dashboardFilter === "cash"
+                      ? "CASH PROFIT"
+                      : "TOURNAMENT PROFIT"}
+                  </Text>
+                  <Text style={{
+                    fontSize: 32,
+                    fontWeight: "900",
+                    color: totalProfit >= 0 ? colors.text.brand : colors.text.danger,
+                    marginTop: 4,
+                    lineHeight: 40,
+                    letterSpacing: -0.5,
+                  }}>
+                    {displayProfit >= 0 ? "+" : "-"}${Math.abs(displayProfit).toFixed(0)}
+                  </Text>
+                  <Text style={{ color: colors.text.secondary, fontSize: 12, lineHeight: 16, marginTop: 4 }}>
+                    {totalProfit >= 0 ? "↑ Strong performance" : "↓ Needs improvement"}
+                  </Text>
+                </Animated.View>
+
+<Animated.View style={[slide(anim3), {
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  gap: spacing.sm,
+                  marginBottom: spacing.lg,
+                }]}> 
+                  <StatsCard label="Hours Played" value={`${totalHours.toFixed(0)}h`} />
+                  <StatsCard label="Sessions" value={String(filteredSessions.length)} />
+                  <StatsCard label="+$/hr" value={hourly !== 0 ? `${hourly >= 0 ? "+" : "-"}$${Math.abs(hourly).toFixed(0)}` : "—"} />
+                  {/* <StatsCard label="Win rate" value={cashWinRate !== null ? `${cashWinRate}%` : "—"} /> */}
+                  {/* <StatsCard label="Play Streak" value={streak > 0 ? `${streak}d` : "—"} /> */}
+                </Animated.View>
+
+                {/* ── Cash win rate (All + Cash views) ── */}
+                {cashWinRate !== null && (
+                  <Animated.View style={[slide(anim3), {
+                    backgroundColor: colors.bg.secondary,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: colors.border.default,
+                    paddingHorizontal: spacing.lg,
+                    paddingVertical: spacing.md,
+                    marginBottom: spacing.md,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }]}>
+                    <Text style={{ color: colors.text.secondary, ...typography.bodySm }}>
+                      Cash win rate
+                    </Text>
+                    <Text style={{
+                      color: cashWinRate >= 50 ? colors.text.success : colors.text.warning,
+                      fontWeight: "700",
+                      ...typography.body,
+                    }}>
+                      {cashWinRate}%
+                    </Text>
+                  </Animated.View>
+                )}
+
+                {/* ── Streak card ── */}
+                <Animated.View style={[slide(anim4), {
+                  backgroundColor: colors.bg.secondary,
+                  borderRadius: 8,
+                  padding: spacing.lg,
+                  borderWidth: 1,
+                  borderColor: colors.border.default,
+                  marginBottom: spacing["2xl"],
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }]}>
+                  <View>
+                    <Text style={{
+                      color: colors.text.tertiary,
+                      ...typography.caption,
+                      letterSpacing: 1.5,
+                      textTransform: "uppercase",
+                      fontWeight: "600",
+                    }}>
+                      Playing Streak
+                    </Text>
+                    <Text style={{ color: colors.text.primary, ...typography.heading3, fontWeight: "700", marginTop: spacing.xs }}>
+                      {streak > 0 ? `🔥 ${streak} day${streak === 1 ? "" : "s"}` : "No streak yet"}
+                    </Text>
+                  </View>
+                  {streak > 0 && (
+                    <Text style={{ fontSize: 36 }}>
+                      {streak >= 7 ? "🏆" : streak >= 3 ? "⚡" : "🃏"}
+                    </Text>
+                  )}
+                </Animated.View>
+
+                {/* ── Recent sessions header ── */}
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.md }}>
+                  <Text style={{
+                    color: colors.text.secondary,
+                    fontSize: 12,
+                    letterSpacing: 1.5,
+                    textTransform: "uppercase",
+                    fontWeight: "600",
+                  }}>
+                    RECENT SESSIONS
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => router.navigate("/(tabs)/history")}
+                    style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+                  >
+                    <Text style={{ color: colors.text.brand, fontSize: 14, fontWeight: "600" }}>
+                      SEE ALL
+                    </Text>
+                    <Text style={{ color: colors.text.brand, fontSize: 14, fontWeight: "600" }}>
+                      →
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </>
+        }
+        ListEmptyComponent={
+          <View style={{ alignItems: "center", paddingTop: spacing["3xl"] }}>
+            {sessions.length === 0 ? (
+              <>
+                <Text style={{ fontSize: 48, marginBottom: spacing.md }}>🃏</Text>
+                <Text style={{ color: colors.text.primary, ...typography.body, fontWeight: "600", marginBottom: spacing.xs }}>
+                  No sessions yet
+                </Text>
+                <Text style={{ color: colors.text.secondary, ...typography.bodySm, textAlign: "center" }}>
+                  Start a live session or add one manually
+                </Text>
+                <View style={{ width: "100%", marginTop: spacing.lg, gap: spacing.md }}>
+                  <TouchableOpacity
+                    onPress={openLive}
+                    activeOpacity={0.85}
+                    style={{
+                      backgroundColor: colors.bg.brand,
+                      borderRadius: 12,
+                      paddingVertical: spacing.lg,
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{ color: colors.text.onBrand, ...typography.body, fontWeight: "600" }}>
+                      Start Session
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={openAdd}
+                    activeOpacity={0.85}
+                    style={{
+                      borderColor: colors.border.default,
+                      borderWidth: 1,
+                      borderRadius: 12,
+                      paddingVertical: spacing.lg,
+                      alignItems: "center",
+                      backgroundColor: colors.bg.secondary,
+                    }}
+                  >
+                    <Text style={{ color: colors.text.primary, ...typography.body, fontWeight: "600" }}>
+                      Log Past Session
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={{ fontSize: 48, marginBottom: spacing.md }}>
+                  {dashboardFilter === "tournament" ? "🏆" : "🃏"}
+                </Text>
+                <Text style={{ color: colors.text.primary, ...typography.body, fontWeight: "600", marginBottom: spacing.xs }}>
+                  No {dashboardFilter} sessions yet
+                </Text>
+                <Text style={{ color: colors.text.secondary, ...typography.bodySm }}>
+                  Switch to All or add a {dashboardFilter} session
+                </Text>
+              </>
+            )}
+          </View>
+        }
+        renderItem={({ item }) => (
+          <SessionCard
+            venue={item.type === "tournament" ? (item.tournamentName || "Tournament") : (item.venue || "Unknown venue")}
+            stakes={item.type === "tournament" ? "Tournament" : item.stakes}
+            date={new Date(item.date).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}
+            profit={item.profit}
+            onPress={() => router.push({ pathname: "/session-detail", params: { session: JSON.stringify(item) } })}
+          />
+        )}
+      />
+
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
-});
