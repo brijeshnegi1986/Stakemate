@@ -45,6 +45,28 @@ function RootLayoutContent() {
           <Stack.Screen
             name="session-detail"
             options={{
+              title: "Session Detail",
+              headerShadowVisible: true,
+              headerStyle: { backgroundColor: themeColors.bg.primary },
+              headerTintColor: themeColors.text.primary,
+              headerTitleStyle: { fontWeight: "700", fontSize: 17 },
+              headerLeft: () => (
+                <TouchableOpacity
+                  onPress={() => router.back()}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
+                >
+                  <MaterialCommunityIcons name="arrow-left" size={20} color={themeColors.text.primary} />
+                  <Text style={{ marginLeft: 8, color: themeColors.text.primary, fontWeight: "600", fontSize: 16 }}>
+                    Back
+                  </Text>
+                </TouchableOpacity>
+              ),
+            }}
+          />
+          <Stack.Screen
+            name="session-edit"
+            options={{
               title: "Edit Session",
               headerShadowVisible: true,
               headerStyle: { backgroundColor: themeColors.bg.primary },

@@ -13,7 +13,7 @@ import {
   View,
 } from "react-native";
 import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
-import { deleteSession, getSessions, Session, SessionType } from "../../db/database";
+import { deleteSession, getSessions, getRebuysTotal, parseRebuys, Session, SessionType } from "../../db/database";
 
 type SortKey = "date" | "profit";
 type Filter  = "all" | SessionType;
@@ -115,25 +115,38 @@ export default function SessionsScreen() {
 
   if (!sessions.length) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.bg.primary, justifyContent: "center", alignItems: "center" }}>
-        <Animated.View style={{
-          alignItems: "center",
-          gap: spacing.sm,
-          opacity: emptyAnim,
-          transform: [{ scale: emptyAnim.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
-        }}>
-          <Text style={{ fontSize: 56, marginBottom: spacing.sm }}>
-            {filter === "tournament" ? "🏆" : "🃏"}
-          </Text>
-          <Text style={{ color: colors.text.primary, ...typography.heading3, fontWeight: "700" }}>
-            No {filter === "all" ? "" : filter + " "}sessions yet
-          </Text>
-          <Text style={{ color: colors.text.secondary, ...typography.bodySm, textAlign: "center", maxWidth: 220, lineHeight: 20 }}>
-            {filter === "tournament"
-              ? "Tap the + tab to log a tournament"
-              : "Tap the + tab to log your first session"}
-          </Text>
-        </Animated.View>
+      <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+        <View style={{ padding: spacing.lg, paddingBottom: 0 }}>
+          <SegmentedControl
+            options={[
+              { value: "all", label: "All" },
+              { value: "cash", label: "Cash" },
+              { value: "tournament", label: "Tournament" },
+            ]}
+            selected={filter}
+            onChange={handleFilterChange}
+          />
+        </View>
+        <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+          <Animated.View style={{
+            alignItems: "center",
+            gap: spacing.sm,
+            opacity: emptyAnim,
+            transform: [{ scale: emptyAnim.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
+          }}>
+            <Text style={{ fontSize: 56, marginBottom: spacing.sm }}>
+              {filter === "tournament" ? "🏆" : "🃏"}
+            </Text>
+            <Text style={{ color: colors.text.primary, ...typography.heading3, fontWeight: "700" }}>
+              No {filter === "all" ? "" : filter + " "}sessions yet
+            </Text>
+            <Text style={{ color: colors.text.secondary, ...typography.bodySm, textAlign: "center", maxWidth: 220, lineHeight: 20 }}>
+              {filter === "tournament"
+                ? "Tap the + tab to log a tournament"
+                : "Tap the + tab to log your first session"}
+            </Text>
+          </Animated.View>
+        </View>
       </View>
     );
   }
@@ -252,7 +265,7 @@ export default function SessionsScreen() {
               onPress={() => router.push({ pathname: "/session-detail", params: { session: JSON.stringify(item) } })}
             >
               <View style={{
-                backgroundColor: colors.bg.primary,
+                backgroundColor: colors.bg.tertiary,
                 borderRadius: 8,
                 marginBottom: 4,
                 borderWidth: 1,
@@ -310,7 +323,7 @@ export default function SessionsScreen() {
                         </>
                       )}
 
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs, flexWrap: "wrap" }}>
                         <Text style={{ color: colors.text.tertiary, fontSize: 12, lineHeight: 16 }}>
                           {item.date ? formatDate(item.date) : "—"}
                         </Text>
@@ -318,6 +331,20 @@ export default function SessionsScreen() {
                           <Text style={{ color: colors.text.tertiary, fontSize: 12, lineHeight: 16 }}>
                             · {item.duration}h
                           </Text>
+                        )}
+                        {parseRebuys(item).length > 0 && (
+                          <View style={{
+                            backgroundColor: colors.bg.tertiary,
+                            borderRadius: radius.sm,
+                            paddingHorizontal: spacing.xs,
+                            paddingVertical: 1,
+                            borderWidth: 1,
+                            borderColor: colors.border.warning,
+                          }}>
+                            <Text style={{ color: colors.text.warning, fontSize: 9, fontWeight: "700", letterSpacing: 0.4 }}>
+                              ↺ {parseRebuys(item).length}x REBUY
+                            </Text>
+                          </View>
                         )}
                       </View>
                     </View>
@@ -333,7 +360,11 @@ export default function SessionsScreen() {
                         {item.profit > 0 ? "+" : item.profit < 0 ? "-" : ""}
                         ${Math.abs(item.profit).toFixed(0)}
                       </Text>
-                      {item.type === "tournament" && item.entries && item.entries > 0 ? (
+                      {parseRebuys(item).length > 0 ? (
+                        <Text style={{ color: colors.text.warning, ...typography.caption, marginTop: spacing.xs }}>
+                          +${getRebuysTotal(item)} rebuy
+                        </Text>
+                      ) : item.type === "tournament" && item.entries && item.entries > 0 ? (
                         <Text style={{ color: colors.text.tertiary, ...typography.caption, marginTop: spacing.xs }}>
                           {item.entries} entries
                         </Text>

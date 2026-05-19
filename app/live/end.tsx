@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { endLiveSession, endLiveTournament, getActiveSession, Session } from "../../db/database";
+import { endLiveSession, endLiveTournament, getActiveSession, getRebuysTotal, parseRebuys, Session } from "../../db/database";
 
 export default function EndSessionScreen() {
   const { colors, spacing, radius, typography } = usePokerTheme();
@@ -41,17 +41,20 @@ export default function EndSessionScreen() {
     }, [])
   );
 
-  const isTournament = session?.type === "tournament";
+  const isTournament  = session?.type === "tournament";
+  const rebuysTotal   = session ? getRebuysTotal(session) : 0;
+  const rebuysCount   = session ? parseRebuys(session).length : 0;
+  const totalInvested = (session?.buyIn ?? 0) + rebuysTotal;
 
   const profit = useMemo(() => {
     if (!session) return null;
     if (isTournament) {
       const p = parseFloat(payout) || 0;
-      return p - session.buyIn;
+      return p - totalInvested;
     }
     const c = parseFloat(cashOut);
-    return isNaN(c) ? null : c - session.buyIn;
-  }, [isTournament, cashOut, payout, session]);
+    return isNaN(c) ? null : c - totalInvested;
+  }, [isTournament, cashOut, payout, session, totalInvested]);
 
   useEffect(() => {
     if (profit === prevProfit.current) return;
@@ -165,6 +168,11 @@ export default function EndSessionScreen() {
               <Text style={{ color: colors.text.secondary, ...typography.bodySm, marginTop: spacing.xs }}>
                 Buy-in ${session.buyIn}
               </Text>
+              {rebuysCount > 0 && (
+                <Text style={{ color: colors.text.warning, ...typography.bodySm, marginTop: 2 }}>
+                  +${rebuysTotal} rebuy ({rebuysCount}x)
+                </Text>
+              )}
             </View>
           </View>
         </View>

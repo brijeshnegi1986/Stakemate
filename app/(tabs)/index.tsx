@@ -14,13 +14,46 @@ import {
   setSetting,
 } from "../../db/database";
 
+function MiniSparkline({ profits, colors }: { profits: number[]; colors: any }) {
+  const data = profits.slice(-8);
+  const maxAbs = Math.max(...data.map((v) => Math.abs(v)), 1);
+  const CHART_H = 48;
+  const BAR_W = 6;
+  return (
+    <View style={{ flexDirection: "row", alignItems: "flex-end", height: CHART_H, gap: 3 }}>
+      {data.map((profit, i) => (
+        <View
+          key={i}
+          style={{
+            width: BAR_W,
+            height: Math.max(4, (Math.abs(profit) / maxAbs) * (CHART_H - 4)),
+            backgroundColor: profit >= 0 ? colors.bg.brand : colors.bg.danger,
+            borderRadius: 2,
+            opacity: 0.88,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+function formatLastPlayed(date: Date): string {
+  const now = new Date();
+  const sessionDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const todayDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.floor((todayDay.getTime() - sessionDay.getTime()) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  if (diff < 7) return `${diff} days ago`;
+  return date.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" });
+}
+
 type DashboardFilter = "all" | SessionType;
 
 export default function HomeScreen() {
   const { colors, spacing, radius, typography } = usePokerTheme();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
-  const [streakResetDate, setStreakResetDate] = useState<string | null>(null);
   const [dashboardFilter, setDashboardFilter] = useState<DashboardFilter>("all");
 
   // Live dot pulse
@@ -50,7 +83,6 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       setSessions(getSessions() || []);
-      setStreakResetDate(getSetting("streakResetDate"));
       const savedFilter = (getSetting("dashboardView") ?? "all") as DashboardFilter;
       const validFilter = ["all", "cash", "tournament"].includes(savedFilter)
         ? savedFilter
@@ -119,27 +151,11 @@ export default function HomeScreen() {
       ? "Cash Performance"
       : "Tournament Performance";
 
-  // Streak always uses all sessions regardless of filter
-  const streak = useMemo(() => {
-    const relevant = streakResetDate
-      ? sessions.filter((s) => new Date(s.date) > new Date(streakResetDate))
-      : sessions;
-    if (!relevant.length) return 0;
-    const dates = relevant
-      .map((s) => new Date(s.date).toDateString())
-      .filter((v, i, arr) => arr.indexOf(v) === i)
-      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-
-    let count = 0;
-    let current = new Date();
-    for (const dateStr of dates) {
-      const d = new Date(dateStr);
-      const diff = (current.setHours(0, 0, 0, 0) - d.setHours(0, 0, 0, 0)) / 86400000;
-      if (diff === 0 || diff === 1) { count++; current = d; }
-      else break;
-    }
-    return count;
-  }, [sessions, streakResetDate]);
+  const lastSessionDate = useMemo(() => {
+    if (!sessions.length) return null;
+    const sorted = [...sessions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return new Date(sorted[0].date);
+  }, [sessions]);
 
   // Count-up animation re-fires whenever totalProfit changes (including on filter switch)
   useEffect(() => {
@@ -256,34 +272,48 @@ export default function HomeScreen() {
                   marginBottom: spacing.lg,
                   borderWidth: 1,
                   borderColor: colors.border.default,
+                  flexDirection: "row",
+                  alignItems: "center",
                 }]}>
-                  <Text style={{
-                    color: colors.text.primary,
-                    fontSize: 12,
-                    letterSpacing: 1.5,
-                    textTransform: "uppercase",
-                    fontWeight: "400",
-                    lineHeight: 16,
-                  }}>
-                    {dashboardFilter === "all"
-                      ? "TOTAL PROFIT"
-                      : dashboardFilter === "cash"
-                      ? "CASH PROFIT"
-                      : "TOURNAMENT PROFIT"}
-                  </Text>
-                  <Text style={{
-                    fontSize: 32,
-                    fontWeight: "900",
-                    color: totalProfit >= 0 ? colors.text.brand : colors.text.danger,
-                    marginTop: 4,
-                    lineHeight: 40,
-                    letterSpacing: -0.5,
-                  }}>
-                    {displayProfit >= 0 ? "+" : "-"}${Math.abs(displayProfit).toFixed(0)}
-                  </Text>
-                  <Text style={{ color: colors.text.secondary, fontSize: 12, lineHeight: 16, marginTop: 4 }}>
-                    {totalProfit >= 0 ? "↑ Strong performance" : "↓ Needs improvement"}
-                  </Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{
+                      color: colors.text.primary,
+                      fontSize: 12,
+                      letterSpacing: 1.5,
+                      textTransform: "uppercase",
+                      fontWeight: "400",
+                      lineHeight: 16,
+                    }}>
+                      {dashboardFilter === "all"
+                        ? "TOTAL PROFIT"
+                        : dashboardFilter === "cash"
+                        ? "CASH PROFIT"
+                        : "TOURNAMENT PROFIT"}
+                    </Text>
+                    <Text style={{
+                      fontSize: 32,
+                      fontWeight: "900",
+                      color: totalProfit >= 0 ? colors.text.brand : colors.text.danger,
+                      marginTop: 4,
+                      lineHeight: 40,
+                      letterSpacing: -0.5,
+                    }}>
+                      {displayProfit >= 0 ? "+" : "-"}${Math.abs(displayProfit).toFixed(0)}
+                    </Text>
+                    <Text style={{ color: colors.text.secondary, fontSize: 12, lineHeight: 16, marginTop: 4 }}>
+                      {totalProfit >= 0 ? "↑ Strong performance" : "↓ Needs improvement"}
+                    </Text>
+                  </View>
+                  {filteredSessions.length >= 2 && (
+                    <View style={{ paddingLeft: spacing.md }}>
+                      <MiniSparkline
+                        profits={[...filteredSessions]
+                          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                          .map((s) => s.profit)}
+                        colors={colors}
+                      />
+                    </View>
+                  )}
                 </Animated.View>
 
 <Animated.View style={[slide(anim3), {
@@ -295,38 +325,10 @@ export default function HomeScreen() {
                   <StatsCard label="Hours Played" value={`${totalHours.toFixed(0)}h`} />
                   <StatsCard label="Sessions" value={String(filteredSessions.length)} />
                   <StatsCard label="+$/hr" value={hourly !== 0 ? `${hourly >= 0 ? "+" : "-"}$${Math.abs(hourly).toFixed(0)}` : "—"} />
-                  {/* <StatsCard label="Win rate" value={cashWinRate !== null ? `${cashWinRate}%` : "—"} /> */}
-                  {/* <StatsCard label="Play Streak" value={streak > 0 ? `${streak}d` : "—"} /> */}
+                  <StatsCard label="Win rate" value={cashWinRate !== null ? `${cashWinRate}%` : "—"} />
                 </Animated.View>
 
-                {/* ── Cash win rate (All + Cash views) ── */}
-                {cashWinRate !== null && (
-                  <Animated.View style={[slide(anim3), {
-                    backgroundColor: colors.bg.secondary,
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: colors.border.default,
-                    paddingHorizontal: spacing.lg,
-                    paddingVertical: spacing.md,
-                    marginBottom: spacing.md,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }]}>
-                    <Text style={{ color: colors.text.secondary, ...typography.bodySm }}>
-                      Cash win rate
-                    </Text>
-                    <Text style={{
-                      color: cashWinRate >= 50 ? colors.text.success : colors.text.warning,
-                      fontWeight: "700",
-                      ...typography.body,
-                    }}>
-                      {cashWinRate}%
-                    </Text>
-                  </Animated.View>
-                )}
-
-                {/* ── Streak card ── */}
+                {/* ── Last played card ── */}
                 <Animated.View style={[slide(anim4), {
                   backgroundColor: colors.bg.secondary,
                   borderRadius: 8,
@@ -346,17 +348,13 @@ export default function HomeScreen() {
                       textTransform: "uppercase",
                       fontWeight: "600",
                     }}>
-                      Playing Streak
+                      Last game played
                     </Text>
                     <Text style={{ color: colors.text.primary, ...typography.heading3, fontWeight: "700", marginTop: spacing.xs }}>
-                      {streak > 0 ? `🔥 ${streak} day${streak === 1 ? "" : "s"}` : "No streak yet"}
+                      {lastSessionDate ? formatLastPlayed(lastSessionDate) : "No games yet"}
                     </Text>
                   </View>
-                  {streak > 0 && (
-                    <Text style={{ fontSize: 36 }}>
-                      {streak >= 7 ? "🏆" : streak >= 3 ? "⚡" : "🃏"}
-                    </Text>
-                  )}
+                  <Text style={{ fontSize: 32 }}>🃏</Text>
                 </Animated.View>
 
                 {/* ── Recent sessions header ── */}
@@ -370,17 +368,19 @@ export default function HomeScreen() {
                   }}>
                     RECENT SESSIONS
                   </Text>
-                  <TouchableOpacity
-                    onPress={() => router.navigate("/(tabs)/history")}
-                    style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
-                  >
-                    <Text style={{ color: colors.text.brand, fontSize: 14, fontWeight: "600" }}>
-                      SEE ALL
-                    </Text>
-                    <Text style={{ color: colors.text.brand, fontSize: 14, fontWeight: "600" }}>
-                      →
-                    </Text>
-                  </TouchableOpacity>
+                  {filteredSessions.length > 5 && (
+                    <TouchableOpacity
+                      onPress={() => router.navigate("/(tabs)/history")}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+                    >
+                      <Text style={{ color: colors.text.brand, fontSize: 14, fontWeight: "600" }}>
+                        SEE ALL
+                      </Text>
+                      <Text style={{ color: colors.text.brand, fontSize: 14, fontWeight: "600" }}>
+                        →
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </>
             )}

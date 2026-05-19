@@ -21,6 +21,14 @@ import {
 const APP_VERSION = "1.0.0";
 const STAKES_OPTIONS = ["1/1", "1/2", "2/3", "5/5", "10/10"];
 const STATE_OPTIONS = ["NSW", "VIC", "QLD", "WA", "SA", "ACT"];
+const VENUES_BY_STATE: Record<string, string[]> = {
+  NSW: ["Star Sydney", "APL", "NPL", "Poker Palace", "Home Games", "Other"],
+  VIC: ["Crown Melbourne", "APL", "NPL", "Home Games", "Other"],
+  QLD: ["Star Brisbane", "Star GoldCoast", "APL", "Home Games", "Other"],
+  WA: ["APL", "Home Games", "Other"],
+  SA: ["Adelaide Casino", "APL", "Home Games", "Other"],
+  ACT: ["Canberra Casino", "APL", "Home Games", "Other"],
+};
 const VIEW_OPTIONS: { value: string; label: string; sublabel: string }[] = [
   { value: "all",        label: "All",        sublabel: "Combined cash + tournament stats" },
   { value: "cash",       label: "Cash",       sublabel: "Cash game metrics only" },
@@ -380,6 +388,7 @@ export default function SettingsScreen() {
             borderWidth: 1,
             borderColor: defaultVenue.length > 0 ? colors.border.brand : colors.border.default,
             paddingHorizontal: spacing.md,
+            marginBottom: spacing.sm,
           }}>
             <TextInput
               value={defaultVenue}
@@ -409,6 +418,31 @@ export default function SettingsScreen() {
                 </View>
               </TouchableOpacity>
             )}
+          </View>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+            {(VENUES_BY_STATE[defaultState] ?? VENUES_BY_STATE["NSW"]).map((v) => (
+              <TouchableOpacity
+                key={v}
+                onPress={() => handleVenueChange(v)}
+                activeOpacity={0.75}
+                style={{
+                  paddingVertical: 3,
+                  paddingHorizontal: spacing.sm,
+                  borderRadius: radius.full,
+                  backgroundColor: defaultVenue === v ? colors.bg.brand : colors.bg.tertiary,
+                  borderWidth: 1,
+                  borderColor: defaultVenue === v ? colors.border.brand : colors.border.default,
+                }}
+              >
+                <Text style={{
+                  color: defaultVenue === v ? colors.text.onBrand : colors.text.primary,
+                  ...typography.caption,
+                  fontWeight: defaultVenue === v ? "700" : "400",
+                }}>
+                  {v}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
         </View>
 

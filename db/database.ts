@@ -30,6 +30,7 @@ export const initDB = () => {
   try { db.execSync(`ALTER TABLE sessions ADD COLUMN position INTEGER`); } catch (_) {}
   try { db.execSync(`ALTER TABLE sessions ADD COLUMN payout REAL`); } catch (_) {}
   try { db.execSync(`ALTER TABLE sessions ADD COLUMN notes TEXT`); } catch (_) {}
+  try { db.execSync(`ALTER TABLE sessions ADD COLUMN rebuys TEXT DEFAULT '[]'`); } catch (_) {}
 
   // Settings key-value store
   db.execSync(`
@@ -76,6 +77,7 @@ export type Session = {
   position?: number;
   payout?: number;
   notes?: string;
+  rebuys?: string; // JSON array of amounts e.g. "[100, 200]"
 };
 
 // ─── CRUD — Cash ──────────────────────────────────────────────────────────────
@@ -206,12 +208,32 @@ export const updateSession = (
     db.runSync(
       `UPDATE sessions
        SET type='cash', stakes=?, venue=?, profit=?, duration=?, date=?,
-           buyIn=?, cashOut=?, state=?
+           buyIn=?, cashOut=?, state=?, notes=?
        WHERE id=?`,
       [data.stakes ?? "", data.venue, data.profit, data.duration, data.date,
-       data.buyIn, data.cashOut ?? 0, data.state, id]
+       data.buyIn, data.cashOut ?? 0, data.state, data.notes ?? "", id]
     );
   }
+};
+
+export const saveNotes = (id: number, notes: string): void => {
+  db.runSync(`UPDATE sessions SET notes = ? WHERE id = ?`, [notes, id]);
+};
+
+export const parseRebuys = (session: { rebuys?: string }): number[] => {
+  try { return JSON.parse(session.rebuys ?? "[]"); } catch { return []; }
+};
+
+export const getRebuysTotal = (session: { rebuys?: string }): number =>
+  parseRebuys(session).reduce((s, r) => s + r, 0);
+
+export const addRebuy = (id: number, amount: number): void => {
+  const row = db.getFirstSync(`SELECT rebuys FROM sessions WHERE id = ?`, [id]) as { rebuys?: string } | null;
+  const existing = parseRebuys({ rebuys: row?.rebuys });
+  db.runSync(
+    `UPDATE sessions SET rebuys = ? WHERE id = ?`,
+    [JSON.stringify([...existing, amount]), id]
+  );
 };
 
 export const deleteSession = (id: number) => {
@@ -276,9 +298,10 @@ export const endLiveTournament = (
   durationHours: number
 ) => {
   const row = db.getFirstSync(
-    `SELECT buyIn FROM sessions WHERE id = ?`, [id]
-  ) as { buyIn: number } | null;
-  const profit = payout - (row?.buyIn ?? 0);
+    `SELECT buyIn, rebuys FROM sessions WHERE id = ?`, [id]
+  ) as { buyIn: number; rebuys?: string } | null;
+  const rebuysTotal = parseRebuys({ rebuys: row?.rebuys }).reduce((s, r) => s + r, 0);
+  const profit = payout - (row?.buyIn ?? 0) - rebuysTotal;
   db.runSync(
     `UPDATE sessions
      SET position=?, payout=?, cashOut=?, profit=?, duration=?, status='completed'

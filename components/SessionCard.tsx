@@ -18,7 +18,7 @@ export function SessionCard({ venue, stakes, date, profit, onPress }: Props) {
       activeOpacity={0.75}
       onPress={onPress}
       style={{
-        backgroundColor: colors.bg.primary,
+        backgroundColor: colors.bg.tertiary,
         borderRadius: 8,
         borderWidth: 1,
         borderColor: colors.border.default,
