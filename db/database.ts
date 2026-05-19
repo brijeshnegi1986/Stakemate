@@ -33,7 +33,7 @@ export const initDB = () => {
   try { db.execSync(`ALTER TABLE sessions ADD COLUMN rebuys TEXT DEFAULT '[]'`); } catch (_) {}
 
 
-  // Notes history
+  // Notes history (session_id = 0 means standalone note)
   db.execSync(`
     CREATE TABLE IF NOT EXISTS notes_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,6 +47,8 @@ export const initDB = () => {
       created_at INTEGER NOT NULL
     );
   `);
+  try { db.execSync(`ALTER TABLE notes_history ADD COLUMN title TEXT DEFAULT ''`); } catch (_) {}
+  try { db.execSync(`ALTER TABLE notes_history ADD COLUMN updated_at INTEGER DEFAULT 0`); } catch (_) {}
 
   // Settings key-value store
   db.execSync(`
@@ -362,14 +364,16 @@ export const clearAllSessions = (): void => {
 
 export type NoteEntry = {
   id: number;
-  session_id: number;
+  session_id: number;      // 0 = standalone note
   session_date: string;
   session_venue: string;
   session_profit: number;
-  session_type: string;
+  session_type: string;    // "cash" | "tournament" | "standalone"
   raw_notes: string;
   enhanced_notes: string | null;
+  title: string | null;
   created_at: number;
+  updated_at: number;
 };
 
 export const saveNoteEntry = (data: {
@@ -380,13 +384,32 @@ export const saveNoteEntry = (data: {
   sessionType: string;
   rawNotes: string;
   enhancedNotes: string | null;
+  title?: string;
 }): void => {
+  const now = Date.now();
   db.runSync(
     `INSERT INTO notes_history
-       (session_id, session_date, session_venue, session_profit, session_type, raw_notes, enhanced_notes, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, session_date, session_venue, session_profit, session_type, raw_notes, enhanced_notes, title, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [data.sessionId, data.sessionDate, data.sessionVenue, data.sessionProfit,
-     data.sessionType, data.rawNotes, data.enhancedNotes, Date.now()]
+     data.sessionType, data.rawNotes, data.enhancedNotes, data.title ?? "", now, now]
+  );
+};
+
+export const updateNoteEntry = (id: number, data: {
+  title?: string;
+  rawNotes?: string;
+  enhancedNotes?: string | null;
+}): void => {
+  const now = Date.now();
+  db.runSync(
+    `UPDATE notes_history
+     SET title = COALESCE(?, title),
+         raw_notes = COALESCE(?, raw_notes),
+         enhanced_notes = COALESCE(?, enhanced_notes),
+         updated_at = ?
+     WHERE id = ?`,
+    [data.title ?? null, data.rawNotes ?? null, data.enhancedNotes ?? null, now, id]
   );
 };
 
