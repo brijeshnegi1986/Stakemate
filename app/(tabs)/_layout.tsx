@@ -46,11 +46,12 @@ export default function TabLayout() {
         headerShadowVisible: true,
       }}
     >
-      <Tabs.Screen name="index"   options={{ title: "Dashboard" }} />
-      <Tabs.Screen name="history" options={{ title: "History" }} />
-      <Tabs.Screen name="settings" options={{ title: "Settings" }} />
-      <Tabs.Screen name="live"    options={{ headerLeft: backButton }} />
-      <Tabs.Screen name="add"     options={{ title: "Add Session", headerLeft: backButton }} />
+      <Tabs.Screen name="index"       options={{ title: "Dashboard" }} />
+      <Tabs.Screen name="history"     options={{ title: "History" }} />
+      <Tabs.Screen name="hand-review" options={{ title: "Hand Review" }} />
+      <Tabs.Screen name="settings"    options={{ title: "Settings" }} />
+      <Tabs.Screen name="live"        options={{ headerLeft: backButton }} />
+      <Tabs.Screen name="add"         options={{ title: "Add Session", headerLeft: backButton }} />
     </Tabs>
   );
 }
