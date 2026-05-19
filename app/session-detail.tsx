@@ -4,12 +4,14 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
 import { deleteSession, getRebuysTotal, parseRebuys, saveNotes } from "../db/database";
@@ -77,6 +79,7 @@ export default function SessionDetailScreen() {
       style={{ flex: 1, backgroundColor: colors.bg.secondary }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
       <View style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: 140 }}
@@ -270,6 +273,7 @@ export default function SessionDetailScreen() {
           </TouchableOpacity>
         </View>
       </View>
+      </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
   );
 }
