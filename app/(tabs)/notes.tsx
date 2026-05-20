@@ -4,6 +4,8 @@ import {
   saveNoteEntry, Session, updateNoteEntry,
 } from "@/db/database";
 import { PaywallModal } from "@/components/PaywallModal";
+import { HandAnalysisModal } from "@/components/HandAnalysisModal";
+import { CardText } from "@/components/CardText";
 import { useSubscription } from "@/context/SubscriptionContext";
 import { FREE_NOTES_LIMIT } from "@/constants/subscription";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
@@ -307,13 +309,14 @@ function NoteEditorModal({
 // ─── Note Card ────────────────────────────────────────────────────────────────
 
 function NoteCard({
-  entry, onEdit, onDelete, onCopy, onExport, colors, radius,
+  entry, onEdit, onDelete, onCopy, onExport, onReviewHand, colors, radius,
 }: {
   entry: NoteEntry;
   onEdit: () => void;
   onDelete: () => void;
   onCopy: () => void;
   onExport: () => void;
+  onReviewHand: () => void;
   colors: any;
   radius: any;
 }) {
@@ -398,9 +401,7 @@ function NoteCard({
           <View style={{ height: 1, backgroundColor: colors.border.default }} />
 
           {/* Full note text */}
-          <Text style={{ color: colors.text.primary, fontSize: 14, lineHeight: 22 }}>
-            {displayText}
-          </Text>
+          <CardText text={displayText} baseColor={colors.text.primary} style={{ fontSize: 14, lineHeight: 22 }} />
 
           {/* Original notes (if enhanced) */}
           {isEnhanced && (
@@ -416,10 +417,11 @@ function NoteCard({
 
           {/* Action buttons */}
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            <ActionBtn icon="pencil-outline"  label="Edit"   color={colors.text.brand}   border={colors.border.brand}  onPress={onEdit}   />
-            <ActionBtn icon="content-copy"    label="Copy"   color={colors.text.secondary} border={colors.border.default} onPress={onCopy}   />
-            <ActionBtn icon="export-variant"  label="Export" color={colors.text.secondary} border={colors.border.default} onPress={onExport} />
-            <ActionBtn icon="delete-outline"  label="Delete" color={colors.text.danger}  border={colors.border.danger}  onPress={onDelete} />
+            <ActionBtn icon="pencil-outline"       label="Edit"         color={colors.text.brand}     border={colors.border.brand}   onPress={onEdit}       />
+            <ActionBtn icon="cards-playing-outline" label="Review Hand"  color="#7c3aed"               border="#7c3aed44"             onPress={onReviewHand} />
+            <ActionBtn icon="content-copy"         label="Copy"         color={colors.text.secondary} border={colors.border.default} onPress={onCopy}       />
+            <ActionBtn icon="export-variant"       label="Export"       color={colors.text.secondary} border={colors.border.default} onPress={onExport}     />
+            <ActionBtn icon="delete-outline"       label="Delete"       color={colors.text.danger}    border={colors.border.danger}  onPress={onDelete}     />
           </View>
         </View>
       )}
@@ -456,6 +458,7 @@ export default function NotesScreen() {
   const [editTarget, setEditTarget] = useState<NoteEntry | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [paywallVisible, setPaywallVisible] = useState(false);
+  const [handReviewEntry, setHandReviewEntry] = useState<NoteEntry | null>(null);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -533,6 +536,11 @@ export default function NotesScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
       <PaywallModal visible={paywallVisible} feature="notesTab" onClose={() => setPaywallVisible(false)} />
+      <HandAnalysisModal
+        visible={!!handReviewEntry}
+        notes={handReviewEntry ? (handReviewEntry.enhanced_notes ?? handReviewEntry.raw_notes) : ""}
+        onClose={() => setHandReviewEntry(null)}
+      />
 
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: TAB_BAR_H + 80 }}
@@ -595,6 +603,7 @@ export default function NotesScreen() {
             onDelete={() => handleDelete(entry.id)}
             onCopy={() => handleCopy(entry)}
             onExport={() => handleExport(entry)}
+            onReviewHand={() => setHandReviewEntry(entry)}
           />
         ))}
       </ScrollView>

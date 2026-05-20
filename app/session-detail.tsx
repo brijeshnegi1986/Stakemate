@@ -1,5 +1,7 @@
 import { BACKEND_URL } from "@/constants/config";
 import { PaywallModal } from "@/components/PaywallModal";
+import { HandAnalysisModal } from "@/components/HandAnalysisModal";
+import { CardText } from "@/components/CardText";
 import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -32,6 +34,7 @@ export default function SessionDetailScreen() {
   const [enhancing, setEnhancing] = useState(false);
   const [isEnhanced, setIsEnhanced] = useState(false);
   const [paywallVisible, setPaywallVisible] = useState(false);
+  const [handReviewVisible, setHandReviewVisible] = useState(false);
 
   if (!session) {
     router.back();
@@ -313,6 +316,34 @@ export default function SessionDetailScreen() {
               }}
             />
           </View>
+
+          {/* Review Hand button — shown when notes have content and user is Pro */}
+          {isPro && notes.trim().length > 20 && !notesChanged && (
+            <TouchableOpacity
+              onPress={() => setHandReviewVisible(true)}
+              activeOpacity={0.85}
+              style={{
+                flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+                marginTop: spacing.md,
+                borderRadius: radius.md,
+                borderWidth: 1,
+                borderColor: colors.border.brand,
+                paddingVertical: spacing.md,
+                backgroundColor: colors.bg.brand + "10",
+              }}
+            >
+              <MaterialCommunityIcons name="cards-playing-outline" size={16} color={colors.text.brand} />
+              <Text style={{ color: colors.text.brand, fontSize: 14, fontWeight: "700" }}>
+                Review Hand with AI
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          <HandAnalysisModal
+            visible={handReviewVisible}
+            notes={notes}
+            onClose={() => setHandReviewVisible(false)}
+          />
         </ScrollView>
 
         {/* ── Bottom action bar ── */}

@@ -76,10 +76,10 @@ export function PaywallModal({ visible, onClose, feature }: Props) {
   const [restoring, setRestoring] = useState(false);
   const [error, setError]       = useState<string | null>(null);
 
-  const lifetimePkg = offerings?.availablePackages.find(p => p.product.identifier.includes("lifetime"));
-  const weeklyPkg   = offerings?.availablePackages.find(p => p.product.identifier.includes("weekly"));
-  const monthlyPkg  = offerings?.availablePackages.find(p => p.product.identifier.includes("monthly"));
-  const annualPkg   = offerings?.availablePackages.find(p => p.product.identifier.includes("annual"));
+  const lifetimePkg = offerings?.availablePackages.find(p => p.product.identifier === "lifetime");
+  const weeklyPkg   = offerings?.availablePackages.find(p => p.product.identifier === "weekly");
+  const monthlyPkg  = offerings?.availablePackages.find(p => p.product.identifier === "monthly");
+  const annualPkg   = offerings?.availablePackages.find(p => p.product.identifier === "yearly");
 
   function getPkg(key: PlanKey) {
     if (key === "lifetime") return lifetimePkg;
