@@ -1,5 +1,8 @@
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { VenueSelector } from "@/components/VenueSelector";
+import { PaywallModal } from "@/components/PaywallModal";
+import { useSubscription } from "@/context/SubscriptionContext";
+import { FREE_CASH_LIMIT, FREE_TOURNAMENT_LIMIT } from "@/constants/subscription";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
@@ -13,7 +16,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { addSession, addTournament, getSetting, SessionType, updateSession } from "../../db/database";
+import { addSession, addTournament, getSessions, getSetting, SessionType, updateSession } from "../../db/database";
 
 // ── Read type availability from settings (synchronous, stable for screen lifetime) ──
 function getAvailableTypes(): SessionType[] {
@@ -25,6 +28,8 @@ export default function AddSessionScreen() {
   const editing = session ? JSON.parse(session as string) : null;
 
   const { colors, spacing, radius, typography } = usePokerTheme();
+  const { isPro } = useSubscription();
+  const [paywallVisible, setPaywallVisible] = useState(false);
   const cashOutRef = useRef<TextInput>(null);
 
   const availableTypes = getAvailableTypes();
@@ -71,6 +76,16 @@ export default function AddSessionScreen() {
 
   const handleSave = () => {
     if (!isValid) return;
+
+    if (!editing && !isPro) {
+      const existing = getSessions(type);
+      const limit = type === "tournament" ? FREE_TOURNAMENT_LIMIT : FREE_CASH_LIMIT;
+      if (existing.length >= limit) {
+        setPaywallVisible(true);
+        return;
+      }
+    }
+
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
     if (type === "tournament") {
@@ -153,6 +168,11 @@ export default function AddSessionScreen() {
       style={{ flex: 1, backgroundColor: colors.bg.secondary }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
+      <PaywallModal
+        visible={paywallVisible}
+        feature={type === "tournament" ? "unlimitedHistory" : "unlimitedHistory"}
+        onClose={() => setPaywallVisible(false)}
+      />
       <View style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: 130 }}

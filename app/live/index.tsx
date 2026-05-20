@@ -1,5 +1,8 @@
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { VenueSelector } from "@/components/VenueSelector";
+import { PaywallModal } from "@/components/PaywallModal";
+import { useSubscription } from "@/context/SubscriptionContext";
+import { FREE_CASH_LIMIT, FREE_TOURNAMENT_LIMIT } from "@/constants/subscription";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
@@ -14,7 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { getSetting, SessionType, startLiveSession, startLiveTournament } from "../../db/database";
+import { getSessions, getSetting, SessionType, startLiveSession, startLiveTournament } from "../../db/database";
 
 const STAKES       = ["1/1", "1/2", "2/3", "5/5", "10/10"];
 const QUICK_BUYINS = [100, 200, 300, 500, 1000, 2000, 5000];
@@ -25,6 +28,8 @@ function getAvailableTypes(): SessionType[] {
 
 export default function StartSessionScreen() {
   const { colors, spacing, radius, typography } = usePokerTheme();
+  const { isPro } = useSubscription();
+  const [paywallVisible, setPaywallVisible] = useState(false);
 
   const availableTypes  = getAvailableTypes();
   const showTypeToggle  = availableTypes.length > 1;
@@ -54,6 +59,16 @@ export default function StartSessionScreen() {
 
   const handleGoLive = () => {
     if (!isReady) return;
+
+    if (!isPro) {
+      const existing = getSessions(type);
+      const limit = type === "tournament" ? FREE_TOURNAMENT_LIMIT : FREE_CASH_LIMIT;
+      if (existing.length >= limit) {
+        setPaywallVisible(true);
+        return;
+      }
+    }
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const now = new Date().toISOString();
 
@@ -98,6 +113,11 @@ export default function StartSessionScreen() {
       style={{ flex: 1, backgroundColor: colors.bg.secondary }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
+      <PaywallModal
+        visible={paywallVisible}
+        feature="liveSession"
+        onClose={() => setPaywallVisible(false)}
+      />
       <Animated.View style={{
         flex: 1,
         opacity: enterAnim,

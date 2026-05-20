@@ -1,10 +1,6 @@
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { StatsCard } from "@/components/StatsCard";
-import { PaywallModal } from "@/components/PaywallModal";
-import { FREE_HISTORY_LIMIT } from "@/constants/subscription";
-import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -24,12 +20,10 @@ type Filter  = "all" | SessionType;
 
 export default function SessionsScreen() {
   const { colors, spacing, radius, typography } = usePokerTheme();
-  const { isPro } = useSubscription();
   const [sessions, setSessions]   = useState<Session[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [sort, setSort]           = useState<SortKey>("date");
   const [filter, setFilter]       = useState<Filter>("all");
-  const [paywallVisible, setPaywallVisible] = useState(false);
 
   const headerAnim = useRef(new Animated.Value(0)).current;
   const emptyAnim  = useRef(new Animated.Value(0)).current;
@@ -70,8 +64,7 @@ export default function SessionsScreen() {
     );
   }, [sessions, sort]);
 
-  const sorted = isPro ? allSorted : allSorted.slice(0, FREE_HISTORY_LIMIT);
-  const lockedCount = isPro ? 0 : Math.max(0, allSorted.length - FREE_HISTORY_LIMIT);
+  const sorted = allSorted;
 
   // ── Stats (adapt to filter) ──
   const totalProfit = useMemo(() => sessions.reduce((s, x) => s + (x.profit || 0), 0), [sessions]);
@@ -389,35 +382,9 @@ export default function SessionsScreen() {
             </TouchableOpacity>
           </Swipeable>
         )}
-        ListFooterComponent={
-          lockedCount > 0 ? (
-            <TouchableOpacity onPress={() => setPaywallVisible(true)} activeOpacity={0.85}
-              style={{
-                marginTop: 8, borderRadius: 14, borderWidth: 1.5,
-                borderColor: colors.border.brand, borderStyle: "dashed",
-                padding: 18, alignItems: "center", gap: 8,
-                backgroundColor: colors.bg.brand + "08",
-              }}>
-              <MaterialCommunityIcons name="lock-outline" size={24} color={colors.text.brand} />
-              <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "700" }}>
-                {lockedCount} more session{lockedCount > 1 ? "s" : ""} hidden
-              </Text>
-              <Text style={{ color: colors.text.secondary, fontSize: 13, textAlign: "center" }}>
-                Upgrade to Pro to see your full history
-              </Text>
-              <View style={{ backgroundColor: colors.bg.brand, borderRadius: 10, paddingHorizontal: 20, paddingVertical: 9, marginTop: 4 }}>
-                <Text style={{ color: colors.text.onBrand, fontSize: 14, fontWeight: "800" }}>Upgrade to Pro</Text>
-              </View>
-            </TouchableOpacity>
-          ) : null
-        }
+        ListFooterComponent={null}
       />
 
-      <PaywallModal
-        visible={paywallVisible}
-        feature="unlimitedHistory"
-        onClose={() => setPaywallVisible(false)}
-      />
     </View>
   );
 }

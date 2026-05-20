@@ -5,6 +5,7 @@ import {
 } from "@/db/database";
 import { PaywallModal } from "@/components/PaywallModal";
 import { useSubscription } from "@/context/SubscriptionContext";
+import { FREE_NOTES_LIMIT } from "@/constants/subscription";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
@@ -53,7 +54,7 @@ function buildExportText(entry: NoteEntry): string {
 // ─── Add / Edit Modal ─────────────────────────────────────────────────────────
 
 function NoteEditorModal({
-  visible, initial, sessions, onClose, onSaved, colors, radius,
+  visible, initial, sessions, onClose, onSaved, colors, radius, isPro,
 }: {
   visible: boolean;
   initial: NoteEntry | null;
@@ -62,6 +63,7 @@ function NoteEditorModal({
   onSaved: () => void;
   colors: any;
   radius: any;
+  isPro: boolean;
 }) {
   const isEdit = !!initial;
 
@@ -267,24 +269,35 @@ function NoteEditorModal({
           </View>
 
           {/* Enhance with AI */}
-          <TouchableOpacity
-            onPress={handleEnhance}
-            disabled={enhancing || !body.trim()}
-            activeOpacity={0.8}
-            style={{
+          {isPro ? (
+            <TouchableOpacity
+              onPress={handleEnhance}
+              disabled={enhancing || !body.trim()}
+              activeOpacity={0.8}
+              style={{
+                flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+                backgroundColor: "#7c3aed", borderRadius: 12, paddingVertical: 14,
+                opacity: !body.trim() ? 0.4 : 1,
+              }}
+            >
+              {enhancing
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <MaterialCommunityIcons name="auto-fix" size={18} color="#fff" />
+              }
+              <Text style={{ color: "#fff", fontSize: 15, fontWeight: "700" }}>
+                {enhancing ? "Enhancing…" : "Enhance with AI"}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={{
               flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
-              backgroundColor: "#7c3aed", borderRadius: 12, paddingVertical: 14,
-              opacity: !body.trim() ? 0.4 : 1,
-            }}
-          >
-            {enhancing
-              ? <ActivityIndicator color="#fff" size="small" />
-              : <MaterialCommunityIcons name="auto-fix" size={18} color="#fff" />
-            }
-            <Text style={{ color: "#fff", fontSize: 15, fontWeight: "700" }}>
-              {enhancing ? "Enhancing…" : "Enhance with AI"}
-            </Text>
-          </TouchableOpacity>
+              backgroundColor: "#7c3aed22", borderRadius: 12, paddingVertical: 14,
+              borderWidth: 1, borderColor: "#7c3aed44",
+            }}>
+              <MaterialCommunityIcons name="crown" size={16} color="#7c3aed" />
+              <Text style={{ color: "#7c3aed", fontSize: 14, fontWeight: "700" }}>AI Enhancement · Pro only</Text>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </Modal>
@@ -442,12 +455,13 @@ export default function NotesScreen() {
   const [editorVisible, setEditorVisible] = useState(false);
   const [editTarget, setEditTarget] = useState<NoteEntry | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [paywallVisible, setPaywallVisible] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
       headerRight: () => (
         <TouchableOpacity
-          onPress={() => { setEditTarget(null); setEditorVisible(true); }}
+          onPress={handleAddPress}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           style={{ flexDirection: "row", alignItems: "center", gap: 5, marginRight: 16 }}
         >
@@ -456,7 +470,7 @@ export default function NotesScreen() {
         </TouchableOpacity>
       ),
     });
-  }, [navigation, colors]);
+  }, [navigation, colors, notes.length, isPro]);
 
   useFocusEffect(
     useCallback(() => {
@@ -508,33 +522,43 @@ export default function NotesScreen() {
   }
 
   const TAB_BAR_H = (insets.bottom > 0 ? insets.bottom : 16) + 68;
+  const atFreeLimit = !isPro && notes.length >= FREE_NOTES_LIMIT;
 
-  if (!isPro) {
-    return (
-      <View style={{ flex: 1, backgroundColor: colors.bg.primary, alignItems: "center", justifyContent: "center", padding: 32 }}>
-        <MaterialCommunityIcons name="notebook-outline" size={60} color={colors.text.tertiary} style={{ marginBottom: 16 }} />
-        <Text style={{ color: colors.text.primary, fontSize: 20, fontWeight: "800", textAlign: "center", marginBottom: 8 }}>
-          Notes is a Pro Feature
-        </Text>
-        <Text style={{ color: colors.text.secondary, fontSize: 14, textAlign: "center", lineHeight: 21, marginBottom: 28 }}>
-          Save, enhance with AI, and export session notes across all your games with a Pro subscription.
-        </Text>
-        <TouchableOpacity onPress={() => setEditorVisible(true)} activeOpacity={0.85}
-          style={{ backgroundColor: colors.bg.brand, borderRadius: 14, paddingVertical: 15, paddingHorizontal: 32, flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <MaterialCommunityIcons name="crown" size={18} color={colors.text.onBrand} />
-          <Text style={{ color: colors.text.onBrand, fontSize: 16, fontWeight: "800" }}>Upgrade to Pro</Text>
-        </TouchableOpacity>
-        <PaywallModal visible={editorVisible} feature="notesTab" onClose={() => setEditorVisible(false)} />
-      </View>
-    );
+  function handleAddPress() {
+    if (atFreeLimit) { setPaywallVisible(true); return; }
+    setEditTarget(null);
+    setEditorVisible(true);
   }
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
+      <PaywallModal visible={paywallVisible} feature="notesTab" onClose={() => setPaywallVisible(false)} />
+
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: TAB_BAR_H + 80 }}
         showsVerticalScrollIndicator={false}
       >
+        {/* Free usage banner */}
+        {!isPro && (
+          <TouchableOpacity
+            onPress={() => setPaywallVisible(true)}
+            activeOpacity={0.85}
+            style={{
+              flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+              backgroundColor: "#7c3aed14", borderRadius: 12, borderWidth: 1,
+              borderColor: "#7c3aed33", padding: 12, marginBottom: 16,
+            }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <MaterialCommunityIcons name="crown" size={16} color="#7c3aed" />
+              <Text style={{ color: "#7c3aed", fontSize: 13, fontWeight: "600" }}>
+                {notes.length}/{FREE_NOTES_LIMIT} free notes used
+              </Text>
+            </View>
+            <Text style={{ color: "#7c3aed", fontSize: 12, fontWeight: "700" }}>Upgrade →</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Top bar */}
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <Text style={{ color: colors.text.tertiary, fontSize: 12, fontWeight: "600", letterSpacing: 1, textTransform: "uppercase" }}>
@@ -596,6 +620,7 @@ export default function NotesScreen() {
         onSaved={refresh}
         colors={colors}
         radius={radius}
+        isPro={isPro}
       />
     </View>
   );
