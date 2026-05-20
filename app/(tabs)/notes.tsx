@@ -8,8 +8,8 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
-import { useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
+import { useFocusEffect, useNavigation } from "expo-router";
+import { useCallback, useLayoutEffect, useState } from "react";
 import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Modal,
   Platform, ScrollView, Text, TextInput, TouchableOpacity, View,
@@ -433,11 +433,27 @@ function ActionBtn({ icon, label, color, border, onPress }: {
 export default function NotesScreen() {
   const { colors, radius } = usePokerTheme();
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const [notes, setNotes] = useState<NoteEntry[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [editorVisible, setEditorVisible] = useState(false);
   const [editTarget, setEditTarget] = useState<NoteEntry | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={() => { setEditTarget(null); setEditorVisible(true); }}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          style={{ flexDirection: "row", alignItems: "center", gap: 5, marginRight: 16 }}
+        >
+          <MaterialCommunityIcons name="plus" size={18} color={colors.text.brand} />
+          <Text style={{ color: colors.text.brand, fontSize: 15, fontWeight: "700" }}>Add</Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, colors]);
 
   useFocusEffect(
     useCallback(() => {
@@ -516,7 +532,7 @@ export default function NotesScreen() {
             <MaterialCommunityIcons name="notebook-outline" size={56} color={colors.text.tertiary} />
             <Text style={{ color: colors.text.tertiary, fontSize: 16, fontWeight: "600" }}>No notes yet</Text>
             <Text style={{ color: colors.text.tertiary, fontSize: 13, textAlign: "center", paddingHorizontal: 40, lineHeight: 19 }}>
-              Tap the button below to add your first note, or save notes from a session.
+              Tap <Text style={{ fontWeight: "700", color: colors.text.brand }}>Add</Text> in the top right to write your first note, or save notes from a session.
             </Text>
           </View>
         )}
@@ -535,25 +551,6 @@ export default function NotesScreen() {
           />
         ))}
       </ScrollView>
-
-      {/* FAB — Add Note */}
-      <TouchableOpacity
-        onPress={() => { setEditTarget(null); setEditorVisible(true); }}
-        activeOpacity={0.85}
-        style={{
-          position: "absolute",
-          bottom: TAB_BAR_H + 16,
-          right: 16,
-          width: 56, height: 56, borderRadius: 28,
-          backgroundColor: colors.bg.brand,
-          alignItems: "center", justifyContent: "center",
-          shadowColor: colors.bg.brand, shadowOpacity: 0.5,
-          shadowOffset: { width: 0, height: 4 }, shadowRadius: 12,
-          elevation: 8,
-        }}
-      >
-        <MaterialCommunityIcons name="plus" size={28} color={colors.text.onBrand} />
-      </TouchableOpacity>
 
       {/* Toast */}
       {toast && (
