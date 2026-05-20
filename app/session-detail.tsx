@@ -65,9 +65,12 @@ export default function SessionDetailScreen() {
           setIsEnhanced(true);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
+      } else {
+        Alert.alert("Enhancement failed", "Notes saved but AI enhancement couldn't run. Try again later.");
       }
-    } catch {}
-    finally {
+    } catch (e: any) {
+      Alert.alert("No connection", "Notes saved locally. AI enhancement needs an internet connection — try again when back online.");
+    } finally {
       setEnhancing(false);
     }
     try {

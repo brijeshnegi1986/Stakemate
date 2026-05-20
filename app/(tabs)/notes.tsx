@@ -89,9 +89,12 @@ function NoteEditorModal({
       if (res.ok) {
         const data = await res.json();
         if (data.enhanced) setBody(data.enhanced);
+      } else {
+        Alert.alert("Enhancement failed", "Couldn't improve notes right now. Try again later.");
       }
-    } catch {}
-    finally { setEnhancing(false); }
+    } catch {
+      Alert.alert("No connection", "AI enhancement needs an internet connection. Try again when back online.");
+    } finally { setEnhancing(false); }
   }
 
   function handleSave() {
