@@ -21,74 +21,84 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 const VISIBLE_TABS = ["index", "history", "notes", "profile"] as const;
 type VisibleTab = (typeof VISIBLE_TABS)[number];
 
+const LEFT_TABS:  VisibleTab[] = ["index", "history"];
+const RIGHT_TABS: VisibleTab[] = ["notes", "profile"];
+
 const TAB_CONFIG: Record<VisibleTab, { icon: keyof typeof MaterialCommunityIcons.glyphMap; label: string }> = {
-  index:    { icon: "home-variant",           label: "Home"     },
-  history:  { icon: "history",                label: "Sessions" },
-  notes:    { icon: "notebook-outline",       label: "Notes"    },
-  profile:  { icon: "account-circle-outline", label: "Profile"  },
+  index:   { icon: "home-variant-outline",   label: "Home"    },
+  history: { icon: "history",                 label: "History" },
+  notes:   { icon: "clipboard-text-outline", label: "Notes"   },
+  profile: { icon: "account-circle-outline", label: "Profile" },
 };
 
-const FAB_SIZE = 68;
-// Horizontal gap between indicator edge and tab boundary — matches Figma's 10px inset
-const INDICATOR_H_INSET = 5;
-// Vertical gap between indicator edge and pill boundary
-const INDICATOR_V_INSET = 5;
+const COLOR_INACTIVE = "rgba(255,255,255,0.50)";
+
+// FAB dimensions
+const FAB_SIZE     = 52;
+const FAB_SPACE    = FAB_SIZE + 16; // pill gap reserved for the FAB
+const FAB_PROTRUDE = 14;            // px FAB rises above the pill top (matches Figma top:-14px)
+const PILL_HEIGHT  = 68;
+
+// Indicator insets
+const IND_V_INSET = 5;
+const IND_H_INSET = 4;
 
 export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
   const { colors, spacing } = usePokerTheme();
   const { isPro } = useSubscription();
   const insets = useSafeAreaInsets();
   const [actionSheetVisible, setActionSheetVisible] = useState(false);
-  const [paywallVisible, setPaywallVisible] = useState(false);
+  const [paywallVisible,     setPaywallVisible]     = useState(false);
+
+  // Pill width drives all indicator math — avoids onLayout ordering races
   const [pillWidth, setPillWidth] = useState(0);
+  const indicatorX = useRef(new Animated.Value(-200)).current;
+  const indicatorW = useRef(new Animated.Value(0)).current;
+  const fabPulse   = useRef(new Animated.Value(1)).current;
 
   const activeRouteName = state.routes[state.index]?.name ?? "";
   const showBar = VISIBLE_TABS.includes(activeRouteName as VisibleTab);
 
-  const visibleRoutes = state.routes.filter((r) =>
-    VISIBLE_TABS.includes(r.name as VisibleTab)
-  );
-  const activeVisibleIndex = visibleRoutes.findIndex(
-    (r) => r.key === state.routes[state.index]?.key
-  );
-  const clampedIndex = Math.max(0, activeVisibleIndex);
+  // Calculate indicator position from pill width — pure math, no layout races
+  const moveIndicator = (routeName: string, width: number) => {
+    if (width <= 0) return;
+    const groupW = (width - FAB_SPACE) / 2; // width of each tab group
+    const tabW   = groupW / 2;              // width of each individual tab
 
-  const indicatorAnim = useRef(new Animated.Value(clampedIndex)).current;
-  const fabPulse = useRef(new Animated.Value(1)).current;
+    let tabX = 0;
+    switch (routeName) {
+      case "index":   tabX = 0;                          break;
+      case "history": tabX = tabW;                       break;
+      case "notes":   tabX = groupW + FAB_SPACE;         break;
+      case "profile": tabX = groupW + FAB_SPACE + tabW;  break;
+    }
 
-  useEffect(() => {
-    Animated.spring(indicatorAnim, {
-      toValue: clampedIndex,
-      useNativeDriver: true,
-      tension: 120,
+    Animated.spring(indicatorX, {
+      toValue: tabX + IND_H_INSET,
+      useNativeDriver: false,
+      tension: 140,
       friction: 14,
     }).start();
-  }, [clampedIndex]);
+    Animated.spring(indicatorW, {
+      toValue: tabW - IND_H_INSET * 2,
+      useNativeDriver: false,
+      tension: 140,
+      friction: 14,
+    }).start();
+  };
+
+  useEffect(() => {
+    moveIndicator(activeRouteName, pillWidth);
+  }, [activeRouteName, pillWidth]);
 
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(fabPulse, {
-          toValue: 1.05,
-          duration: 750,
-          useNativeDriver: true,
-        }),
-        Animated.timing(fabPulse, {
-          toValue: 1,
-          duration: 750,
-          useNativeDriver: true,
-        }),
+        Animated.timing(fabPulse, { toValue: 1.06, duration: 800, useNativeDriver: true }),
+        Animated.timing(fabPulse, { toValue: 1,    duration: 800, useNativeDriver: true }),
       ])
     ).start();
-  }, [fabPulse]);
-
-  const tabWidth = pillWidth > 0 ? pillWidth / VISIBLE_TABS.length : 0;
-
-  // Indicator slides to the left edge of each tab, inset adds the spacing inside
-  const indicatorX = indicatorAnim.interpolate({
-    inputRange: [0, 1, 2, 3],
-    outputRange: [0, tabWidth, tabWidth * 2, tabWidth * 3],
-  });
+  }, []);
 
   const openLive = () => {
     setActionSheetVisible(false);
@@ -97,193 +107,108 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
     markTrialStarted();
     router.push("/live");
   };
-  const openAdd  = () => { setActionSheetVisible(false); router.push("/add"); };
+  const openAdd = () => { setActionSheetVisible(false); router.push("/add"); };
 
   if (!showBar) return null;
 
   const bottomOffset = insets.bottom > 0 ? insets.bottom : 16;
 
+  const renderTab = (routeName: string) => {
+    const isActive  = routeName === activeRouteName;
+    const cfg       = TAB_CONFIG[routeName as VisibleTab];
+    const iconColor = isActive ? colors.bg.brand : COLOR_INACTIVE;
+
+    return (
+      <TouchableOpacity
+        key={routeName}
+        onPress={() => {
+          const evt = navigation.emit({
+            type: "tabPress",
+            target: state.routes.find((r) => r.name === routeName)?.key ?? "",
+            canPreventDefault: true,
+          });
+          if (!evt.defaultPrevented) navigation.navigate(routeName as never);
+        }}
+        activeOpacity={0.7}
+        style={styles.tabItem}
+      >
+        <MaterialCommunityIcons name={cfg.icon} size={22} color={iconColor} />
+        <Text style={[styles.tabLabel, { color: iconColor, fontWeight: isActive ? "700" : "500" }]}>
+          {cfg.label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
   return (
     <>
       <View
         pointerEvents="box-none"
-        style={{
-          position: "absolute",
-          bottom: bottomOffset,
-          left: 16,
-          right: 16,
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 8,
-        }}
+        style={[styles.outerContainer, { bottom: bottomOffset }]}
       >
-        {/* ── Glass pill (shadow sits on outer wrapper so it isn't clipped) ── */}
-        <View
-          style={{
-            flex: 1,
-            borderRadius: 999,
-            shadowColor: "#000",
-            shadowOpacity: 0.35,
-            shadowOffset: { width: 0, height: 6 },
-            shadowRadius: 20,
-            elevation: 14,
-          }}
-        >
-          {/* Clip region — overflow:hidden is on the inner view so blur renders correctly */}
-          <View style={{ borderRadius: 999, overflow: "hidden" }}>
+        {/* ── FAB — centered, protrudes above the pill ── */}
+        <View style={styles.fabWrapper} pointerEvents="box-none">
+          <Animated.View style={[styles.fabShadow, { transform: [{ scale: fabPulse }] }]}>
+            <TouchableOpacity
+              onPress={() => setActionSheetVisible(true)}
+              activeOpacity={0.82}
+              style={[styles.fabButton, { backgroundColor: colors.bg.brand }]}
+            >
+              <View style={[StyleSheet.absoluteFill, styles.fabRing]} />
+              <MaterialCommunityIcons name="plus" size={28} color="#fff" />
+            </TouchableOpacity>
+          </Animated.View>
+
+          {/* "Start Session" label — no dot, sits just inside the pill top */}
+          <Text style={styles.fabLabel}>Start Session</Text>
+        </View>
+
+        {/* ── Glass pill ── */}
+        <View style={styles.pillShadow}>
+          <View style={styles.pillClip}>
             <BlurView
               intensity={90}
               tint={Platform.OS === "ios" ? "systemThinMaterialDark" : "dark"}
-              style={{ flexDirection: "row" }}
+              style={styles.pillBlur}
+              onLayout={(e) => {
+                const w = e.nativeEvent.layout.width;
+                if (w !== pillWidth) setPillWidth(w);
+              }}
             >
-              {/* ── Dark base — gives the "tinted glass" depth ── */}
-              <View
-                style={[
-                  StyleSheet.absoluteFill,
-                  { backgroundColor: "rgba(2, 6, 24, 0.52)" },
-                ]}
-              />
+              {/* Dark tinted base */}
+              <View style={[StyleSheet.absoluteFill, styles.pillBase]} />
 
-              {/* ── Glossy border ring ── */}
-              <View
-                style={[
-                  StyleSheet.absoluteFill,
-                  {
-                    borderRadius: 999,
-                    borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.28)",
-                  },
-                ]}
-              />
+              {/* Glossy border ring */}
+              <View style={[StyleSheet.absoluteFill, styles.pillBorder]} />
 
-              {/* ── Sliding active indicator ── */}
-              {pillWidth > 0 && activeVisibleIndex >= 0 && (
+              {/* Sliding active indicator — positioned via math, not onLayout race */}
+              {pillWidth > 0 && (
                 <Animated.View
-                  style={{
-                    position: "absolute",
-                    top: INDICATOR_V_INSET,
-                    bottom: INDICATOR_V_INSET,
-                    left: INDICATOR_H_INSET,
-                    width: tabWidth - INDICATOR_H_INSET * 2,
-                    borderRadius: 999,
-                    // Glassy white indicator that stands out from the dark base
-                    backgroundColor: "rgba(255,255,255,0.18)",
-                    // Subtle inner highlight on the indicator itself
-                    borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: "rgba(255,255,255,0.30)",
-                    transform: [{ translateX: indicatorX }],
-                  }}
-                />
+                  style={[
+                    styles.indicator,
+                    { left: indicatorX, width: indicatorW },
+                  ]}
+                >
+                  {/* Inner gloss highlight */}
+                  <View style={styles.indicatorGloss} />
+                </Animated.View>
               )}
 
-              {/* ── Tab items ── */}
-              <View
-                style={{ flex: 1, flexDirection: "row" }}
-                onLayout={(e) => setPillWidth(e.nativeEvent.layout.width)}
-              >
-                {visibleRoutes.map((route, index) => {
-                  const isActive = index === clampedIndex && activeVisibleIndex >= 0;
-                  const cfg = TAB_CONFIG[route.name as VisibleTab];
-                  const iconColor = isActive ? colors.bg.brand : "rgba(255,255,255,0.55)";
+              {/* Left tabs */}
+              <View style={styles.tabGroup}>
+                {LEFT_TABS.map(renderTab)}
+              </View>
 
-                  return (
-                    <TouchableOpacity
-                      key={route.key}
-                      onPress={() => {
-                        const evt = navigation.emit({
-                          type: "tabPress",
-                          target: route.key,
-                          canPreventDefault: true,
-                        });
-                        if (!evt.defaultPrevented) {
-                          navigation.navigate(route.name as never);
-                        }
-                      }}
-                      activeOpacity={0.7}
-                      style={{
-                        flex: 1,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        paddingVertical: 13,
-                        gap: 3,
-                      }}
-                    >
-                      <MaterialCommunityIcons
-                        name={cfg.icon}
-                        size={22}
-                        color={iconColor}
-                      />
-                      <Text
-                        style={{
-                          fontSize: 10,
-                          fontWeight: "600",
-                          color: iconColor,
-                          lineHeight: 14,
-                        }}
-                      >
-                        {cfg.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+              {/* Center gap for FAB */}
+              <View style={{ width: FAB_SPACE }} />
+
+              {/* Right tabs */}
+              <View style={styles.tabGroup}>
+                {RIGHT_TABS.map(renderTab)}
               </View>
             </BlurView>
           </View>
         </View>
-
-        {/* ── FAB ── */}
-        <Animated.View
-          style={{
-            width: FAB_SIZE,
-            height: FAB_SIZE,
-            borderRadius: FAB_SIZE / 2,
-            shadowColor: colors.bg.brand,
-            shadowOpacity: 0.6,
-            shadowOffset: { width: 0, height: 4 },
-            shadowRadius: 14,
-            elevation: 12,
-            transform: [{ scale: fabPulse }],
-          }}
-        >
-          <TouchableOpacity
-            onPress={() => setActionSheetVisible(true)}
-            activeOpacity={0.82}
-            style={{
-              width: FAB_SIZE,
-              height: FAB_SIZE,
-              borderRadius: FAB_SIZE / 2,
-              // backgroundColor: "rgba(154,230,0,0.85)",
-              backgroundColor: colors.bg.brand,
-              alignItems: "center",
-              justifyContent: "center",
-              overflow: "hidden",
-            }}
-          >
-            {/* FAB glossy border ring */}
-            <View
-              style={[
-                StyleSheet.absoluteFill,
-                {
-                  borderRadius: FAB_SIZE / 2,
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.30)",
-                },
-              ]}
-            />
-            <Text
-              style={{
-                color: colors.text.onBrand,
-                fontSize: 11,
-                fontWeight: "700",
-                lineHeight: 15,
-                textAlign: "center",
-                letterSpacing: 0.1,
-              }}
-            >
-              {"New\nGame"}
-            </Text>
-          </TouchableOpacity>
-        </Animated.View>
       </View>
 
       <PaywallModal
@@ -292,7 +217,7 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
         onClose={() => setPaywallVisible(false)}
       />
 
-      {/* ── Action sheet modal ── */}
+      {/* ── Action sheet ── */}
       <Modal
         visible={actionSheetVisible}
         transparent
@@ -302,62 +227,29 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
         <TouchableOpacity
           activeOpacity={1}
           onPress={() => setActionSheetVisible(false)}
-          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" }}
+          style={styles.modalBackdrop}
         >
           <View
-            style={{
-              backgroundColor: colors.bg.secondary,
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-              padding: spacing.lg,
-              paddingBottom: insets.bottom > 0 ? insets.bottom + spacing.md : spacing["2xl"],
-            }}
+            style={[
+              styles.actionSheet,
+              {
+                backgroundColor: colors.bg.secondary,
+                paddingBottom: insets.bottom > 0 ? insets.bottom + spacing.md : spacing["2xl"],
+              },
+            ]}
           >
-            {/* Drag handle */}
-            <View
-              style={{
-                width: 36,
-                height: 4,
-                borderRadius: 2,
-                backgroundColor: colors.border.strong,
-                alignSelf: "center",
-                marginBottom: spacing.lg,
-              }}
-            />
-            <Text
-              style={{
-                color: colors.text.primary,
-                fontSize: 20,
-                fontWeight: "700",
-                marginBottom: spacing.sm,
-              }}
-            >
-              New Game
-            </Text>
-            <Text
-              style={{
-                color: colors.text.secondary,
-                fontSize: 14,
-                marginBottom: spacing.lg,
-              }}
-            >
+            <View style={[styles.dragHandle, { backgroundColor: colors.border.strong }]} />
+            <Text style={[styles.actionTitle, { color: colors.text.primary }]}>New Game</Text>
+            <Text style={[styles.actionSubtitle, { color: colors.text.secondary }]}>
               Choose an action below
             </Text>
+
             <TouchableOpacity
               onPress={openLive}
               activeOpacity={0.85}
-              style={{
-                backgroundColor: colors.bg.brand,
-                borderRadius: 14,
-                paddingVertical: spacing.lg,
-                alignItems: "center",
-                marginBottom: spacing.sm,
-                flexDirection: "row",
-                justifyContent: "center",
-                gap: 8,
-              }}
+              style={[styles.actionBtn, { backgroundColor: colors.bg.brand }]}
             >
-              <Text style={{ color: colors.text.onBrand, fontSize: 16, fontWeight: "700" }}>
+              <Text style={[styles.actionBtnText, { color: colors.text.onBrand }]}>
                 Start Live Session
               </Text>
               {(() => {
@@ -367,38 +259,28 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
                   <MaterialCommunityIcons name="crown" size={16} color={colors.text.onBrand} style={{ opacity: 0.85 }} />
                 );
                 if (!trial.trialStarted) return (
-                  <View style={{ backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 }}>
-                    <Text style={{ color: colors.text.onBrand, fontSize: 11, fontWeight: "700" }}>7-day free</Text>
+                  <View style={styles.trialBadge}>
+                    <Text style={[styles.trialBadgeText, { color: colors.text.onBrand }]}>7-day free</Text>
                   </View>
                 );
                 return (
-                  <View style={{ backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 }}>
-                    <Text style={{ color: colors.text.onBrand, fontSize: 11, fontWeight: "700" }}>{trial.daysLeft}d left</Text>
+                  <View style={styles.trialBadge}>
+                    <Text style={[styles.trialBadgeText, { color: colors.text.onBrand }]}>{trial.daysLeft}d left</Text>
                   </View>
                 );
               })()}
             </TouchableOpacity>
+
             <TouchableOpacity
               onPress={openAdd}
               activeOpacity={0.85}
-              style={{
-                backgroundColor: colors.bg.tertiary,
-                borderRadius: 14,
-                paddingVertical: spacing.lg,
-                alignItems: "center",
-              }}
+              style={[styles.actionBtn, { backgroundColor: colors.bg.tertiary }]}
             >
-              <Text style={{ color: colors.text.primary, fontSize: 16, fontWeight: "700" }}>
-                Log Past Session
-              </Text>
+              <Text style={[styles.actionBtnText, { color: colors.text.primary }]}>Log Past Session</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setActionSheetVisible(false)}
-              style={{ marginTop: spacing.lg, alignItems: "center" }}
-            >
-              <Text style={{ color: colors.text.brand, fontSize: 16, fontWeight: "700" }}>
-                Cancel
-              </Text>
+
+            <TouchableOpacity onPress={() => setActionSheetVisible(false)} style={styles.cancelBtn}>
+              <Text style={[styles.cancelText, { color: colors.text.brand }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -406,3 +288,179 @@ export function CustomTabBar({ state, navigation }: BottomTabBarProps) {
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  outerContainer: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    alignItems: "center",
+  },
+
+  // ── FAB ──────────────────────────────────────────────────────────────
+  fabWrapper: {
+    position: "absolute",
+    top: -FAB_PROTRUDE,
+    zIndex: 20,
+    alignItems: "center",
+    gap: 2,
+  },
+  fabShadow: {
+    width: FAB_SIZE,
+    height: FAB_SIZE,
+    borderRadius: FAB_SIZE / 2,
+    shadowColor: "#7ccf00",
+    shadowOpacity: 0.55,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 14,
+    elevation: 12,
+  },
+  fabButton: {
+    width: FAB_SIZE,
+    height: FAB_SIZE,
+    borderRadius: FAB_SIZE / 2,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  fabRing: {
+    borderRadius: FAB_SIZE / 2,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.30)",
+  },
+  fabLabel: {
+    fontSize: 10,
+    fontWeight: "500",
+    color: "rgba(255,255,255,0.70)",
+    letterSpacing: 0.2,
+  },
+
+  // ── Pill ─────────────────────────────────────────────────────────────
+  pillShadow: {
+    width: "100%",
+    height: PILL_HEIGHT,
+    borderRadius: 999,
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 20,
+    elevation: 14,
+  },
+  pillClip: {
+    borderRadius: 999,
+    overflow: "hidden",
+    height: PILL_HEIGHT,
+  },
+  pillBlur: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    height: PILL_HEIGHT,
+  },
+  pillBase: {
+    backgroundColor: "rgba(2, 6, 24, 0.55)",
+  },
+  pillBorder: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.22)",
+  },
+
+  // ── Sliding active indicator ─────────────────────────────────────────
+  indicator: {
+    position: "absolute",
+    top: IND_V_INSET,
+    bottom: IND_V_INSET,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.38)",
+    overflow: "hidden",
+  },
+  // Top highlight stripe — the "glossy" sheen
+  indicatorGloss: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: "50%",
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+
+  // ── Tab groups & items ───────────────────────────────────────────────
+  tabGroup: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  tabItem: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    gap: 3,
+  },
+  tabLabel: {
+    fontSize: 10,
+    lineHeight: 13,
+  },
+
+  // ── Action sheet ─────────────────────────────────────────────────────
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "flex-end",
+  },
+  actionSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 20,
+  },
+  actionTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    marginBottom: 6,
+  },
+  actionSubtitle: {
+    fontSize: 14,
+    marginBottom: 20,
+  },
+  actionBtn: {
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginBottom: 10,
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
+  },
+  actionBtnText: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  trialBadge: {
+    backgroundColor: "rgba(255,255,255,0.2)",
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  trialBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  cancelBtn: {
+    marginTop: 12,
+    alignItems: "center",
+  },
+  cancelText: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+});

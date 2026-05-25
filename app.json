@@ -10,7 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.stakemate.pokerroll"
+      "bundleIdentifier": "com.stakemate.pokerroll",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.stakemate.pokerroll",
@@ -48,17 +51,18 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "9b30daa7-44c4-44cb-957c-a8a21fce9f36"
-      }
-    },
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "updates": {
       "url": "https://u.expo.dev/9b30daa7-44c4-44cb-957c-a8a21fce9f36"
+    },
+    "owner": "brijeshnegi",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8ecafab4-e3ba-4166-9b77-e14470975c1b"
+      }
     }
   }
 }

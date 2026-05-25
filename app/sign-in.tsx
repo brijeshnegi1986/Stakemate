@@ -1,148 +1,260 @@
+import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { PokerRollLogo } from "@/components/PokerRollLogo";
-import * as AuthSession from "expo-auth-session";
-import * as WebBrowser from "expo-web-browser";
-import Constants from "expo-constants";
+import * as AppleAuthentication from "expo-apple-authentication";
+import * as Linking from "expo-linking";
 import { router } from "expo-router";
-import { Alert, Text, TouchableOpacity, View } from "react-native";
+import { useEffect, useState } from "react";
+import {
+  ActivityIndicator, Alert, Platform, StyleSheet,
+  Text, TouchableOpacity, View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
-WebBrowser.maybeCompleteAuthSession();
-
-function getRedirectUri(): string {
-  if (__DEV__) {
-    // In Expo SDK 50+, the dev server LAN IP lives in expoGoConfig.debuggerHost
-    // e.g. "192.168.1.5:8081" — this is the address the physical device can actually reach
-    const debuggerHost =
-      Constants.expoGoConfig?.debuggerHost ??
-      (Constants as any).manifest?.hostUri ??
-      "localhost:8081";
-    return `exp://${debuggerHost}`;
-  }
-  return AuthSession.makeRedirectUri({ scheme: "pokerroll", path: "auth/callback" });
-}
+type Provider = "apple" | "google" | null;
 
 export default function SignInScreen() {
-  const { colors, spacing, radius } = usePokerTheme();
+  const { colors, spacing } = usePokerTheme();
+  const { session, signInWithApple } = useAuth();
   const insets = useSafeAreaInsets();
+  const [loading, setLoading] = useState<Provider>(null);
 
-  async function signInWithGoogle() {
+  useEffect(() => {
+    if (session) router.replace("/(tabs)");
+  }, [session]);
+
+  async function handleApple() {
+    if (loading) return;
+    setLoading("apple");
     try {
-      const redirectTo = getRedirectUri();
-      Alert.alert("DEBUG — redirect URL", redirectTo); // temporary: remove after fix
-
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo,
-          skipBrowserRedirect: true,
-        },
-      });
-
-      if (error || !data.url) {
-        console.error("OAuth error", error);
-        Alert.alert("Sign in failed", "Could not start Google sign in. Try again.");
-        return;
-      }
-
-      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-
-      if (result.type === "success" && result.url) {
-        const url = new URL(result.url);
-        const code = url.searchParams.get("code");
-        const hashParams = new URLSearchParams(url.hash.slice(1));
-        const accessToken = url.searchParams.get("access_token") ?? hashParams.get("access_token");
-        const refreshToken = url.searchParams.get("refresh_token") ?? hashParams.get("refresh_token");
-
-        if (code) {
-          await supabase.auth.exchangeCodeForSession(code);
-        } else if (accessToken && refreshToken) {
-          await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
-        }
-        router.replace("/(tabs)");
-      } else if (result.type === "cancel") {
-        // User closed the browser — do nothing
-      }
-    } catch (e) {
-      console.error("Google sign in error", e);
-      Alert.alert("Sign in failed", "Something went wrong. Please try again.");
+      await signInWithApple();
+    } finally {
+      setLoading(null);
     }
   }
 
+  async function handleGoogle() {
+    if (loading) return;
+    setLoading("google");
+    try {
+      const redirectTo = Linking.createURL("auth/callback");
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo, skipBrowserRedirect: true },
+      });
+      if (error || !data.url) {
+        Alert.alert("Sign in failed", error?.message ?? "Could not start Google sign in.");
+        setLoading(null);
+        return;
+      }
+      await Linking.openURL(data.url);
+      // loading stays true — session effect navigates away on success
+    } catch (e) {
+      Alert.alert("Sign in failed", String(e));
+      setLoading(null);
+    }
+  }
+
+  const isLoading = loading !== null;
+
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
-      {/* Header */}
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.md }}>
+    <View style={[styles.root, { backgroundColor: colors.bg.primary }]}>
+      {/* Close button */}
+      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity
           onPress={() => router.back()}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.bg.secondary, alignItems: "center", justifyContent: "center" }}
+          style={[styles.closeBtn, { backgroundColor: colors.bg.secondary }]}
         >
           <MaterialCommunityIcons name="close" size={20} color={colors.text.secondary} />
         </TouchableOpacity>
       </View>
 
-      {/* Content */}
-      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 32 }}>
-        <PokerRollLogo size={64} style={{ marginBottom: 24 }} />
+      {/* Main content */}
+      <View style={styles.content}>
+        <PokerRollLogo size={72} style={{ marginBottom: 28 }} />
 
-        <Text style={{ color: colors.text.primary, fontSize: 26, fontWeight: "800", textAlign: "center", marginBottom: 8 }}>
+        <Text style={[styles.title, { color: colors.text.primary }]}>
           Sign in to PokerRoll
         </Text>
-        <Text style={{ color: colors.text.secondary, fontSize: 15, textAlign: "center", lineHeight: 22, marginBottom: 48 }}>
-          Back up your sessions, join challenges, and win prizes.
+        <Text style={[styles.subtitle, { color: colors.text.secondary }]}>
+          Back up your sessions, join challenges,{"\n"}and unlock all features.
         </Text>
 
-        {/* Google Sign In */}
-        <TouchableOpacity
-          onPress={signInWithGoogle}
-          activeOpacity={0.85}
-          style={{
-            width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center",
-            gap: 12, backgroundColor: "#fff", borderRadius: radius.lg,
-            paddingVertical: 15, marginBottom: 12,
-            shadowColor: "#000", shadowOpacity: 0.08, shadowOffset: { width: 0, height: 2 }, shadowRadius: 8,
-            elevation: 2,
-          }}
-        >
-          <MaterialCommunityIcons name="google" size={20} color="#4285F4" />
-          <Text style={{ color: "#1a1a1a", fontSize: 16, fontWeight: "600" }}>
-            Continue with Google
-          </Text>
-        </TouchableOpacity>
+        {/* ── Continue with Apple (iOS only) ── */}
+        {Platform.OS === "ios" && (
+          <TouchableOpacity
+            onPress={handleApple}
+            activeOpacity={0.88}
+            disabled={isLoading}
+            style={[styles.appleBtn, { opacity: isLoading && loading !== "apple" ? 0.5 : 1 }]}
+          >
+            {loading === "apple" ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <MaterialCommunityIcons name="apple" size={20} color="#fff" />
+                <Text style={styles.appleBtnText}>Continue with Apple</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
 
-        {/* Apple Sign In — enabled once Apple Developer account is ready */}
-        {/* {Platform.OS === "ios" && (
-          <AppleAuthentication.AppleAuthenticationButton
-            buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-            cornerRadius={radius.lg}
-            style={{ width: "100%", height: 50, marginBottom: 12 }}
-            onPress={signInWithApple}
-          />
-        )} */}
+        {/* ── Continue with Google ── */}
+        <TouchableOpacity
+          onPress={handleGoogle}
+          activeOpacity={0.88}
+          disabled={isLoading}
+          style={[
+            styles.googleBtn,
+            {
+              backgroundColor: colors.bg.primary,
+              borderColor: colors.border.default,
+              opacity: isLoading && loading !== "google" ? 0.5 : 1,
+            },
+          ]}
+        >
+          {loading === "google" ? (
+            <ActivityIndicator size="small" color={colors.text.primary} />
+          ) : (
+            <>
+              {/* Google G logo colours */}
+              <View style={styles.googleIconWrap}>
+                <MaterialCommunityIcons name="google" size={18} color="#4285F4" />
+              </View>
+              <Text style={[styles.googleBtnText, { color: colors.text.primary }]}>
+                Continue with Google
+              </Text>
+            </>
+          )}
+        </TouchableOpacity>
 
         {/* Skip */}
         <TouchableOpacity
           onPress={() => router.back()}
-          style={{ marginTop: 16 }}
           activeOpacity={0.7}
+          style={{ marginTop: 24 }}
         >
-          <Text style={{ color: colors.text.tertiary, fontSize: 14 }}>
+          <Text style={[styles.skipText, { color: colors.text.tertiary }]}>
             Maybe later — continue without account
           </Text>
         </TouchableOpacity>
       </View>
 
       {/* Footer */}
-      <View style={{ paddingBottom: insets.bottom + 16, paddingHorizontal: 32 }}>
-        <Text style={{ color: colors.text.tertiary, fontSize: 11, textAlign: "center", lineHeight: 16 }}>
-          By signing in you agree to our Terms of Service and Privacy Policy.
-          Your session data stays on your device unless you choose to sync.
+      <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
+        <Text style={[styles.footerText, { color: colors.text.tertiary }]}>
+          By continuing you agree to our{" "}
+          <Text
+            style={{ textDecorationLine: "underline" }}
+            onPress={() => router.push("/terms")}
+          >
+            Terms of Service
+          </Text>
+          {" "}and{" "}
+          <Text
+            style={{ textDecorationLine: "underline" }}
+            onPress={() => router.push("/privacy-policy")}
+          >
+            Privacy Policy
+          </Text>
+          .
         </Text>
       </View>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  topBar: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+  },
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  content: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+  },
+  title: {
+    fontSize: 26,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 10,
+    letterSpacing: -0.3,
+  },
+  subtitle: {
+    fontSize: 15,
+    textAlign: "center",
+    lineHeight: 22,
+    marginBottom: 40,
+  },
+
+  // Apple button — black per HIG
+  appleBtn: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    backgroundColor: "#000",
+    borderRadius: 14,
+    paddingVertical: 16,
+    marginBottom: 12,
+    minHeight: 54,
+  },
+  appleBtnText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+    letterSpacing: 0.1,
+  },
+
+  // Google button — outlined
+  googleBtn: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    paddingVertical: 16,
+    minHeight: 54,
+  },
+  googleIconWrap: {
+    width: 20,
+    alignItems: "center",
+  },
+  googleBtnText: {
+    fontSize: 16,
+    fontWeight: "600",
+    letterSpacing: 0.1,
+  },
+
+  skipText: {
+    fontSize: 14,
+  },
+  footer: {
+    paddingHorizontal: 32,
+  },
+  footerText: {
+    fontSize: 11,
+    textAlign: "center",
+    lineHeight: 17,
+  },
+});

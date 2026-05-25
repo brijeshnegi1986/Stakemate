@@ -50,6 +50,7 @@ export const initDB = () => {
   try { db.execSync(`ALTER TABLE notes_history ADD COLUMN title TEXT DEFAULT ''`); } catch (_) {}
   try { db.execSync(`ALTER TABLE notes_history ADD COLUMN updated_at INTEGER DEFAULT 0`); } catch (_) {}
   try { db.execSync(`ALTER TABLE notes_history ADD COLUMN hand_analysis TEXT`); } catch (_) {}
+  try { db.execSync(`ALTER TABLE notes_history ADD COLUMN metadata TEXT DEFAULT NULL`); } catch (_) {}
 
   // Settings key-value store
   db.execSync(`
@@ -363,6 +364,16 @@ export const clearAllSessions = (): void => {
 
 // ─── Notes History ────────────────────────────────────────────────────────────
 
+// Structured poker hand metadata — stored as JSON in the metadata column
+export type HandMetadata = {
+  stakes?: string;      // e.g. "1/2"
+  betType?: string;     // e.g. "SRP" | "3BP" | "4BP" | "5BP"
+  heroPos?: string;     // e.g. "SB" | "BTN" | "CO" | "HJ" | "MP" | "EP" | "UTG" | "BB"
+  vsPos?: string;       // e.g. "OOP" | "IP" | "BTN"
+  holeCards?: string[]; // e.g. ["8d","8h"]
+  boardCards?: string[]; // e.g. ["Ts","7c","2c","5s","8c"]
+};
+
 export type NoteEntry = {
   id: number;
   session_id: number;      // 0 = standalone note
@@ -376,6 +387,7 @@ export type NoteEntry = {
   created_at: number;
   updated_at: number;
   hand_analysis: string | null;  // JSON string of HandAnalysis
+  metadata: string | null;       // JSON string of HandMetadata
 };
 
 export const saveNoteEntry = (data: {
@@ -387,14 +399,16 @@ export const saveNoteEntry = (data: {
   rawNotes: string;
   enhancedNotes: string | null;
   title?: string;
+  metadata?: HandMetadata | null;
 }): void => {
   const now = Date.now();
   db.runSync(
     `INSERT INTO notes_history
-       (session_id, session_date, session_venue, session_profit, session_type, raw_notes, enhanced_notes, title, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, session_date, session_venue, session_profit, session_type, raw_notes, enhanced_notes, title, metadata, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [data.sessionId, data.sessionDate, data.sessionVenue, data.sessionProfit,
-     data.sessionType, data.rawNotes, data.enhancedNotes, data.title ?? "", now, now]
+     data.sessionType, data.rawNotes, data.enhancedNotes, data.title ?? "",
+     data.metadata ? JSON.stringify(data.metadata) : null, now, now]
   );
 };
 
@@ -403,6 +417,7 @@ export const updateNoteEntry = (id: number, data: {
   rawNotes?: string;
   enhancedNotes?: string | null;
   handAnalysis?: string | null;
+  metadata?: HandMetadata | null;
 }): void => {
   const now = Date.now();
   db.runSync(
@@ -411,10 +426,13 @@ export const updateNoteEntry = (id: number, data: {
          raw_notes = COALESCE(?, raw_notes),
          enhanced_notes = COALESCE(?, enhanced_notes),
          hand_analysis = COALESCE(?, hand_analysis),
+         metadata = COALESCE(?, metadata),
          updated_at = ?
      WHERE id = ?`,
     [data.title ?? null, data.rawNotes ?? null, data.enhancedNotes ?? null,
-     data.handAnalysis ?? null, now, id]
+     data.handAnalysis ?? null,
+     data.metadata !== undefined ? (data.metadata ? JSON.stringify(data.metadata) : null) : null,
+     now, id]
   );
 };
 

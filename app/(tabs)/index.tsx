@@ -1,6 +1,9 @@
+import { FeatureBanner } from "@/components/FeatureBanner";
+import { PaywallModal } from "@/components/PaywallModal";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { SessionCard } from "@/components/SessionCard";
 import { StatsCard } from "@/components/StatsCard";
+import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -52,9 +55,11 @@ type DashboardFilter = "all" | SessionType;
 
 export default function HomeScreen() {
   const { colors, spacing, radius, typography } = usePokerTheme();
+  const { isPro } = useSubscription();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [dashboardFilter, setDashboardFilter] = useState<DashboardFilter>("all");
+  const [paywallVisible, setPaywallVisible] = useState(false);
 
   // Live dot pulse
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -178,6 +183,7 @@ export default function HomeScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+      <PaywallModal visible={paywallVisible} onClose={() => setPaywallVisible(false)} />
       <FlatList
         data={filteredSessions.slice(0, 5)}
         keyExtractor={(i) => i.id.toString()}
@@ -328,6 +334,13 @@ export default function HomeScreen() {
                   <StatsCard label="Win rate" value={cashWinRate !== null ? `${cashWinRate}%` : "—"} />
                 </Animated.View>
 
+                {/* ── Feature banner (free / logged-out users) ── */}
+                {!isPro && (
+                  <Animated.View style={slide(anim4)}>
+                    <FeatureBanner onUpgradePress={() => setPaywallVisible(true)} />
+                  </Animated.View>
+                )}
+
                 {/* ── Last played card ── */}
                 <Animated.View style={[slide(anim4), {
                   backgroundColor: colors.bg.secondary,
@@ -397,7 +410,13 @@ export default function HomeScreen() {
                 <Text style={{ color: colors.text.secondary, ...typography.bodySm, textAlign: "center" }}>
                   Start a live session or add one manually
                 </Text>
-                <View style={{ width: "100%", marginTop: spacing.lg, gap: spacing.md }}>
+                {!isPro && (
+                  <View style={{ width: "100%", marginTop: spacing.lg }}>
+                    <FeatureBanner onUpgradePress={() => setPaywallVisible(true)} />
+                  </View>
+                )}
+
+                <View style={{ width: "100%", marginTop: spacing.sm, gap: spacing.md }}>
                   <TouchableOpacity
                     onPress={openLive}
                     activeOpacity={0.85}

@@ -1,6 +1,9 @@
 import { supabase } from "@/lib/supabase";
 import { Session, User } from "@supabase/supabase-js";
+import * as AppleAuthentication from "expo-apple-authentication";
 import { createContext, useContext, useEffect, useState } from "react";
+import * as Linking from "expo-linking";
+import { Alert, Platform } from "react-native";
 
 type Profile = {
   id: string;
@@ -16,6 +19,8 @@ type AuthContextType = {
   user: User | null;
   profile: Profile | null;
   loading: boolean;
+  signInWithApple: () => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 };
@@ -25,6 +30,8 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   profile: null,
   loading: true,
+  signInWithApple: async () => {},
+  signInWithGoogle: async () => {},
   signOut: async () => {},
   refreshProfile: async () => {},
 });
@@ -47,7 +54,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       else setProfile(null);
     });
 
-    return () => subscription.unsubscribe();
+    // Handle OAuth deep link callback (Google, etc.)
+    async function handleDeepLink(url: string) {
+      if (!url.includes("auth/callback")) return;
+      try {
+        const parsed = new URL(url);
+        const code = parsed.searchParams.get("code");
+        const accessToken = parsed.searchParams.get("access_token") ?? new URLSearchParams(parsed.hash.slice(1)).get("access_token");
+        const refreshToken = parsed.searchParams.get("refresh_token") ?? new URLSearchParams(parsed.hash.slice(1)).get("refresh_token");
+
+        if (code) {
+          await supabase.auth.exchangeCodeForSession(code);
+        } else if (accessToken && refreshToken) {
+          await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        }
+      } catch (e) {
+        console.error("Auth deep link error", e);
+      }
+    }
+
+    Linking.getInitialURL().then((url) => { if (url) handleDeepLink(url); });
+    const linkSub = Linking.addEventListener("url", ({ url }) => handleDeepLink(url));
+
+    return () => {
+      subscription.unsubscribe();
+      linkSub.remove();
+    };
   }, []);
 
   async function fetchProfile(userId: string) {
@@ -63,6 +95,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (session) await fetchProfile(session.user.id);
   }
 
+  async function signInWithApple() {
+    if (Platform.OS !== "ios") return;
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+
+      if (!credential.identityToken) {
+        Alert.alert("Sign in failed", "Apple did not return an identity token.");
+        return;
+      }
+
+      const { error } = await supabase.auth.signInWithIdToken({
+        provider: "apple",
+        token: credential.identityToken,
+      });
+
+      if (error) Alert.alert("Sign in failed", error.message);
+    } catch (e: any) {
+      // ERR_CANCELED means the user dismissed the sheet — don't show an alert
+      if (e?.code !== "ERR_CANCELED") {
+        Alert.alert("Sign in failed", e?.message ?? String(e));
+      }
+    }
+  }
+
+  async function signInWithGoogle() {
+    try {
+      const redirectTo = Linking.createURL("auth/callback");
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo, skipBrowserRedirect: true },
+      });
+      if (error || !data.url) {
+        Alert.alert("Sign in failed", error?.message ?? "Could not start Google sign in.");
+        return;
+      }
+      await Linking.openURL(data.url);
+    } catch (e: any) {
+      Alert.alert("Sign in failed", e?.message ?? String(e));
+    }
+  }
+
   async function signOut() {
     await supabase.auth.signOut();
     setProfile(null);
@@ -74,6 +152,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user: session?.user ?? null,
       profile,
       loading,
+      signInWithApple,
+      signInWithGoogle,
       signOut,
       refreshProfile,
     }}>
