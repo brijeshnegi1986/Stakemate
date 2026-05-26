@@ -29,6 +29,19 @@ const PATCHES = [
       );
     },
   },
+  // Hermes can't parse dynamic import() expressions. supabase-js uses one to
+  // optionally load @opentelemetry/api for tracing. We're not using OTel, so
+  // short-circuit loadOtel() to return null and drop the offending expression.
+  {
+    file: '@supabase/supabase-js/dist/index.mjs',
+    find: /if \(otelModulePromise === null\) otelModulePromise = import\(\/\* webpackIgnore: true \*\/ \/\* turbopackIgnore: true \*\/ \/\* @vite-ignore \*\/ OTEL_PKG\)\.catch\(\(\) => null\);/,
+    replace: 'if (otelModulePromise === null) otelModulePromise = Promise.resolve(null);',
+  },
+  {
+    file: '@supabase/supabase-js/dist/index.cjs',
+    find: /if \(otelModulePromise === null\) otelModulePromise = Promise\.resolve\(`\$\{OTEL_PKG\}`\)\.then\(\(s\) => tslib_1\.__importStar\(require\(s\)\)\)\.catch\(\(\) => null\);/,
+    replace: 'if (otelModulePromise === null) otelModulePromise = Promise.resolve(null);',
+  },
 ];
 
 let patched = false;
