@@ -208,7 +208,7 @@ export default function ProfileScreen() {
   }
 
   // ─── Signed-in ────────────────────────────────────────────────────────────
-  const initials = (profile?.display_name ?? user?.email ?? "?")[0].toUpperCase();
+  const initials = (profile?.display_name || user?.email || "?")[0].toUpperCase();
 
   return (
     <ScrollView

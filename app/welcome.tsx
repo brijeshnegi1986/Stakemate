@@ -2,6 +2,7 @@ import { PokerRollLogo } from "@/components/PokerRollLogo";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import * as SecureStore from "expo-secure-store";
 import { useRef, useState } from "react";
 import {
   Animated, Dimensions, Platform, ScrollView,
@@ -170,7 +171,14 @@ export default function WelcomeScreen() {
 
         {/* Primary CTA */}
         <TouchableOpacity
-          onPress={() => isLast ? router.replace("/(tabs)") : goTo(index + 1)}
+          onPress={() => {
+            if (isLast) {
+              SecureStore.setItemAsync("onboarded", "1");
+              router.replace("/(tabs)");
+            } else {
+              goTo(index + 1);
+            }
+          }}
           activeOpacity={0.88}
           style={{
             backgroundColor: slide.accent,
@@ -192,7 +200,7 @@ export default function WelcomeScreen() {
 
         {/* Skip */}
         {!isLast && (
-          <TouchableOpacity onPress={() => router.replace("/(tabs)")} activeOpacity={0.6}>
+          <TouchableOpacity onPress={() => { SecureStore.setItemAsync("onboarded", "1"); router.replace("/(tabs)"); }} activeOpacity={0.6}>
             <Text style={{ color: colors.text.tertiary, ...typography.caption, textAlign: "center" }}>
               Skip intro
             </Text>

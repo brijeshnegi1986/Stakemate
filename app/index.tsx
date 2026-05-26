@@ -1,6 +1,7 @@
 import { PokerRollLogo } from "@/components/PokerRollLogo";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { router } from "expo-router";
+import * as SecureStore from "expo-secure-store";
 import { useEffect, useRef } from "react";
 import { Animated, Text, View } from "react-native";
 
@@ -15,8 +16,9 @@ export default function SplashScreen() {
       useNativeDriver: true,
     }).start();
 
-    const timer = setTimeout(() => {
-      router.replace("/welcome");
+    const timer = setTimeout(async () => {
+      const onboarded = await SecureStore.getItemAsync("onboarded");
+      router.replace(onboarded ? "/(tabs)" : "/welcome");
     }, 2000);
 
     return () => clearTimeout(timer);
