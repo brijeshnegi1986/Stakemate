@@ -3,7 +3,7 @@ import { useSubscription } from "@/context/SubscriptionContext";
 import { getTrialStatus, markTrialStarted } from "@/hooks/use-trial";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
+import type { BottomTabBarProps } from "expo-router/build/react-navigation/bottom-tabs";
 import { BlurView } from "expo-blur";
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";

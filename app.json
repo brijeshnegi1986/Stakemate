@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "pokerroll",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.stakemate.pokerroll",
@@ -23,7 +22,6 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -45,14 +43,15 @@
         }
       ],
       "expo-sqlite",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-font",
+      "expo-image",
+      "expo-sharing",
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
-    },
-    "runtimeVersion": {
-      "policy": "appVersion"
+      "typedRoutes": true
     },
     "updates": {
       "url": "https://u.expo.dev/9b30daa7-44c4-44cb-957c-a8a21fce9f36"
@@ -61,7 +60,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "8ecafab4-e3ba-4166-9b77-e14470975c1b"
+        "projectId": "61b7d1d1-5bce-4340-ab6b-cfdc6df5d539"
       }
     }
   }

@@ -1,9 +1,8 @@
-import { AppThemeProvider, useThemeContext } from "@/store/ThemeContext";
-import { SubscriptionProvider } from "@/context/SubscriptionContext";
 import { AuthProvider } from "@/context/AuthContext";
+import { SubscriptionProvider } from "@/context/SubscriptionContext";
+import { AppThemeProvider, useThemeContext } from "@/store/ThemeContext";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Theme, ThemeProvider } from "@react-navigation/native";
-import { router, Stack } from "expo-router";
+import { router, Stack, ThemeProvider } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { Text, TouchableOpacity } from "react-native";
@@ -20,7 +19,7 @@ function RootLayoutContent() {
     markTrialStarted();
   }, []);
 
-  const navigationTheme: Theme = {
+  const navigationTheme = {
     dark: isDark,
     colors: {
       primary: themeColors.bg.brand,
@@ -31,10 +30,10 @@ function RootLayoutContent() {
       notification: themeColors.bg.danger,
     },
     fonts: {
-      regular: { fontFamily: 'System', fontWeight: '400' },
-      medium: { fontFamily: 'System', fontWeight: '500' },
-      bold: { fontFamily: 'System', fontWeight: '600' },
-      heavy: { fontFamily: 'System', fontWeight: '800' },
+      regular: { fontFamily: 'System', fontWeight: '400' as const },
+      medium: { fontFamily: 'System', fontWeight: '500' as const },
+      bold: { fontFamily: 'System', fontWeight: '600' as const },
+      heavy: { fontFamily: 'System', fontWeight: '800' as const },
     },
   };
 
