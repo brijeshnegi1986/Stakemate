@@ -1,5 +1,5 @@
 // ─── RevenueCat API Keys ──────────────────────────────────────────────────────
-export const RC_API_KEY_IOS     = "test_DUdlpssbkNVofURDZsmjPnGQBdC";
+export const RC_API_KEY_IOS     = "appl_AnDJSmnTRVZjSFmitBpiFnZvWRm";
 export const RC_API_KEY_ANDROID = "test_DUdlpssbkNVofURDZsmjPnGQBdC";
 
 // ─── Product IDs (must match exactly in App Store Connect + Google Play) ──────
