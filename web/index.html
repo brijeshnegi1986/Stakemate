@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PokerRoll by Stakemate — Poker Bankroll Tracker</title>
+  <meta name="description" content="Track every poker session, log hands, and get AI coaching. Built for serious Australian poker players." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d1117;
+      --bg2: #161b22;
+      --bg3: #21262d;
+      --border: #30363d;
+      --green: #9afe43;
+      --purple: #7c3aed;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --radius: 12px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    a { color: var(--green); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── NAV ── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(13, 17, 23, 0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 60px;
+    }
+
+    .nav-brand {
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: 0.3px;
+    }
+
+    .nav-brand span { color: var(--green); }
+
+    .nav-links {
+      display: flex;
+      gap: 24px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+
+    /* ── HERO ── */
+    .hero {
+      text-align: center;
+      padding: 100px 24px 80px;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--green) + "18";
+      background-color: rgba(154, 254, 67, 0.12);
+      border: 1px solid rgba(154, 254, 67, 0.3);
+      border-radius: 999px;
+      padding: 4px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--green);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-bottom: 24px;
+    }
+
+    .hero h1 {
+      font-size: clamp(36px, 7vw, 60px);
+      font-weight: 900;
+      line-height: 1.1;
+      letter-spacing: -0.5px;
+      margin-bottom: 20px;
+    }
+
+    .hero h1 span { color: var(--green); }
+
+    .hero p {
+      font-size: 18px;
+      color: var(--muted);
+      max-width: 520px;
+      margin: 0 auto 40px;
+      line-height: 1.7;
+    }
+
+    .btn-appstore {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--text);
+      color: #000;
+      border-radius: 14px;
+      padding: 14px 28px;
+      font-size: 15px;
+      font-weight: 700;
+      transition: opacity 0.2s;
+    }
+
+    .btn-appstore:hover { opacity: 0.88; text-decoration: none; }
+
+    .hero-sub {
+      margin-top: 16px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    /* ── FEATURES ── */
+    .section {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 80px 24px;
+    }
+
+    .section-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--green);
+      margin-bottom: 12px;
+    }
+
+    .section h2 {
+      font-size: clamp(26px, 4vw, 36px);
+      font-weight: 800;
+      margin-bottom: 48px;
+      line-height: 1.2;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+    }
+
+    .feature-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+    }
+
+    .feature-icon {
+      font-size: 28px;
+      margin-bottom: 16px;
+    }
+
+    .feature-card h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+
+    .feature-card p {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    /* ── DIVIDER ── */
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    /* ── PROSE (privacy / terms / support) ── */
+    .prose {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 80px 24px;
+    }
+
+    .prose h2 {
+      font-size: 28px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .prose .updated {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 40px;
+    }
+
+    .prose h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 32px 0 10px;
+      color: var(--text);
+    }
+
+    .prose p {
+      font-size: 15px;
+      color: var(--muted);
+      margin-bottom: 12px;
+      line-height: 1.7;
+    }
+
+    .prose ul {
+      list-style: none;
+      margin: 0 0 12px;
+      padding: 0;
+    }
+
+    .prose ul li {
+      font-size: 15px;
+      color: var(--muted);
+      padding: 4px 0 4px 20px;
+      position: relative;
+      line-height: 1.65;
+    }
+
+    .prose ul li::before {
+      content: "•";
+      position: absolute;
+      left: 0;
+      color: var(--green);
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      text-align: center;
+      padding: 40px 24px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    footer a { color: var(--muted); }
+    footer a:hover { color: var(--text); }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 600px) {
+      .nav-links { display: none; }
+      .hero { padding: 64px 20px 56px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <span class="nav-brand">Poker<span>Roll</span></span>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#support">Support</a></li>
+      <li><a href="#privacy">Privacy</a></li>
+      <li><a href="#terms">Terms</a></li>
+    </ul>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="badge">🃏 Now on the App Store</div>
+    <h1>The poker tracker<br />built for <span>serious players.</span></h1>
+    <p>Track sessions, log hands, and get street-by-street AI coaching — all in one place. Free for 7 days, no credit card required.</p>
+    <a class="btn-appstore" href="https://apps.apple.com/au/app/pokerroll/id0000000000" target="_blank" rel="noopener">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+      Download on the App Store
+    </a>
+    <p class="hero-sub">Available for iPhone · iOS 16+</p>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="section" id="features">
+    <p class="section-label">Features</p>
+    <h2>Everything you need to<br />level up your poker game.</h2>
+    <div class="features-grid">
+
+      <div class="feature-card">
+        <div class="feature-icon">📊</div>
+        <h3>Track Every Session</h3>
+        <p>Log sessions in under 10 seconds. See your true hourly rate, profit trends, and win rate over time. Filter by cash game or tournament.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">⏱️</div>
+        <h3>Live Session Timer</h3>
+        <p>Start a live session and track your time at the table in real time. Pause, resume, and close out when you're done.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">📝</div>
+        <h3>Log Every Key Hand</h3>
+        <p>Freeform hand notes linked to each session. AI compresses them into clean poker shorthand. Copy or export anytime.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🤖</div>
+        <h3>AI Hand Coaching</h3>
+        <p>Replay any hand and get instant street-by-street feedback. Decisions graded A to D with specific suggestions on what to do differently.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🇦🇺</div>
+        <h3>Built for Australian Poker</h3>
+        <p>Preset venues including Star Sydney, Crown Melbourne, and Star Brisbane. Popular Aussie stakes: 1/2, 2/3, 5/5, 10/10.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🔒</div>
+        <h3>Private by Default</h3>
+        <p>No signup required. Your session data stays on your device. Sign in optionally with Apple or Google to enable cloud sync.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- SUPPORT -->
+  <section class="prose" id="support">
+    <h2>Support</h2>
+    <p class="updated">We're here to help.</p>
+
+    <h3>Contact Us</h3>
+    <p>For any questions, issues, or feedback, email us at <a href="mailto:support@stakemate.com.au">support@stakemate.com.au</a> and we'll get back to you within 1–2 business days.</p>
+
+    <h3>Manage Your Subscription</h3>
+    <p>PokerRoll Pro subscriptions are managed through Apple. To cancel or change your subscription:</p>
+    <ul>
+      <li>Open <strong>Settings</strong> on your iPhone</li>
+      <li>Tap your name → <strong>Subscriptions</strong></li>
+      <li>Select <strong>PokerRoll</strong> and manage from there</li>
+    </ul>
+
+    <h3>Restore Purchases</h3>
+    <p>If you've reinstalled the app or switched devices, go to <strong>Profile → Upgrade to Pro</strong> and tap <strong>Restore Purchases</strong>.</p>
+
+    <h3>Delete Your Account</h3>
+    <p>You can request account deletion at any time from the <strong>Profile</strong> screen inside the app. Local session data can be cleared from <strong>Game Settings → Data Management</strong>.</p>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- PRIVACY -->
+  <section class="prose" id="privacy">
+    <h2>Privacy Policy</h2>
+    <p class="updated">Last updated: May 2025</p>
+
+    <p>PokerRoll is built with your privacy in mind. This policy explains what data we collect, why, and how it is used.</p>
+
+    <h3>Data We Collect</h3>
+    <ul>
+      <li>Email address — only if you sign in with Apple or Google</li>
+      <li>Display name — only if you choose to set one in your profile</li>
+      <li>Session and hand data you enter — stored locally on your device</li>
+      <li>Subscription and purchase status — managed securely by Apple and RevenueCat</li>
+    </ul>
+
+    <h3>How We Use Your Data</h3>
+    <ul>
+      <li>To provide and improve the PokerRoll app</li>
+      <li>To manage your subscription and restore purchases</li>
+      <li>To send optional emails about challenges and prize opportunities (only if you opt in)</li>
+    </ul>
+
+    <h3>Data Sharing</h3>
+    <p>We do not sell your personal data. We use the following trusted third-party services:</p>
+    <ul>
+      <li><strong>Supabase</strong> — authentication and optional cloud sync</li>
+      <li><strong>RevenueCat</strong> — subscription management</li>
+      <li><strong>Apple StoreKit</strong> — in-app purchases</li>
+    </ul>
+
+    <h3>Data Retention</h3>
+    <p>Session data is stored locally on your device and is under your full control. If you create an account, your profile data is stored securely on our servers and deleted upon request.</p>
+
+    <h3>Your Rights</h3>
+    <ul>
+      <li>You can request deletion of your account and all associated data from the Profile screen in the app</li>
+      <li>You can opt out of promotional emails at any time from your profile settings</li>
+      <li>You can clear all local session data from Game Settings at any time</li>
+    </ul>
+
+    <h3>Children's Privacy</h3>
+    <p>PokerRoll is not directed at children under 18. We do not knowingly collect data from minors.</p>
+
+    <h3>Contact</h3>
+    <p>For privacy questions, contact us at <a href="mailto:support@stakemate.com.au">support@stakemate.com.au</a>.</p>
+  </section>
+
+  <hr class="divider" />
+
+  <!-- TERMS -->
+  <section class="prose" id="terms">
+    <h2>Terms of Service</h2>
+    <p class="updated">Last updated: May 2025</p>
+
+    <p>By downloading or using PokerRoll, you agree to these terms. Please read them carefully.</p>
+
+    <h3>Use of the App</h3>
+    <p>PokerRoll is licensed for personal, non-commercial use only. You may not reverse engineer, copy, modify, or redistribute the app or its content.</p>
+
+    <h3>Subscriptions</h3>
+    <ul>
+      <li>PokerRoll Pro is available as a weekly, monthly, or annual subscription</li>
+      <li>Subscriptions auto-renew unless cancelled at least 24 hours before the renewal date</li>
+      <li>Payment is charged to your Apple ID at confirmation of purchase</li>
+      <li>Manage or cancel subscriptions via your iPhone Settings → Subscriptions</li>
+      <li>No refunds are provided for partial subscription periods</li>
+    </ul>
+
+    <h3>Free Trial</h3>
+    <p>New users receive a 7-day free trial with full access. The trial automatically converts to a paid subscription unless cancelled before it ends.</p>
+
+    <h3>Disclaimer</h3>
+    <p>PokerRoll is a personal tracking and coaching tool only. We are not responsible for any gambling outcomes, financial decisions, or losses made using information from the app. Gamble responsibly.</p>
+
+    <h3>Changes to Terms</h3>
+    <p>We may update these terms from time to time. Continued use of the app after changes constitutes acceptance of the new terms.</p>
+
+    <h3>Governing Law</h3>
+    <p>These terms are governed by the laws of New South Wales, Australia.</p>
+
+    <h3>Contact</h3>
+    <p>Questions about these terms? Email us at <a href="mailto:support@stakemate.com.au">support@stakemate.com.au</a>.</p>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <p style="margin-bottom: 8px;">
+      <a href="#features">Features</a> &nbsp;·&nbsp;
+      <a href="#support">Support</a> &nbsp;·&nbsp;
+      <a href="#privacy">Privacy Policy</a> &nbsp;·&nbsp;
+      <a href="#terms">Terms of Service</a>
+    </p>
+    <p>© 2025 Stakemate &nbsp;·&nbsp; <a href="mailto:support@stakemate.com.au">support@stakemate.com.au</a></p>
+  </footer>
+
+</body>
+</html>
