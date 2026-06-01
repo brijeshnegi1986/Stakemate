@@ -3,6 +3,7 @@ import { PaywallModal } from "@/components/PaywallModal";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { SessionCard } from "@/components/SessionCard";
 import { StatsCard } from "@/components/StatsCard";
+import { useAuth } from "@/context/AuthContext";
 import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { router, useFocusEffect } from "expo-router";
@@ -56,6 +57,8 @@ type DashboardFilter = "all" | SessionType;
 export default function HomeScreen() {
   const { colors, spacing, radius, typography } = usePokerTheme();
   const { isPro } = useSubscription();
+  const { profile } = useAuth();
+  const greetingName = profile?.display_name || null;
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [dashboardFilter, setDashboardFilter] = useState<DashboardFilter>("all");
@@ -199,7 +202,7 @@ export default function HomeScreen() {
                 fontSize: 20,
                 textAlign: "left",
               }}>
-                Welcome back
+                {greetingName ? `Welcome back, ${greetingName}` : "Welcome back"}
               </Text>
             </View>
 

@@ -1,13 +1,7 @@
 import {
-  ENTITLEMENT_PRO, RC_API_KEY_ANDROID, RC_API_KEY_IOS,
-} from "@/constants/subscription";
-import {
-  createContext, useContext, useEffect, useState, ReactNode,
+  createContext, useContext, ReactNode,
 } from "react";
-import { Platform } from "react-native";
-import Purchases, {
-  CustomerInfo, LOG_LEVEL, PurchasesOffering,
-} from "react-native-purchases";
+import { PurchasesOffering } from "react-native-purchases";
 
 interface SubscriptionState {
   isPro: boolean;
@@ -25,82 +19,14 @@ const SubscriptionContext = createContext<SubscriptionState>({
   restore: async () => false,
 });
 
-const apiKey = Platform.OS === "ios" ? RC_API_KEY_IOS : RC_API_KEY_ANDROID;
-const RC_CONFIGURED = apiKey.length > 0;
 
 export function SubscriptionProvider({ children }: { children: ReactNode }) {
-  const [isPro, setIsPro]           = useState(false);
-  const [isLoading, setIsLoading]   = useState(RC_CONFIGURED);
-  const [offerings, setOfferings]   = useState<PurchasesOffering | null>(null);
-
-  useEffect(() => {
-    if (!RC_CONFIGURED) return;
-
-    let listener: { remove: () => void } | null = null;
-
-    async function setup() {
-      try {
-        const isConfigured = await Purchases.isConfigured();
-        if (!isConfigured) {
-          Purchases.setLogLevel(LOG_LEVEL.ERROR);
-          Purchases.configure({ apiKey });
-        }
-        const info = await Purchases.getCustomerInfo();
-        setIsPro(checkPro(info));
-        const all = await Purchases.getOfferings();
-        setOfferings(all.current ?? null);
-      } catch {}
-      finally { setIsLoading(false); }
-
-      try {
-        listener = Purchases.addCustomerInfoUpdateListener(info => {
-          setIsPro(checkPro(info));
-        });
-      } catch {}
-    }
-
-    setup();
-
-    return () => {
-      try { listener?.remove(); } catch {}
-    };
-  }, []);
-
-  function checkPro(info: CustomerInfo): boolean {
-    return info.entitlements.active[ENTITLEMENT_PRO]?.isActive === true;
-  }
-
-  async function purchase(packageIdentifier: string): Promise<boolean> {
-    if (!RC_CONFIGURED) return false;
-    try {
-      const all = await Purchases.getOfferings();
-      const pkg = all.current?.availablePackages.find(
-        p => p.product.identifier === packageIdentifier
-      );
-      if (!pkg) return false;
-      const { customerInfo } = await Purchases.purchasePackage(pkg);
-      const pro = checkPro(customerInfo);
-      setIsPro(pro);
-      return pro;
-    } catch {
-      return false;
-    }
-  }
-
-  async function restore(): Promise<boolean> {
-    if (!RC_CONFIGURED) return false;
-    try {
-      const info = await Purchases.restorePurchases();
-      const pro = checkPro(info);
-      setIsPro(pro);
-      return pro;
-    } catch {
-      return false;
-    }
-  }
+  // All features unlocked — subscriptions disabled
+  async function purchase(_packageIdentifier: string): Promise<boolean> { return true; }
+  async function restore(): Promise<boolean> { return true; }
 
   return (
-    <SubscriptionContext.Provider value={{ isPro, isLoading, offerings, purchase, restore }}>
+    <SubscriptionContext.Provider value={{ isPro: true, isLoading: false, offerings: null, purchase, restore }}>
       {children}
     </SubscriptionContext.Provider>
   );

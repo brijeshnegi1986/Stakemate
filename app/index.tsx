@@ -1,13 +1,15 @@
+import { useAuth } from "@/context/AuthContext";
 import { PokerRollLogo } from "@/components/PokerRollLogo";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { router } from "expo-router";
-import * as SecureStore from "expo-secure-store";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Animated, Text, View } from "react-native";
 
 export default function SplashScreen() {
   const { colors } = usePokerTheme();
+  const { session, loading } = useAuth();
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [minTimePassed, setMinTimePassed] = useState(false);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -16,13 +18,15 @@ export default function SplashScreen() {
       useNativeDriver: true,
     }).start();
 
-    const timer = setTimeout(async () => {
-      const onboarded = await SecureStore.getItemAsync("onboarded");
-      router.replace(onboarded ? "/(tabs)" : "/welcome");
-    }, 2000);
-
+    const timer = setTimeout(() => setMinTimePassed(true), 1800);
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!loading && minTimePassed) {
+      router.replace(session ? "/(tabs)" : "/welcome");
+    }
+  }, [loading, minTimePassed, session]);
 
   return (
     <View

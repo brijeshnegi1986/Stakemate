@@ -1,8 +1,6 @@
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { useSubscription } from "@/context/SubscriptionContext";
-import { PaywallModal } from "@/components/PaywallModal";
 import { PokerRollLogo } from "@/components/PokerRollLogo";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -72,11 +70,9 @@ export default function ProfileScreen() {
   const { user, profile, signOut, refreshProfile, session, signInWithApple, signInWithGoogle } = useAuth();
   const insets = useSafeAreaInsets();
 
-  const { isPro } = useSubscription();
   const [displayName, setDisplayName] = useState(profile?.display_name ?? "");
   const [promoOptIn, setPromoOptIn]   = useState(profile?.promo_opt_in ?? false);
   const [saving, setSaving]           = useState(false);
-  const [paywallVisible, setPaywallVisible] = useState(false);
 
   const isSignedIn = !!session;
   const TAB_BAR_H  = (insets.bottom > 0 ? insets.bottom : 16) + 68;
@@ -101,7 +97,7 @@ export default function ProfileScreen() {
       { text: "Cancel", style: "cancel" },
       {
         text: "Sign Out", style: "destructive",
-        onPress: async () => { await signOut(); router.replace("/(tabs)"); },
+        onPress: async () => { await signOut(); router.replace("/welcome"); },
       },
     ]);
   }
@@ -125,13 +121,6 @@ export default function ProfileScreen() {
   // ─── Shared link rows (shown in both signed-in and signed-out) ────────────
   const renderSupportRows = () => (
     <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, padding: 0, overflow: "hidden" }]}>
-      <MenuRow
-        icon={isPro ? "crown" : "crown-outline"}
-        label={isPro ? "PokerRoll Pro · Active" : "Upgrade to Pro"}
-        iconColor={isPro ? "#7c3aed" : colors.text.brand}
-        onPress={() => !isPro && setPaywallVisible(true)}
-        hideChevron={isPro}
-      />
       <MenuRow
         icon="cog-outline"
         label="Game Settings"
@@ -174,7 +163,6 @@ export default function ProfileScreen() {
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: BOTTOM_PAD }}
         showsVerticalScrollIndicator={false}
       >
-        <PaywallModal visible={paywallVisible} onClose={() => setPaywallVisible(false)} />
         {/* ── Brand + auth card ── */}
         <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
           {/* App logo */}
@@ -228,8 +216,6 @@ export default function ProfileScreen() {
       contentContainerStyle={{ padding: spacing.lg, paddingBottom: BOTTOM_PAD }}
       showsVerticalScrollIndicator={false}
     >
-      <PaywallModal visible={paywallVisible} onClose={() => setPaywallVisible(false)} />
-
       {/* ── Avatar card ── */}
       <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, alignItems: "center" }]}>
         {/* Logo top-right as branding */}
