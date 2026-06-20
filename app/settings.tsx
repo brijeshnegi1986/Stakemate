@@ -1,17 +1,22 @@
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { useThemeContext, type ThemePreference } from "@/store/ThemeContext";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   ScrollView,
+  StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   clearAllSessions,
   getSessions,
@@ -19,22 +24,23 @@ import {
   setSetting,
 } from "@/db/database";
 
+import { VENUES_BY_STATE } from "@/constants/venues";
+
 const APP_VERSION = "1.0.0";
-const STAKES_OPTIONS = ["1/1", "1/2", "2/3", "5/5", "10/10"];
+const STAKES_OPTIONS = ["1/1", "1/2", "2/3", "5/5", "5/10", "10/20", "25/50"];
 const STATE_OPTIONS = ["NSW", "VIC", "QLD", "WA", "SA", "ACT"];
-const VENUES_BY_STATE: Record<string, string[]> = {
-  NSW: ["Star Sydney", "APL", "NPL", "Poker Palace", "Home Games", "Other"],
-  VIC: ["Crown Melbourne", "APL", "NPL", "Home Games", "Other"],
-  QLD: ["Star Brisbane", "Star GoldCoast", "APL", "Home Games", "Other"],
-  WA: ["APL", "Home Games", "Other"],
-  SA: ["Adelaide Casino", "APL", "Home Games", "Other"],
-  ACT: ["Canberra Casino", "APL", "Home Games", "Other"],
-};
-const VIEW_OPTIONS: { value: string; label: string; sublabel: string }[] = [
-  { value: "all",        label: "All",        sublabel: "Combined cash + tournament stats" },
-  { value: "cash",       label: "Cash",       sublabel: "Cash game metrics only" },
-  { value: "tournament", label: "Tournament", sublabel: "Tournament metrics only" },
+const VIEW_OPTIONS: { value: string; label: string; sublabel: string; icon: any }[] = [
+  { value: "all",        label: "All",        sublabel: "Combined cash + tournament stats", icon: "layers-outline"  },
+  { value: "cash",       label: "Cash",       sublabel: "Cash game metrics only",           icon: "cash-outline"    },
+  { value: "tournament", label: "Tournament", sublabel: "Tournament metrics only",           icon: "trophy-outline"  },
 ];
+const CURRENCY_OPTIONS: { value: string; label: string; flag: string; sublabel: string }[] = [
+  { value: "AUD", label: "AUD", flag: "🇦🇺", sublabel: "Australian Dollar" },
+  { value: "USD", label: "USD", flag: "🇺🇸", sublabel: "US Dollar" },
+  { value: "GBP", label: "GBP", flag: "🇬🇧", sublabel: "British Pound" },
+  { value: "NZD", label: "NZD", flag: "🇳🇿", sublabel: "New Zealand Dollar" },
+];
+
 const THEME_OPTIONS: {
   value: ThemePreference;
   label: string;
@@ -49,12 +55,22 @@ const THEME_OPTIONS: {
 export default function SettingsScreen() {
   const { colors, spacing, radius, typography } = usePokerTheme();
   const { preference: themePreference, setPreference: setThemePreference } = useThemeContext();
+  const insets = useSafeAreaInsets();
 
   const [defaultStakes, setDefaultStakes] = useState("1/2");
   const [defaultState, setDefaultState] = useState("NSW");
   const [defaultVenue, setDefaultVenue] = useState("");
   const [defaultView, setDefaultView] = useState("all");
   const [sessionCount, setSessionCount] = useState(0);
+  const [currency, setCurrency] = useState("AUD");
+  const [currencyModalVisible, setCurrencyModalVisible] = useState(false);
+  const [themeModalVisible, setThemeModalVisible] = useState(false);
+  const [viewModalVisible, setViewModalVisible] = useState(false);
+  const [stakesModalVisible, setStakesModalVisible] = useState(false);
+  const [gameDefaultsVisible, setGameDefaultsVisible] = useState(false);
+  // temp state for the game-defaults sheet (committed on Save)
+  const [tempState, setTempState] = useState(defaultState);
+  const [tempVenue, setTempVenue] = useState(defaultVenue);
 
   useFocusEffect(
     useCallback(() => {
@@ -62,9 +78,16 @@ export default function SettingsScreen() {
       setDefaultState(getSetting("defaultState") ?? "NSW");
       setDefaultVenue(getSetting("defaultVenue") ?? "");
       setDefaultView(getSetting("dashboardView") ?? "all");
+      setCurrency(getSetting("currency") ?? "AUD");
       setSessionCount(getSessions().length);
     }, [])
   );
+
+  const handleCurrencyChange = (c: string) => {
+    setSetting("currency", c);
+    setCurrency(c);
+    setCurrencyModalVisible(false);
+  };
 
   const handleViewChange = (v: string) => {
     setSetting("dashboardView", v);
@@ -141,84 +164,156 @@ export default function SettingsScreen() {
       contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
       showsVerticalScrollIndicator={false}
     >
+      {/* ── CURRENCY ── */}
+      <SectionLabel label="Currency" colors={colors} spacing={spacing} typography={typography} />
+      <View style={card}>
+        <TouchableOpacity
+          onPress={() => setCurrencyModalVisible(true)}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.md + 2,
+            gap: spacing.md,
+          }}
+        >
+          <Text style={{ fontSize: 22 }}>
+            {CURRENCY_OPTIONS.find((o) => o.value === currency)?.flag ?? "🌐"}
+          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text.primary, ...typography.bodySm, fontWeight: "600" }}>
+              {currency}
+            </Text>
+            <Text style={{ color: colors.text.tertiary, ...typography.caption, marginTop: 1 }}>
+              {CURRENCY_OPTIONS.find((o) => o.value === currency)?.sublabel}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+        </TouchableOpacity>
+      </View>
+
       {/* ── THEME ── */}
       <SectionLabel label="Theme" colors={colors} spacing={spacing} typography={typography} />
       <View style={card}>
-        {THEME_OPTIONS.map((opt, i) => {
-          const isSelected = themePreference === opt.value;
+        {(() => {
+          const active = THEME_OPTIONS.find((o) => o.value === themePreference) ?? THEME_OPTIONS[0];
           return (
-            <View key={opt.value}>
-              {i > 0 && <View style={divider} />}
-              <TouchableOpacity
-                onPress={() => setThemePreference(opt.value)}
-                activeOpacity={0.7}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  paddingHorizontal: spacing.lg,
-                  paddingVertical: spacing.md + 2,
-                  gap: spacing.md,
-                }}
-              >
-                {/* Icon badge */}
-                <View style={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: radius.sm,
-                  backgroundColor: isSelected ? colors.bg.brand + "22" : colors.bg.primary,
-                  borderWidth: 1,
-                  borderColor: isSelected ? colors.border.brand : colors.border.default,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}>
-                  <MaterialCommunityIcons
-                    name={opt.icon}
-                    size={20}
-                    color={isSelected ? colors.text.brand : colors.text.secondary}
-                  />
-                </View>
-
-                {/* Labels */}
-                <View style={{ flex: 1 }}>
-                  <Text style={{
-                    color: colors.text.primary,
-                    ...typography.bodySm,
-                    fontWeight: "600",
-                  }}>
-                    {opt.label}
-                  </Text>
-                  <Text style={{
-                    color: colors.text.tertiary,
-                    ...typography.caption,
-                    marginTop: 2,
-                  }}>
-                    {opt.sublabel}
-                  </Text>
-                </View>
-
-                {/* Radio button */}
-                <View style={{
-                  width: 22,
-                  height: 22,
-                  borderRadius: 11,
-                  borderWidth: 2,
-                  borderColor: isSelected ? colors.bg.brand : colors.border.strong,
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}>
-                  {isSelected && (
-                    <View style={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: 5,
-                      backgroundColor: colors.bg.brand,
-                    }} />
-                  )}
-                </View>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              onPress={() => setThemeModalVisible(true)}
+              activeOpacity={0.7}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingHorizontal: spacing.lg,
+                paddingVertical: spacing.md + 2,
+                gap: spacing.md,
+              }}
+            >
+              <MaterialCommunityIcons name={active.icon} size={22} color={colors.text.brand} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.text.primary, ...typography.bodySm, fontWeight: "600" }}>
+                  {active.label}
+                </Text>
+                <Text style={{ color: colors.text.tertiary, ...typography.caption, marginTop: 1 }}>
+                  {active.sublabel}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+            </TouchableOpacity>
           );
-        })}
+        })()}
+      </View>
+
+      {/* ── PREFERENCES ── */}
+      <SectionLabel label="Game Preferences" colors={colors} spacing={spacing} typography={typography} />
+      <View style={card}>
+
+        {/* Default dashboard view — row → modal */}
+        {(() => {
+          const activeView = VIEW_OPTIONS.find((o) => o.value === defaultView) ?? VIEW_OPTIONS[0];
+          return (
+            <TouchableOpacity
+              onPress={() => setViewModalVisible(true)}
+              activeOpacity={0.7}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingHorizontal: spacing.lg,
+                paddingVertical: spacing.md + 2,
+                gap: spacing.md,
+              }}
+            >
+              <Ionicons name={activeView.icon} size={20} color={colors.text.brand} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.text.primary, ...typography.bodySm, fontWeight: "600" }}>
+                  {activeView.label}
+                </Text>
+                <Text style={{ color: colors.text.tertiary, ...typography.caption, marginTop: 1 }}>
+                  {activeView.sublabel}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+            </TouchableOpacity>
+          );
+        })()}
+
+        <View style={divider} />
+
+        {/* Default stakes row */}
+        <TouchableOpacity
+          onPress={() => setStakesModalVisible(true)}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.md + 2,
+            gap: spacing.md,
+          }}
+        >
+          <MaterialCommunityIcons name="poker-chip" size={20} color={colors.text.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text.primary, ...typography.bodySm, fontWeight: "600" }}>
+              Default Stakes
+            </Text>
+            <Text style={{ color: colors.text.tertiary, ...typography.caption, marginTop: 1 }}>
+              {defaultStakes}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+        </TouchableOpacity>
+
+        <View style={divider} />
+
+        {/* Game defaults row (state + venue) */}
+        <TouchableOpacity
+          onPress={() => {
+            setTempState(defaultState);
+            setTempVenue(defaultVenue);
+            setGameDefaultsVisible(true);
+          }}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.md + 2,
+            gap: spacing.md,
+          }}
+        >
+          <Ionicons name="location-outline" size={20} color={colors.text.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text.primary, ...typography.bodySm, fontWeight: "600" }}>
+              Default Location
+            </Text>
+            <Text style={{ color: colors.text.tertiary, ...typography.caption, marginTop: 1 }} numberOfLines={1}>
+              {[defaultState, defaultVenue].filter(Boolean).join(" · ")}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+        </TouchableOpacity>
+
       </View>
 
       {/* ── DATA MANAGEMENT ── */}
@@ -249,214 +344,190 @@ export default function SettingsScreen() {
         />
       </View>
 
-      {/* ── SESSION TYPES ── */}
-      {/* ── PREFERENCES ── */}
-      <SectionLabel label="Preferences" colors={colors} spacing={spacing} typography={typography} />
-      <View style={card}>
-
-        {/* Default dashboard view */}
-        <View style={{ padding: spacing.lg }}>
-          <Text style={{ color: colors.text.secondary, ...typography.bodySm, marginBottom: spacing.xs }}>
-            Default Dashboard View
-          </Text>
-          <Text style={{ color: colors.text.tertiary, ...typography.caption, marginBottom: spacing.md }}>
-            Which stats to show when you open the app
-          </Text>
-          <View style={{ gap: spacing.sm }}>
-            {VIEW_OPTIONS.map((opt) => (
-              <TouchableOpacity
-                key={opt.value}
-                onPress={() => handleViewChange(opt.value)}
-                activeOpacity={0.75}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  paddingHorizontal: spacing.md,
-                  paddingVertical: spacing.sm + 2,
-                  borderRadius: radius.md,
-                  borderWidth: 1,
-                  backgroundColor: defaultView === opt.value ? colors.bg.brand : colors.bg.tertiary,
-                  borderColor: defaultView === opt.value ? colors.border.brand : colors.border.default,
-                }}
-              >
-                <View>
-                  <Text style={{
-                    color: defaultView === opt.value ? colors.text.onBrand : colors.text.primary,
-                    ...typography.bodySm,
-                    fontWeight: "600",
-                  }}>
-                    {opt.label}
-                  </Text>
-                  <Text style={{
-                    color: defaultView === opt.value ? colors.text.onBrand : colors.text.tertiary,
-                    ...typography.caption,
-                    marginTop: 2,
-                    opacity: defaultView === opt.value ? 0.8 : 1,
-                  }}>
-                    {opt.sublabel}
-                  </Text>
+      {/* ── STAKES MODAL ── */}
+      <Modal visible={stakesModalVisible} transparent animationType="slide" onRequestClose={() => setStakesModalVisible(false)}>
+        <TouchableWithoutFeedback onPress={() => setStakesModalVisible(false)}>
+          <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}>
+            <TouchableWithoutFeedback>
+              <View style={[sheetStyle(colors), { paddingBottom: insets.bottom + 24 }]}>
+                <SheetHandle colors={colors} />
+                <SheetHeader title="Default Stakes" onClose={() => setStakesModalVisible(false)} colors={colors} />
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+                  {STAKES_OPTIONS.map((s) => {
+                    const isSelected = defaultStakes === s;
+                    return (
+                      <TouchableOpacity
+                        key={s}
+                        onPress={() => { handleStakesChange(s); setStakesModalVisible(false); }}
+                        activeOpacity={0.75}
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 20,
+                          borderRadius: 999,
+                          backgroundColor: isSelected ? colors.bg.brand : colors.bg.secondary,
+                          borderWidth: StyleSheet.hairlineWidth,
+                          borderColor: isSelected ? colors.border.brand : colors.border.default,
+                        }}
+                      >
+                        <Text style={{ color: isSelected ? colors.text.onBrand : colors.text.primary, fontSize: 15, fontWeight: isSelected ? "700" : "500" }}>
+                          {s}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-                {defaultView === opt.value && (
-                  <Text style={{ color: colors.text.onBrand, fontSize: 16 }}>✓</Text>
-                )}
-              </TouchableOpacity>
-            ))}
+              </View>
+            </TouchableWithoutFeedback>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
+      </Modal>
 
-        <View style={divider} />
-
-        {/* Default stakes */}
-        <View style={{ padding: spacing.lg }}>
-          <Text style={{ color: colors.text.secondary, ...typography.bodySm, marginBottom: spacing.sm }}>
-            Default Stakes
-          </Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-            {STAKES_OPTIONS.map((s) => (
-              <TouchableOpacity
-                key={s}
-                onPress={() => handleStakesChange(s)}
-                activeOpacity={0.75}
-                style={{
-                  paddingVertical: spacing.sm,
-                  paddingHorizontal: spacing.md,
-                  borderRadius: radius.full,
-                  backgroundColor: defaultStakes === s ? colors.bg.brand : colors.bg.tertiary,
-                  borderWidth: 1,
-                  borderColor: defaultStakes === s ? colors.border.brand : colors.border.default,
-                }}
-              >
-                <Text style={{
-                  color: defaultStakes === s ? colors.text.onBrand : colors.text.primary,
-                  ...typography.label,
-                  fontWeight: defaultStakes === s ? "700" : "500",
-                }}>
-                  {s}
-                </Text>
-              </TouchableOpacity>
-            ))}
+      {/* ── GAME DEFAULTS MODAL (state + venue) ── */}
+      <Modal visible={gameDefaultsVisible} transparent animationType="slide" onRequestClose={() => setGameDefaultsVisible(false)}>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}>
+            <TouchableWithoutFeedback>
+              <View style={[sheetStyle(colors), { maxHeight: "85%" }]}>
+                <SheetHandle colors={colors} />
+                <SheetHeader title="Default Location" onClose={() => setGameDefaultsVisible(false)} colors={colors} />
+                <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                  {/* State */}
+                  <Text style={sectionLabel(colors)}>State</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 24 }}>
+                    {STATE_OPTIONS.map((s) => {
+                      const isSelected = tempState === s;
+                      return (
+                        <TouchableOpacity key={s} onPress={() => { setTempState(s); setTempVenue(""); }} activeOpacity={0.75}
+                          style={{ paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999, backgroundColor: isSelected ? colors.bg.brand : colors.bg.secondary, borderWidth: StyleSheet.hairlineWidth, borderColor: isSelected ? colors.border.brand : colors.border.default }}>
+                          <Text style={{ color: isSelected ? colors.text.onBrand : colors.text.primary, fontSize: 14, fontWeight: isSelected ? "700" : "500" }}>{s}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {/* Venues */}
+                  <Text style={sectionLabel(colors)}>Venue · {tempState}</Text>
+                  <View style={{ borderRadius: 14, overflow: "hidden", borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border.default, marginBottom: 24 }}>
+                    {(VENUES_BY_STATE[tempState] ?? []).map((v, i) => {
+                      const isSelected = tempVenue === v;
+                      return (
+                        <TouchableOpacity key={v} onPress={() => setTempVenue(v)} activeOpacity={0.7}
+                          style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14, backgroundColor: isSelected ? colors.bg.brandLight : colors.bg.primary, borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth, borderColor: colors.border.default }}>
+                          <Text style={{ flex: 1, color: isSelected ? colors.text.brand : colors.text.primary, fontSize: 15, fontWeight: isSelected ? "600" : "400" }}>{v}</Text>
+                          {isSelected && <Ionicons name="checkmark-circle" size={20} color={colors.bg.brand} />}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {/* Save */}
+                  <TouchableOpacity onPress={() => { handleStateChange(tempState); handleVenueChange(tempVenue); setGameDefaultsVisible(false); }} activeOpacity={0.88}
+                    style={{ backgroundColor: colors.bg.brand, borderRadius: 14, paddingVertical: 16, alignItems: "center", marginBottom: insets.bottom + 16 }}>
+                    <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>Save</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              </View>
+            </TouchableWithoutFeedback>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
+      </Modal>
 
-        <View style={divider} />
-
-        {/* Default state */}
-        <View style={{ padding: spacing.lg }}>
-          <Text style={{ color: colors.text.secondary, ...typography.bodySm, marginBottom: spacing.sm }}>
-            Default State
-          </Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-            {STATE_OPTIONS.map((s) => (
-              <TouchableOpacity
-                key={s}
-                onPress={() => handleStateChange(s)}
-                activeOpacity={0.75}
-                style={{
-                  paddingVertical: spacing.sm,
-                  paddingHorizontal: spacing.md,
-                  borderRadius: radius.full,
-                  backgroundColor: defaultState === s ? colors.bg.brand : colors.bg.tertiary,
-                  borderWidth: 1,
-                  borderColor: defaultState === s ? colors.border.brand : colors.border.default,
-                }}
-              >
-                <Text style={{
-                  color: defaultState === s ? colors.text.onBrand : colors.text.primary,
-                  ...typography.label,
-                  fontWeight: defaultState === s ? "700" : "500",
-                }}>
-                  {s}
-                </Text>
-              </TouchableOpacity>
-            ))}
+      {/* ── CURRENCY MODAL ── */}
+      <Modal visible={currencyModalVisible} transparent animationType="slide" onRequestClose={() => setCurrencyModalVisible(false)}>
+        <TouchableWithoutFeedback onPress={() => setCurrencyModalVisible(false)}>
+          <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}>
+            <TouchableWithoutFeedback>
+              <View style={[sheetStyle(colors), { paddingBottom: insets.bottom + 24 }]}>
+                <SheetHandle colors={colors} />
+                <SheetHeader title="Select Currency" onClose={() => setCurrencyModalVisible(false)} colors={colors} />
+                {CURRENCY_OPTIONS.map((opt, i) => {
+                  const isSelected = currency === opt.value;
+                  return (
+                    <View key={opt.value}>
+                      {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.default, marginVertical: 2 }} />}
+                      <TouchableOpacity onPress={() => handleCurrencyChange(opt.value)} activeOpacity={0.7}
+                        style={{ flexDirection: "row", alignItems: "center", paddingVertical: 14, gap: 14 }}>
+                        <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: isSelected ? colors.bg.brandLight : colors.bg.secondary, borderWidth: StyleSheet.hairlineWidth, borderColor: isSelected ? colors.border.brand : colors.border.default, alignItems: "center", justifyContent: "center" }}>
+                          <Text style={{ fontSize: 22 }}>{opt.flag}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{opt.label}</Text>
+                          <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{opt.sublabel}</Text>
+                        </View>
+                        {isSelected && <Ionicons name="checkmark-circle" size={22} color={colors.bg.brand} />}
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            </TouchableWithoutFeedback>
           </View>
-        </View>
+        </TouchableWithoutFeedback>
+      </Modal>
 
-        <View style={divider} />
-
-        {/* Default venue */}
-        <View style={{ padding: spacing.lg }}>
-          <Text style={{ color: colors.text.secondary, ...typography.bodySm, marginBottom: spacing.sm }}>
-            Default Venue
-          </Text>
-          <View style={{
-            height: 44,
-            flexDirection: "row",
-            alignItems: "center",
-            backgroundColor: colors.bg.tertiary,
-            borderRadius: radius.md,
-            borderWidth: 1,
-            borderColor: defaultVenue.length > 0 ? colors.border.brand : colors.border.default,
-            paddingHorizontal: spacing.md,
-            marginBottom: spacing.sm,
-          }}>
-            <TextInput
-              value={defaultVenue}
-              onChangeText={handleVenueChange}
-              placeholder="e.g. Star Sydney"
-              placeholderTextColor={colors.text.disabled}
-              returnKeyType="done"
-              style={{
-                flex: 1,
-                height: 44,
-                color: colors.text.primary,
-                ...typography.bodySm,
-              }}
-            />
-            {defaultVenue.length > 0 && (
-              <TouchableOpacity onPress={() => handleVenueChange("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <View style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: 9,
-                  backgroundColor: colors.border.default,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  marginLeft: spacing.sm,
-                }}>
-                  <Text style={{ color: colors.text.secondary, fontSize: 10, lineHeight: 12 }}>✕</Text>
-                </View>
-              </TouchableOpacity>
-            )}
+      {/* ── THEME MODAL ── */}
+      <Modal visible={themeModalVisible} transparent animationType="slide" onRequestClose={() => setThemeModalVisible(false)}>
+        <TouchableWithoutFeedback onPress={() => setThemeModalVisible(false)}>
+          <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}>
+            <TouchableWithoutFeedback>
+              <View style={[sheetStyle(colors), { paddingBottom: insets.bottom + 24 }]}>
+                <SheetHandle colors={colors} />
+                <SheetHeader title="Select Theme" onClose={() => setThemeModalVisible(false)} colors={colors} />
+                {THEME_OPTIONS.map((opt, i) => {
+                  const isSelected = themePreference === opt.value;
+                  return (
+                    <View key={opt.value}>
+                      {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.default, marginVertical: 2 }} />}
+                      <TouchableOpacity onPress={() => { setThemePreference(opt.value); setThemeModalVisible(false); }} activeOpacity={0.7}
+                        style={{ flexDirection: "row", alignItems: "center", paddingVertical: 14, gap: 14 }}>
+                        <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: isSelected ? colors.bg.brandLight : colors.bg.secondary, borderWidth: StyleSheet.hairlineWidth, borderColor: isSelected ? colors.border.brand : colors.border.default, alignItems: "center", justifyContent: "center" }}>
+                          <MaterialCommunityIcons name={opt.icon} size={22} color={isSelected ? colors.text.brand : colors.text.secondary} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{opt.label}</Text>
+                          <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{opt.sublabel}</Text>
+                        </View>
+                        {isSelected && <Ionicons name="checkmark-circle" size={22} color={colors.bg.brand} />}
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            </TouchableWithoutFeedback>
           </View>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-            {(VENUES_BY_STATE[defaultState] ?? VENUES_BY_STATE["NSW"]).map((v) => (
-              <TouchableOpacity
-                key={v}
-                onPress={() => handleVenueChange(v)}
-                activeOpacity={0.75}
-                style={{
-                  paddingVertical: 3,
-                  paddingHorizontal: spacing.sm,
-                  borderRadius: radius.full,
-                  backgroundColor: defaultVenue === v ? colors.bg.brand : colors.bg.tertiary,
-                  borderWidth: 1,
-                  borderColor: defaultVenue === v ? colors.border.brand : colors.border.default,
-                }}
-              >
-                <Text style={{
-                  color: defaultVenue === v ? colors.text.onBrand : colors.text.primary,
-                  ...typography.caption,
-                  fontWeight: defaultVenue === v ? "700" : "400",
-                }}>
-                  {v}
-                </Text>
-              </TouchableOpacity>
-            ))}
+        </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* ── VIEW MODAL ── */}
+      <Modal visible={viewModalVisible} transparent animationType="slide" onRequestClose={() => setViewModalVisible(false)}>
+        <TouchableWithoutFeedback onPress={() => setViewModalVisible(false)}>
+          <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}>
+            <TouchableWithoutFeedback>
+              <View style={[sheetStyle(colors), { paddingBottom: insets.bottom + 24 }]}>
+                <SheetHandle colors={colors} />
+                <SheetHeader title="Default Dashboard View" onClose={() => setViewModalVisible(false)} colors={colors} />
+                {VIEW_OPTIONS.map((opt, i) => {
+                  const isSelected = defaultView === opt.value;
+                  return (
+                    <View key={opt.value}>
+                      {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.default, marginVertical: 2 }} />}
+                      <TouchableOpacity onPress={() => { handleViewChange(opt.value); setViewModalVisible(false); }} activeOpacity={0.7}
+                        style={{ flexDirection: "row", alignItems: "center", paddingVertical: 14, gap: 14 }}>
+                        <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: isSelected ? colors.bg.brandLight : colors.bg.secondary, borderWidth: StyleSheet.hairlineWidth, borderColor: isSelected ? colors.border.brand : colors.border.default, alignItems: "center", justifyContent: "center" }}>
+                          <Ionicons name={opt.icon} size={20} color={isSelected ? colors.text.brand : colors.text.secondary} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{opt.label}</Text>
+                          <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{opt.sublabel}</Text>
+                        </View>
+                        {isSelected && <Ionicons name="checkmark-circle" size={22} color={colors.bg.brand} />}
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            </TouchableWithoutFeedback>
           </View>
-        </View>
-
-        <View style={divider} />
-
-        {/* Currency — locked */}
-        <Row
-          label="Currency"
-          value="AUD"
-          locked
-          colors={colors} spacing={spacing} typography={typography}
-        />
-      </View>
+        </TouchableWithoutFeedback>
+      </Modal>
 
       {/* ── APP ── */}
       <SectionLabel label="App" colors={colors} spacing={spacing} typography={typography} />
@@ -477,6 +548,44 @@ export default function SettingsScreen() {
         </View>
       </View>
     </ScrollView>
+  );
+}
+
+// ── Sheet helpers ──────────────────────────────────────────────────────────────
+
+const sheetStyle = (colors: any) => ({
+  backgroundColor: colors.bg.primary,
+  borderTopLeftRadius: 24,
+  borderTopRightRadius: 24,
+  paddingHorizontal: 20,
+  paddingTop: 12,
+});
+
+const sectionLabel = (colors: any) => ({
+  color: colors.text.tertiary,
+  fontSize: 11,
+  fontWeight: "700" as const,
+  letterSpacing: 0.8,
+  textTransform: "uppercase" as const,
+  marginBottom: 10,
+});
+
+function SheetHandle({ colors }: { colors: any }) {
+  return (
+    <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border.strong, alignSelf: "center", marginBottom: 16 }} />
+  );
+}
+
+function SheetHeader({ title, onClose, colors }: { title: string; onClose: () => void; colors: any }) {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+      <Text style={{ color: colors.text.primary, fontSize: 18, fontWeight: "800" }}>{title}</Text>
+      <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: colors.bg.secondary, alignItems: "center", justifyContent: "center" }}>
+          <Ionicons name="close" size={16} color={colors.text.secondary} />
+        </View>
+      </TouchableOpacity>
+    </View>
   );
 }
 

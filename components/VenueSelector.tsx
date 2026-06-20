@@ -1,26 +1,22 @@
 import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { VENUES_BY_STATE, VENUE_STATE_MAP } from "@/constants/venues";
 import * as Haptics from "expo-haptics";
+import * as Location from "expo-location";
+import { Ionicons } from "@expo/vector-icons";
 import { useRef, useState } from "react";
-import { Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 const STATES = ["NSW", "VIC", "QLD", "WA", "SA", "ACT"];
 
-const VENUES_BY_STATE: Record<string, string[]> = {
-  NSW: ["Star Sydney", "APL", "NPL", "Poker Palace", "Home Games", "Other"],
-  VIC: ["Crown Melbourne", "APL", "NPL", "Home Games", "Other"],
-  QLD: ["Star Brisbane", "Star GoldCoast", "APL", "Home Games", "Other"],
-  WA: ["APL", "Home Games", "Other"],
-  SA: ["Adelaide Casino", "APL", "Home Games", "Other"],
-  ACT: ["Canberra Casino", "APL", "Home Games", "Other"],
-};
-
-const VENUE_STATE_MAP: Record<string, string> = {
-  "Star Sydney": "NSW",
-  "Crown Melbourne": "VIC",
-  "Star Brisbane": "QLD",
-  "Star GoldCoast": "QLD",
-  "Adelaide Casino": "SA",
-  "Canberra Casino": "ACT",
+const REGION_TO_STATE: Record<string, string> = {
+  "New South Wales": "NSW",
+  "Victoria": "VIC",
+  "Queensland": "QLD",
+  "Western Australia": "WA",
+  "South Australia": "SA",
+  "Australian Capital Territory": "ACT",
+  "Northern Territory": "WA", // fallback — no NT venues, closest list
+  "Tasmania": "VIC",          // fallback — no TAS venues, closest list
 };
 
 interface Props {
@@ -33,6 +29,7 @@ interface Props {
 export function VenueSelector({ stateRegion, setStateRegion, venue, setVenue }: Props) {
   const { colors, spacing, radius, typography, inputTypo } = usePokerTheme();
   const inputRef = useRef<TextInput>(null);
+  const [detecting, setDetecting] = useState(false);
 
   // null    = no chip selected → input disabled, user must pick from chips below
   // "Other" = free-text mode  → input editable + focused
@@ -73,6 +70,30 @@ export function VenueSelector({ stateRegion, setStateRegion, venue, setVenue }: 
     }
   };
 
+  const handleDetectLocation = async () => {
+    setDetecting(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Location access denied", "Enable location in Settings to detect your state automatically.");
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const [geo] = await Location.reverseGeocodeAsync(pos.coords);
+      const detectedState = REGION_TO_STATE[geo?.region ?? ""];
+      if (detectedState) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        handleStatePress(detectedState);
+      } else {
+        Alert.alert("Location not recognised", "Couldn't match your location to an Australian state. Please select manually.");
+      }
+    } catch {
+      Alert.alert("Could not detect location", "Please select your state manually.");
+    } finally {
+      setDetecting(false);
+    }
+  };
+
   const handleClear = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedChip("Other");
@@ -92,7 +113,31 @@ export function VenueSelector({ stateRegion, setStateRegion, venue, setVenue }: 
   return (
     <View>
       {/* ── STATE CHIPS ── */}
-      <Text style={labelStyle}>State</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
+        <Text style={[labelStyle, { marginBottom: 0 }]}>State</Text>
+        <TouchableOpacity
+          onPress={handleDetectLocation}
+          disabled={detecting}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 4,
+            paddingHorizontal: 10,
+            paddingVertical: 4,
+            borderRadius: 20,
+            backgroundColor: colors.bg.brandLight,
+          }}
+        >
+          {detecting
+            ? <ActivityIndicator size="small" color={colors.text.brand} />
+            : <Ionicons name="location-outline" size={13} color={colors.text.brand} />
+          }
+          <Text style={{ color: colors.text.brand, fontSize: 12, fontWeight: "600" }}>
+            {detecting ? "Detecting…" : "Use My Location"}
+          </Text>
+        </TouchableOpacity>
+      </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing["2xl"] }}>
         {STATES.map((s) => (
           <StateChip

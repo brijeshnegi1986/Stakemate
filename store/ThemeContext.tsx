@@ -34,7 +34,7 @@ export function AppThemeProvider({ children }: { children: ReactNode }) {
         return saved;
       }
     } catch (_) {}
-    return "dark";
+    return "light";
   });
 
   const handleSet = (p: ThemePreference) => {

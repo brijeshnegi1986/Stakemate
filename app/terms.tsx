@@ -1,5 +1,5 @@
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { PokerRollLogo } from "@/components/PokerRollLogo";
+import { StakemateLogo } from "@/components/StakemateLogo";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -10,15 +10,15 @@ type Section = { heading: string; body: string };
 const SECTIONS: Section[] = [
   {
     heading: "1. Acceptance of Terms",
-    body: `By downloading, installing or using PokerRoll ("the App") you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, do not use the App.
+    body: `By downloading, installing or using Stakemate ("the App") you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, do not use the App.
 
 We may update these Terms from time to time. Continued use of the App after changes are posted constitutes your acceptance of the revised Terms.`,
   },
   {
     heading: "2. Eligibility",
-    body: `You must be at least 18 years old to use PokerRoll. By using the App you represent and warrant that you are at least 18 years of age.
+    body: `You must be at least 18 years old to use Stakemate. By using the App you represent and warrant that you are at least 18 years of age.
 
-PokerRoll is a bankroll tracking and analytics tool. It does not facilitate, promote or enable real-money gambling. Compliance with local laws regarding poker and gambling is solely your responsibility.`,
+Stakemate is a bankroll tracking and analytics tool. It does not facilitate, promote or enable real-money gambling. Compliance with local laws regarding poker and gambling is solely your responsibility.`,
   },
   {
     heading: "3. Account Registration",
@@ -27,13 +27,13 @@ PokerRoll is a bankroll tracking and analytics tool. It does not facilitate, pro
 You are responsible for:
 • Keeping your login credentials confidential.
 • All activity that occurs under your account.
-• Notifying us immediately at support@pokerroll.app if you suspect unauthorised access.
+• Notifying us immediately at support@stakemate.app if you suspect unauthorised access.
 
 We reserve the right to terminate accounts that violate these Terms.`,
   },
   {
     heading: "4. Subscriptions & Payments",
-    body: `PokerRoll offers a free tier and a "PokerRoll Pro" subscription. Subscriptions are billed through the Apple App Store in accordance with Apple's payment terms.
+    body: `Stakemate offers a free tier and a "Stakemate Pro" subscription. Subscriptions are billed through the Apple App Store in accordance with Apple's payment terms.
 
 Free trial: eligible new users receive a 7-day free trial of Pro features. The trial is non-transferable and limited to one trial per Apple ID.
 
@@ -55,13 +55,13 @@ We reserve the right to suspend or terminate access for any user who violates th
   },
   {
     heading: "6. User Data & Content",
-    body: `You retain ownership of all session data and notes you enter into PokerRoll. By storing data in the App you grant us a limited, non-exclusive licence to host and process that data for the purpose of providing the service.
+    body: `You retain ownership of all session data and notes you enter into Stakemate. By storing data in the App you grant us a limited, non-exclusive licence to host and process that data for the purpose of providing the service.
 
 We do not claim any ownership over your poker session records or notes.`,
   },
   {
     heading: "7. Intellectual Property",
-    body: `The App, including its name "PokerRoll", logo, design, code and content, is owned by us and protected by intellectual property laws. You are granted a limited, revocable, non-exclusive, non-transferable licence to use the App for personal, non-commercial purposes.
+    body: `The App, including its name "Stakemate", logo, design, code and content, is owned by us and protected by intellectual property laws. You are granted a limited, revocable, non-exclusive, non-transferable licence to use the App for personal, non-commercial purposes.
 
 Nothing in these Terms transfers any intellectual property rights to you.`,
   },
@@ -83,7 +83,7 @@ Our total liability to you for any claim arising from these Terms or your use of
   },
   {
     heading: "11. Contact",
-    body: `Questions about these Terms?\n\nEmail: legal@pokerroll.app\nApp: Profile → Send Feedback`,
+    body: `Questions about these Terms?\n\nEmail: legal@stakemate.app\nApp: Profile → Send Feedback`,
   },
 ];
 
@@ -99,7 +99,7 @@ export default function TermsScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <PokerRollLogo size={48} />
+        <StakemateLogo size={48} />
         <Text style={[styles.title, { color: colors.text.primary }]}>Terms of Service</Text>
         <Text style={[styles.updated, { color: colors.text.tertiary }]}>
           Last updated: {LAST_UPDATED}
@@ -109,7 +109,7 @@ export default function TermsScreen() {
       {/* Intro */}
       <View style={[styles.introCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
         <Text style={[styles.introText, { color: colors.text.secondary }]}>
-          Please read these Terms of Service carefully before using PokerRoll. These Terms govern your access to and use of the App and constitute a legally binding agreement between you and PokerRoll.
+          Please read these Terms of Service carefully before using Stakemate. These Terms govern your access to and use of the App and constitute a legally binding agreement between you and Stakemate.
         </Text>
       </View>
 

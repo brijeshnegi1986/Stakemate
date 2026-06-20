@@ -1,7 +1,6 @@
 import { AuthProvider } from "@/context/AuthContext";
-import { SubscriptionProvider } from "@/context/SubscriptionContext";
 import { AppThemeProvider, useThemeContext } from "@/store/ThemeContext";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { router, Stack, ThemeProvider } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
@@ -9,14 +8,12 @@ import { Text, TouchableOpacity } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 import { initDB } from "../db/database";
-import { markTrialStarted } from "../hooks/use-trial";
 
 function RootLayoutContent() {
   const { colors: themeColors, isDark } = useThemeContext();
 
   useEffect(() => {
     initDB();
-    markTrialStarted();
   }, []);
 
   const navigationTheme = {
@@ -59,7 +56,7 @@ function RootLayoutContent() {
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
                 >
-                  <MaterialCommunityIcons name="arrow-left" size={20} color={themeColors.text.primary} />
+                  <Ionicons name="arrow-back" size={20} color={themeColors.text.primary} />
                   <Text style={{ marginLeft: 8, color: themeColors.text.primary, fontWeight: "600", fontSize: 16 }}>
                     Back
                   </Text>
@@ -81,7 +78,7 @@ function RootLayoutContent() {
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
                 >
-                  <MaterialCommunityIcons name="arrow-left" size={20} color={themeColors.text.primary} />
+                  <Ionicons name="arrow-back" size={20} color={themeColors.text.primary} />
                   <Text style={{ marginLeft: 8, color: themeColors.text.primary, fontWeight: "600", fontSize: 16 }}>
                     Back
                   </Text>
@@ -96,7 +93,7 @@ function RootLayoutContent() {
           <Stack.Screen
             name="settings"
             options={{
-              title: "Game Settings",
+              title: "Settings",
               headerStyle: { backgroundColor: themeColors.bg.primary },
               headerTintColor: themeColors.text.primary,
               headerTitleStyle: { fontWeight: "700", fontSize: 17 },
@@ -106,7 +103,7 @@ function RootLayoutContent() {
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
                 >
-                  <MaterialCommunityIcons name="arrow-left" size={20} color={themeColors.text.primary} />
+                  <Ionicons name="arrow-back" size={20} color={themeColors.text.primary} />
                   <Text style={{ marginLeft: 8, color: themeColors.text.primary, fontWeight: "600", fontSize: 16 }}>
                     Back
                   </Text>
@@ -127,7 +124,7 @@ function RootLayoutContent() {
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
                 >
-                  <MaterialCommunityIcons name="arrow-left" size={20} color={themeColors.text.primary} />
+                  <Ionicons name="arrow-back" size={20} color={themeColors.text.primary} />
                   <Text style={{ marginLeft: 8, color: themeColors.text.primary, fontWeight: "600", fontSize: 16 }}>
                     Back
                   </Text>
@@ -148,7 +145,7 @@ function RootLayoutContent() {
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
                 >
-                  <MaterialCommunityIcons name="arrow-left" size={20} color={themeColors.text.primary} />
+                  <Ionicons name="arrow-back" size={20} color={themeColors.text.primary} />
                   <Text style={{ marginLeft: 8, color: themeColors.text.primary, fontWeight: "600", fontSize: 16 }}>
                     Back
                   </Text>
@@ -170,11 +167,9 @@ function RootLayoutContent() {
 export default function RootLayout() {
   return (
     <AppThemeProvider>
-      <SubscriptionProvider>
-        <AuthProvider>
-          <RootLayoutContent />
-        </AuthProvider>
-      </SubscriptionProvider>
+      <AuthProvider>
+        <RootLayoutContent />
+      </AuthProvider>
     </AppThemeProvider>
   );
 }

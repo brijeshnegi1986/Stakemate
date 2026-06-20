@@ -8,6 +8,14 @@
       "developmentClient": true,
       "distribution": "internal"
     },
+    "staging": {
+      "distribution": "store",
+      "channel": "staging",
+      "ios": {
+        "bundleIdentifier": "com.stakemate.pokerroll.staging",
+        "buildConfiguration": "Release"
+      }
+    },
     "preview": {
       "distribution": "internal"
     },
@@ -20,6 +28,13 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {},
+    "staging": {
+      "ios": {
+        "appleId": "brijeshnegi.86@gmail.com",
+        "ascAppId": "YOUR_STAGING_APP_ID",
+        "bundleIdentifier": "com.stakemate.pokerroll.staging"
+      }
+    }
   }
 }

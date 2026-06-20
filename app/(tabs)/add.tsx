@@ -1,13 +1,9 @@
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { VenueSelector } from "@/components/VenueSelector";
-import { PaywallModal } from "@/components/PaywallModal";
-import { useSubscription } from "@/context/SubscriptionContext";
-import { FREE_SESSION_LIMIT } from "@/constants/subscription";
-import { getTrialStatus } from "@/hooks/use-trial";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import * as Haptics from "expo-haptics";
-import { router, useLocalSearchParams } from "expo-router";
-import { useMemo, useRef, useState } from "react";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -17,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { addSession, addTournament, getTotalSessionCount, getSetting, SessionType, updateSession } from "../../db/database";
 
 // ── Read type availability from settings (synchronous, stable for screen lifetime) ──
@@ -29,8 +26,7 @@ export default function AddSessionScreen() {
   const editing = session ? JSON.parse(session as string) : null;
 
   const { colors, spacing, radius, typography, inputTypo } = usePokerTheme();
-  const { isPro } = useSubscription();
-  const [paywallVisible, setPaywallVisible] = useState(false);
+  const insets = useSafeAreaInsets();
   const cashOutRef = useRef<TextInput>(null);
 
   const availableTypes = getAvailableTypes();
@@ -59,6 +55,27 @@ export default function AddSessionScreen() {
   const [payout, setPayout]     = useState(editing?.payout  ? String(editing.payout)  : "");
   const [notes]                 = useState(editing?.notes ?? "");
 
+  // Reset all fields when opening fresh (no editing param), so previous session data doesn't linger
+  useFocusEffect(
+    useCallback(() => {
+      if (!editing) {
+        const saved = getSetting("dashboardView") ?? "all";
+        const preferred: SessionType = saved === "tournament" ? "tournament" : "cash";
+        setType(availableTypes.includes(preferred) ? preferred : availableTypes[0]);
+        setBuyIn("");
+        setCashOut("");
+        setDuration(null);
+        setStateRegion(getSetting("defaultState") ?? "NSW");
+        setVenue(getSetting("defaultVenue") ?? "");
+        setStakes(getSetting("defaultStakes") ?? "1/2");
+        setTournamentName("");
+        setEntries("");
+        setPosition("");
+        setPayout("");
+      }
+    }, [editing])
+  );
+
   // ── Profit ──
   const profit = useMemo(() => {
     const b = parseFloat(buyIn);
@@ -77,14 +94,6 @@ export default function AddSessionScreen() {
 
   const handleSave = () => {
     if (!isValid) return;
-
-    if (!editing && !isPro) {
-      const trial = getTrialStatus();
-      if (!trial.allowed && getTotalSessionCount() >= FREE_SESSION_LIMIT) {
-        setPaywallVisible(true);
-        return;
-      }
-    }
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
@@ -165,14 +174,9 @@ export default function AddSessionScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.bg.secondary }}
+      style={{ flex: 1, backgroundColor: colors.bg.secondary, paddingTop: insets.top }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <PaywallModal
-        visible={paywallVisible}
-        feature={type === "tournament" ? "unlimitedHistory" : "unlimitedHistory"}
-        onClose={() => setPaywallVisible(false)}
-      />
       <View style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: 130 }}

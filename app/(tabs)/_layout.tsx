@@ -1,57 +1,75 @@
-import { CustomTabBar } from "@/components/CustomTabBar";
-import { PokerRollLogo } from "@/components/PokerRollLogo";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { router, Tabs } from "expo-router";
-import { Text, TouchableOpacity, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { Tabs } from "expo-router";
 
 export default function TabLayout() {
   const { colors } = usePokerTheme();
 
-  const backButton = () => (
-    <TouchableOpacity
-      onPress={() => {
-        if (router.canGoBack()) router.back();
-        else router.replace("/(tabs)");
-      }}
-      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-      style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8 }}
-    >
-      <MaterialCommunityIcons name="arrow-left" size={20} color={colors.text.primary} />
-      <Text style={{ marginLeft: 8, color: colors.text.primary, fontWeight: "600", fontSize: 16 }}>
-        Back
-      </Text>
-    </TouchableOpacity>
-  );
-
   return (
     <Tabs
-      tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
-        headerShown: true,
-        headerLeft: ({ canGoBack }) =>
-          canGoBack ? undefined : (
-            <View style={{ paddingLeft: 16 }}>
-              <PokerRollLogo size={36} />
-            </View>
-          ),
-        headerStyle: { backgroundColor: colors.bg.primary },
-        headerTintColor: colors.text.primary,
-        headerTitleStyle: {
-          fontWeight: "700",
-          fontSize: 16,
-          letterSpacing: 1,
-          textTransform: "uppercase",
+        headerShown: false,
+        tabBarActiveTintColor: colors.bg.brand,
+        tabBarInactiveTintColor: colors.text.tertiary,
+        tabBarStyle: {
+          backgroundColor: colors.bg.primary,
+          borderTopColor: colors.border.default,
         },
-        headerShadowVisible: true,
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: "600",
+        },
       }}
     >
-      <Tabs.Screen name="index"   options={{ title: "Dashboard" }} />
-      <Tabs.Screen name="history" options={{ title: "History" }} />
-      <Tabs.Screen name="notes"   options={{ title: "Notes" }} />
-      <Tabs.Screen name="profile" options={{ title: "Profile" }} />
-      <Tabs.Screen name="live"    options={{ headerLeft: backButton, href: null }} />
-      <Tabs.Screen name="add"     options={{ title: "Add Session", headerLeft: backButton, href: null }} />
+      <Tabs.Screen
+        name="history"
+        options={{
+          title: "Stats",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons name={focused ? "pie-chart" : "pie-chart-outline"} size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="social"
+        options={{
+          title: "Social",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons name={focused ? "people" : "people-outline"} size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: "Home",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons name={focused ? "grid" : "grid-outline"} size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="calendar"
+        options={{
+          title: "Calendar",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons name={focused ? "calendar" : "calendar-outline"} size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="more"
+        options={{
+          title: "More",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons name={focused ? "ellipsis-horizontal-circle" : "ellipsis-horizontal-circle-outline"} size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen name="notes"   options={{ href: null }} />
+      <Tabs.Screen name="profile" options={{ href: null }} />
+      <Tabs.Screen name="live"    options={{ href: null }} />
+      <Tabs.Screen name="add"     options={{ href: null }} />
     </Tabs>
   );
 }

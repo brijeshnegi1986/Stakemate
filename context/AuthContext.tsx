@@ -13,6 +13,14 @@ type Profile = {
   promo_opt_in: boolean;
   country: string | null;
   avatar_url: string | null;
+  username: string | null;
+  bio: string | null;
+  twitter_handle: string | null;
+  instagram_handle: string | null;
+  youtube_handle: string | null;
+  twitch_handle: string | null;
+  hendon_mob_url: string | null;
+  poker_index_url: string | null;
 };
 
 type AuthContextType = {

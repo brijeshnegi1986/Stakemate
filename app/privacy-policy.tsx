@@ -1,5 +1,5 @@
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { PokerRollLogo } from "@/components/PokerRollLogo";
+import { StakemateLogo } from "@/components/StakemateLogo";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -27,7 +27,7 @@ We do not collect payment card details — purchases are handled entirely by the
     heading: "2. How We Use Your Information",
     body: `We use the information we collect to:
 
-• Provide, maintain and improve PokerRoll.
+• Provide, maintain and improve Stakemate.
 • Sync your session history across devices when you are signed in.
 • Send transactional emails (e.g. password resets) and, if you opt in, challenge and prize notifications.
 • Respond to your support requests and feedback.
@@ -48,7 +48,7 @@ We retain your account data for as long as your account is active. You may reque
     body: `We share your data only in these limited circumstances:
 
 • Service providers: Supabase (database hosting) and Apple (in-app purchases and crash reporting). These providers are bound by data-processing agreements and may not use your data for other purposes.
-• Legal compliance: if required by law, court order or to protect the rights and safety of PokerRoll and its users.
+• Legal compliance: if required by law, court order or to protect the rights and safety of Stakemate and its users.
 • Business transfers: in the event of a merger, acquisition or asset sale, your data may be transferred. We will notify you before your data becomes subject to a different privacy policy.`,
   },
   {
@@ -65,11 +65,11 @@ We retain your account data for as long as your account is active. You may reque
 • Opt out of marketing emails via the notification toggle on the Profile screen.
 • Withdraw consent at any time without affecting the lawfulness of prior processing.
 
-Requests are processed within 30 days. To exercise any right, email privacy@pokerroll.app.`,
+Requests are processed within 30 days. To exercise any right, email privacy@stakemate.app.`,
   },
   {
     heading: "7. Children's Privacy",
-    body: `PokerRoll is intended for users aged 18 and over. We do not knowingly collect personal information from anyone under 18. If you believe a minor has provided us with data, please contact us immediately.`,
+    body: `Stakemate is intended for users aged 18 and over. We do not knowingly collect personal information from anyone under 18. If you believe a minor has provided us with data, please contact us immediately.`,
   },
   {
     heading: "8. Changes to This Policy",
@@ -77,7 +77,7 @@ Requests are processed within 30 days. To exercise any right, email privacy@poke
   },
   {
     heading: "9. Contact Us",
-    body: `For privacy-related questions or requests:\n\nEmail: privacy@pokerroll.app\nApp: Profile → Send Feedback`,
+    body: `For privacy-related questions or requests:\n\nEmail: privacy@stakemate.app\nApp: Profile → Send Feedback`,
   },
 ];
 
@@ -93,7 +93,7 @@ export default function PrivacyPolicyScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <PokerRollLogo size={48} />
+        <StakemateLogo size={48} />
         <Text style={[styles.title, { color: colors.text.primary }]}>Privacy Policy</Text>
         <Text style={[styles.updated, { color: colors.text.tertiary }]}>
           Last updated: {LAST_UPDATED}
@@ -103,7 +103,7 @@ export default function PrivacyPolicyScreen() {
       {/* Intro */}
       <View style={[styles.introCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
         <Text style={[styles.introText, { color: colors.text.secondary }]}>
-          PokerRoll ("we", "our", "us") is committed to protecting your privacy. This policy explains what information we collect, how we use it, and your rights regarding your data.
+          Stakemate ("we", "our", "us") is committed to protecting your privacy. This policy explains what information we collect, how we use it, and your rights regarding your data.
         </Text>
       </View>
 

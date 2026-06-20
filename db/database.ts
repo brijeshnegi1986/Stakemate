@@ -52,6 +52,19 @@ export const initDB = () => {
   try { db.execSync(`ALTER TABLE notes_history ADD COLUMN hand_analysis TEXT`); } catch (_) {}
   try { db.execSync(`ALTER TABLE notes_history ADD COLUMN metadata TEXT DEFAULT NULL`); } catch (_) {}
 
+  // Scheduled tournament events (calendar)
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS tournament_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      date TEXT NOT NULL,
+      venue TEXT DEFAULT '',
+      buyin TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+  `);
+
   // Settings key-value store
   db.execSync(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -448,6 +461,34 @@ export const getNoteHistory = (): NoteEntry[] =>
 
 export const deleteNoteEntry = (id: number): void => {
   db.runSync(`DELETE FROM notes_history WHERE id = ?`, [id]);
+};
+
+// ─── Tournament Events (Calendar) ────────────────────────────────────────────
+
+export type TournamentEvent = {
+  id: number;
+  name: string;
+  date: string; // YYYY-MM-DD
+  venue: string;
+  buyin: string;
+  notes: string;
+  created_at: number;
+};
+
+export const addTournamentEvent = (event: Omit<TournamentEvent, "id" | "created_at">): number => {
+  const result = db.runSync(
+    `INSERT INTO tournament_events (name, date, venue, buyin, notes, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [event.name, event.date, event.venue, event.buyin, event.notes, Date.now()]
+  );
+  return result.lastInsertRowId;
+};
+
+export const getTournamentEvents = (): TournamentEvent[] =>
+  db.getAllSync(`SELECT * FROM tournament_events ORDER BY date ASC`) as TournamentEvent[];
+
+export const deleteTournamentEvent = (id: number): void => {
+  db.runSync(`DELETE FROM tournament_events WHERE id = ?`, [id]);
 };
 
 // Auto-initialize on import so getSetting is always safe to call

@@ -15,7 +15,7 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/", (req, res) => {
-  res.json({ status: "ok", service: "PokerRoll AI Proxy", keySet: !!ANTHROPIC_API_KEY });
+  res.json({ status: "ok", service: "Stakemate AI Proxy", keySet: !!ANTHROPIC_API_KEY });
 });
 
 app.post("/api/analyze", async (req, res) => {
@@ -132,6 +132,6 @@ RULES:
 });
 
 app.listen(PORT, () => {
-  console.log(`PokerRoll AI proxy running on port ${PORT}`);
+  console.log(`Stakemate AI proxy running on port ${PORT}`);
   console.log(`API key set: ${!!ANTHROPIC_API_KEY}`);
 });

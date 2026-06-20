@@ -1,5 +1,5 @@
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -7,7 +7,7 @@ import {
 } from "react-native";
 
 type Slide = {
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: keyof typeof Ionicons.glyphMap;
   accent: string;
   title: string;
   description: string;
@@ -23,7 +23,7 @@ export function FeatureBanner({ onUpgradePress }: { onUpgradePress?: () => void 
 
   const SLIDES: Slide[] = [
     {
-      icon: "robot-outline",
+      icon: "hardware-chip-outline",
       accent: "#7c3aed",
       title: "AI Hand Review",
       description: "Upload your hands and get instant, AI-powered coaching to plug leaks fast.",
@@ -31,7 +31,7 @@ export function FeatureBanner({ onUpgradePress }: { onUpgradePress?: () => void 
       onPress: () => onUpgradePress?.(),
     },
     {
-      icon: "cloud-sync-outline",
+      icon: "cloud-upload-outline",
       accent: "#0ea5e9",
       title: "Cloud Sync",
       description: "Your sessions backed up automatically — access them from any device, anytime.",
@@ -39,7 +39,7 @@ export function FeatureBanner({ onUpgradePress }: { onUpgradePress?: () => void 
       onPress: () => router.push("/sign-in"),
     },
     {
-      icon: "chart-line",
+      icon: "trending-up-outline",
       accent: colors.bg.brand,
       title: "Advanced Analytics",
       description: "Hourly rate trends, win-streak tracking, and deep performance breakdowns.",
@@ -96,7 +96,7 @@ export function FeatureBanner({ onUpgradePress }: { onUpgradePress?: () => void 
       <Animated.View style={[styles.body, { opacity: fadeAnim }]}>
         {/* Icon badge */}
         <View style={[styles.iconBadge, { backgroundColor: currentSlide.accent + "20" }]}>
-          <MaterialCommunityIcons
+          <Ionicons
             name={currentSlide.icon}
             size={26}
             color={currentSlide.accent}

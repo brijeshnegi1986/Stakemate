@@ -1,14 +1,15 @@
 {
   "expo": {
-    "name": "PokerRoll",
-    "slug": "PokerRoll",
-    "version": "1.0.0",
+    "name": "Stakemate",
+    "slug": "stakemate",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "pokerroll",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
+      "deploymentTarget": "16.4",
       "bundleIdentifier": "com.stakemate.pokerroll",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -31,14 +32,35 @@
     "plugins": [
       "expo-router",
       [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#155DFC",
+          "sounds": []
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Stakemate needs access to add tournaments to your calendar.",
+          "remindersPermission": "Stakemate needs reminders permission for tournament alerts."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Stakemate uses your location to suggest nearby poker venues."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#155DFC",
           "dark": {
-            "backgroundColor": "#000000"
+            "backgroundColor": "#155DFC"
           }
         }
       ],
@@ -46,9 +68,11 @@
       "expo-secure-store",
       "expo-font",
       "expo-image",
+      "expo-image-picker",
       "expo-sharing",
       "expo-status-bar",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-iap"
     ],
     "experiments": {
       "typedRoutes": true

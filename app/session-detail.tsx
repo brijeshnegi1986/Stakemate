@@ -1,38 +1,43 @@
-import { PaywallModal } from "@/components/PaywallModal";
 import { HandAnalysisModal } from "@/components/HandAnalysisModal";
 import { CardText } from "@/components/CardText";
-import { useSubscription } from "@/context/SubscriptionContext";
-import { getTrialStatus, markTrialStarted } from "@/hooks/use-trial";
+import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { createPost } from "@/lib/social";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { deleteSession, getRebuysTotal, parseRebuys, saveNotes, saveNoteEntry } from "../db/database";
 
 export default function SessionDetailScreen() {
   const { session: sessionParam } = useLocalSearchParams();
   const session = sessionParam ? JSON.parse(sessionParam as string) : null;
   const { colors, spacing, radius, typography } = usePokerTheme();
+  const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
-  const { isPro } = useSubscription();
-  const trial = getTrialStatus();
   const [notes, setNotes] = useState<string>(session?.notes ?? "");
   const [notesChanged, setNotesChanged] = useState(false);
-  const [paywallVisible, setPaywallVisible] = useState(false);
   const [handReviewVisible, setHandReviewVisible] = useState(false);
+  const [shareVisible, setShareVisible] = useState(false);
+  const [shareCaption, setShareCaption] = useState("");
+  const [sharing, setSharing] = useState(false);
 
   if (!session) {
     router.back();
@@ -78,6 +83,35 @@ export default function SessionDetailScreen() {
     router.push({ pathname: "/session-edit", params: { session: sessionParam } });
   };
 
+  const handleShare = async () => {
+    if (!user?.id) {
+      Alert.alert("Sign in required", "You need to be signed in to share sessions.");
+      return;
+    }
+    setSharing(true);
+    try {
+      await createPost({
+        user_id: user.id,
+        session_type: isTournament ? "tournament" : "cash",
+        session_name: isTournament ? (session.tournamentName || "Tournament") : (session.stakes ? `${session.stakes} NLH` : "Cash Game"),
+        venue: session.venue ?? null,
+        amount: profit,
+        amount_label: isTournament ? "Payout" : "Profit",
+        status: shareCaption.trim() || null,
+        content: null,
+        is_live: false,
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setShareVisible(false);
+      setShareCaption("");
+      Alert.alert("Shared!", "Your session has been posted to the Social feed.");
+    } catch (e) {
+      Alert.alert("Error", "Could not share session. Please try again.");
+    } finally {
+      setSharing(false);
+    }
+  };
+
   const formatDate = (iso: string) =>
     new Date(iso).toLocaleDateString("en-AU", {
       day: "numeric",
@@ -98,62 +132,113 @@ export default function SessionDetailScreen() {
       style={{ flex: 1, backgroundColor: colors.bg.secondary }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
+      <Stack.Screen
+        options={{
+          headerRight: () => (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <TouchableOpacity
+                onPress={() => setShareVisible(true)}
+                activeOpacity={0.75}
+                style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: "rgba(0,0,0,0.06)", alignItems: "center", justifyContent: "center" }}
+              >
+                <Ionicons name="share-social-outline" size={17} color={colors.text.brand} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleEdit}
+                activeOpacity={0.75}
+                style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: "rgba(0,0,0,0.06)", alignItems: "center", justifyContent: "center" }}
+              >
+                <Ionicons name="create-outline" size={17} color={colors.text.primary} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleDelete}
+                activeOpacity={0.75}
+                style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: "rgba(239,68,68,0.1)", alignItems: "center", justifyContent: "center" }}
+              >
+                <Ionicons name="trash-outline" size={17} color={colors.text.danger} />
+              </TouchableOpacity>
+            </View>
+          ),
+        }}
+      />
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
       <View style={{ flex: 1 }}>
         <ScrollView
-          contentContainerStyle={{ padding: spacing.lg, paddingBottom: 140 }}
+          contentContainerStyle={{ padding: spacing.lg, paddingBottom: insets.bottom + 40 }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* ── Type badge ── */}
-          <View style={{ flexDirection: "row", justifyContent: "center", marginBottom: spacing["2xl"] }}>
-            <View style={{
-              backgroundColor: colors.bg.tertiary,
-              borderRadius: radius.full,
-              paddingHorizontal: spacing.lg,
-              paddingVertical: spacing.sm,
-              borderWidth: 1,
-              borderColor: colors.border.default,
-            }}>
-              <Text style={{ color: colors.text.secondary, fontWeight: "700", ...typography.label }}>
-                {isTournament ? "Tournament" : "Cash Game"}
-              </Text>
-            </View>
-          </View>
-
           {/* ── Profit card ── */}
           <View style={{
-            backgroundColor: colors.bg.secondary,
-            borderRadius: radius.lg,
-            borderWidth: 1,
-            borderColor: cardBorderColor,
-            padding: spacing["2xl"],
-            alignItems: "center",
+            backgroundColor: colors.bg.primary,
+            borderRadius: 16,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: colors.border.default,
+            overflow: "hidden",
             marginBottom: spacing["2xl"],
           }}>
-            <Text style={{
-              color: colors.text.tertiary,
-              ...typography.caption,
-              letterSpacing: 1,
-              textTransform: "uppercase",
-              marginBottom: spacing.sm,
+            {/* Top row — matches home/stats session row layout */}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12, padding: 16, paddingBottom: 14 }}>
+              <View style={{
+                width: 46,
+                height: 46,
+                borderRadius: 12,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: isTournament ? "#8B5CF6" : "#F97316",
+              }}>
+                <Ionicons name={isTournament ? "trophy-outline" : "cash-outline"} size={20} color="#fff" />
+              </View>
+              <View style={{ flex: 1, gap: 3 }}>
+                <Text style={{ fontSize: 16, fontWeight: "700", color: colors.text.primary }} numberOfLines={1}>
+                  {isTournament ? (session.tournamentName || "Tournament") : `${session.stakes} NLH`}
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.text.tertiary }}>
+                  {new Date(session.date).toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+                  {session.venue ? ` · ${session.venue}` : ""}
+                </Text>
+              </View>
+              <View style={{ alignItems: "flex-end", gap: 3 }}>
+                <Text style={{ fontSize: 22, fontWeight: "900", color: profitColor, letterSpacing: -0.5 }}>
+                  {profit >= 0 ? "+" : "-"}${Math.abs(profit).toFixed(0)}
+                </Text>
+                <Text style={{ fontSize: 11, color: colors.text.tertiary }}>
+                  {profit >= 0 ? "Winning session" : "Better luck next time"}
+                </Text>
+              </View>
+            </View>
+
+            {/* Divider stat strip */}
+            <View style={{
+              flexDirection: "row",
+              borderTopWidth: StyleSheet.hairlineWidth,
+              borderTopColor: colors.border.subtle,
             }}>
-              Profit
-            </Text>
-            <Text style={{ ...typography.display, fontWeight: "700", color: profitColor }}>
-              {profit >= 0 ? "+" : "-"}${Math.abs(profit).toFixed(0)}
-            </Text>
-            <Text style={{ color: colors.text.tertiary, ...typography.caption, marginTop: spacing.xs }}>
-              {profit >= 0 ? "Winning session" : "Better luck next time"}
-            </Text>
+              {[
+                { label: "Buy-in", value: `$${session.buyIn}` },
+                { label: isTournament ? "Payout" : "Cash-out", value: isTournament ? (session.payout > 0 ? `$${session.payout}` : "—") : `$${session.cashOut}` },
+                { label: "Duration", value: session.duration > 0 ? `${Math.floor(session.duration)}h${Math.round((session.duration % 1) * 60) > 0 ? `${Math.round((session.duration % 1) * 60)}m` : ""}` : "—" },
+              ].map((s, i, arr) => (
+                <View key={s.label} style={{
+                  flex: 1,
+                  alignItems: "center",
+                  paddingVertical: 12,
+                  borderRightWidth: i < arr.length - 1 ? StyleSheet.hairlineWidth : 0,
+                  borderRightColor: colors.border.subtle,
+                }}>
+                  <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text.primary, marginBottom: 2 }}>{s.value}</Text>
+                  <Text style={{ fontSize: 11, color: colors.text.tertiary }}>{s.label}</Text>
+                </View>
+              ))}
+            </View>
           </View>
 
           {/* ── Details ── */}
           <Text style={[sectionLabel, { marginBottom: spacing.sm }]}>Details</Text>
           <View style={{
-            backgroundColor: colors.bg.secondary,
-            borderRadius: radius.lg,
-            borderWidth: 1,
+            backgroundColor: colors.bg.primary,
+            borderRadius: 16,
+            borderWidth: StyleSheet.hairlineWidth,
             borderColor: colors.border.default,
             marginBottom: spacing["2xl"],
             overflow: "hidden",
@@ -228,9 +313,9 @@ export default function SessionDetailScreen() {
             )}
           </View>
           <View style={{
-            backgroundColor: colors.bg.secondary,
-            borderRadius: radius.lg,
-            borderWidth: 1,
+            backgroundColor: colors.bg.primary,
+            borderRadius: 16,
+            borderWidth: StyleSheet.hairlineWidth,
             borderColor: notesChanged ? colors.border.brand : colors.border.default,
             padding: spacing.lg,
             minHeight: 100,
@@ -254,52 +339,25 @@ export default function SessionDetailScreen() {
           {/* Review Hand button — always shown when notes are long enough */}
           {notes.trim().length > 20 && !notesChanged && (
             <TouchableOpacity
-              onPress={() => {
-                if (!isPro && !trial.allowed) { setPaywallVisible(true); return; }
-                markTrialStarted();
-                setHandReviewVisible(true);
-              }}
+              onPress={() => setHandReviewVisible(true)}
               activeOpacity={0.85}
               style={{
                 flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
                 marginTop: spacing.md,
-                borderRadius: radius.md,
-                borderWidth: 1,
-                borderColor: !isPro && !trial.allowed ? colors.border.default : colors.border.brand,
+                borderRadius: 12,
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: colors.border.brand,
                 paddingVertical: spacing.md,
-                backgroundColor: !isPro && !trial.allowed ? colors.bg.tertiary : colors.bg.brand + "10",
+                backgroundColor: colors.bg.brand + "10",
               }}
             >
-              <MaterialCommunityIcons
-                name={!isPro && !trial.allowed ? "lock-outline" : "cards-playing-outline"}
-                size={16}
-                color={!isPro && !trial.allowed ? colors.text.tertiary : colors.text.brand}
-              />
-              <Text style={{
-                color: !isPro && !trial.allowed ? colors.text.tertiary : colors.text.brand,
-                fontSize: 14, fontWeight: "700",
-              }}>
+              <MaterialCommunityIcons name="cards-playing-outline" size={16} color={colors.text.brand} />
+              <Text style={{ color: colors.text.brand, fontSize: 14, fontWeight: "700" }}>
                 Review Hand with AI
               </Text>
-              {!isPro && trial.allowed && !trial.trialStarted && (
-                <View style={{ backgroundColor: "#38a16922", borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 }}>
-                  <Text style={{ color: "#38a169", fontSize: 11, fontWeight: "700" }}>7-day free trial</Text>
-                </View>
-              )}
-              {!isPro && trial.allowed && trial.trialStarted && (
-                <View style={{ backgroundColor: "#38a16922", borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 }}>
-                  <Text style={{ color: "#38a169", fontSize: 11, fontWeight: "700" }}>{trial.daysLeft}d left</Text>
-                </View>
-              )}
-              {!isPro && !trial.allowed && (
-                <View style={{ backgroundColor: "#e53e3e18", borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 }}>
-                  <Text style={{ color: "#e53e3e", fontSize: 11, fontWeight: "700" }}>Trial ended · Upgrade</Text>
-                </View>
-              )}
             </TouchableOpacity>
           )}
 
-          <PaywallModal visible={paywallVisible} feature="aiNotes" onClose={() => setPaywallVisible(false)} />
           <HandAnalysisModal
             visible={handReviewVisible}
             notes={notes}
@@ -307,45 +365,92 @@ export default function SessionDetailScreen() {
           />
         </ScrollView>
 
-        {/* ── Bottom action bar ── */}
-        <View style={{
-          padding: spacing.lg,
-          borderTopWidth: 1,
-          borderTopColor: colors.border.default,
-          backgroundColor: colors.bg.primary,
-          flexDirection: "row",
-          gap: spacing.md,
-        }}>
-          <TouchableOpacity
-            onPress={handleDelete}
-            style={{
-              flex: 1,
-              paddingVertical: spacing.lg,
-              borderRadius: radius.md,
-              alignItems: "center",
-              borderWidth: 1,
-              borderColor: colors.border.danger,
-            }}
-          >
-            <Text style={{ color: colors.text.danger, fontWeight: "600", ...typography.body }}>
-              Delete
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={handleEdit}
-            style={{
-              flex: 2,
-              paddingVertical: spacing.lg,
-              borderRadius: radius.md,
-              alignItems: "center",
-              backgroundColor: colors.bg.brand,
-            }}
-          >
-            <Text style={{ color: colors.text.onBrand, fontWeight: "700", ...typography.body }}>
-              Edit Session
-            </Text>
-          </TouchableOpacity>
-        </View>
+
+        {/* ── Share to Social modal ── */}
+        <Modal visible={shareVisible} transparent animationType="slide" onRequestClose={() => setShareVisible(false)}>
+          <TouchableOpacity style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)" }} activeOpacity={1} onPress={() => setShareVisible(false)} />
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+            <View style={{
+              backgroundColor: colors.bg.primary,
+              borderTopLeftRadius: 24,
+              borderTopRightRadius: 24,
+              paddingHorizontal: 20,
+              paddingTop: 12,
+              paddingBottom: insets.bottom + 20,
+            }}>
+              {/* Handle */}
+              <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border.default, alignSelf: "center", marginBottom: 20 }} />
+
+              <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text.primary, marginBottom: 4 }}>Share to Social</Text>
+              <Text style={{ fontSize: 13, color: colors.text.tertiary, marginBottom: 20 }}>Post this session to the Stakemate community feed.</Text>
+
+              {/* Session preview */}
+              <View style={{ backgroundColor: colors.bg.secondary, borderRadius: 14, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: colors.border.default }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <View style={{ width: 36, height: 36, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: isTournament ? "#8B5CF6" : "#F97316" }}>
+                    <Ionicons name={isTournament ? "trophy-outline" : "cash-outline"} size={18} color="#fff" />
+                  </View>
+                  <View>
+                    <Text style={{ color: colors.text.primary, fontWeight: "600", fontSize: 14 }}>
+                      {isTournament ? (session.tournamentName || "Tournament") : `${session.stakes} NLH`}
+                    </Text>
+                    {session.venue ? <Text style={{ color: colors.text.tertiary, fontSize: 12 }}>{session.venue}</Text> : null}
+                  </View>
+                </View>
+                <Text style={{ fontSize: 28, fontWeight: "900", color: profit >= 0 ? "#22C55E" : "#EF4444", letterSpacing: -0.5 }}>
+                  {profit >= 0 ? "+" : "-"}${Math.abs(profit).toFixed(0)}
+                </Text>
+                <Text style={{ fontSize: 13, color: colors.text.tertiary, marginTop: 2 }}>{isTournament ? "Payout" : "Profit"}</Text>
+              </View>
+
+              {/* Caption input */}
+              <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text.secondary, marginBottom: 8 }}>Add a caption (optional)</Text>
+              <TextInput
+                value={shareCaption}
+                onChangeText={setShareCaption}
+                placeholder="e.g. Great night at the casino 🎰"
+                placeholderTextColor={colors.text.disabled}
+                multiline
+                maxLength={140}
+                style={{
+                  backgroundColor: colors.bg.secondary,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: colors.border.default,
+                  padding: 12,
+                  color: colors.text.primary,
+                  fontSize: 14,
+                  minHeight: 70,
+                  textAlignVertical: "top",
+                  marginBottom: 20,
+                }}
+              />
+
+              <TouchableOpacity
+                onPress={handleShare}
+                disabled={sharing}
+                activeOpacity={0.85}
+                style={{
+                  backgroundColor: "#155DFC",
+                  borderRadius: 14,
+                  paddingVertical: 16,
+                  alignItems: "center",
+                  flexDirection: "row",
+                  justifyContent: "center",
+                  gap: 8,
+                }}
+              >
+                {sharing
+                  ? <ActivityIndicator color="#fff" />
+                  : <>
+                      <Ionicons name="share-social-outline" size={18} color="#fff" />
+                      <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>Post to Social</Text>
+                    </>
+                }
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
       </View>
       </TouchableWithoutFeedback>
     </KeyboardAvoidingView>

@@ -1,269 +1,552 @@
-import { PRO_FEATURES, ProFeature } from "@/constants/subscription";
-import { useSubscription } from "@/context/SubscriptionContext";
-import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useState } from "react";
 import {
-  ActivityIndicator, Modal, Platform, ScrollView, Text,
-  TouchableOpacity, View,
+  PRODUCT_ELITE_MONTHLY,
+  PRODUCT_ELITE_YEARLY,
+  PRODUCT_PRO_MONTHLY,
+  PRODUCT_PRO_YEARLY,
+} from "@/constants/subscription";
+import { useSubscription } from "@/context/SubscriptionContext";
+import { Ionicons } from "@expo/vector-icons";
+import { presentCodeRedemptionSheetIOS } from "expo-iap";
+import { router } from "expo-router";
+import { useState } from "react";
+import { Image } from "expo-image";
+import {
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const FEATURES_LIST: { icon: keyof typeof MaterialCommunityIcons.glyphMap; label: string }[] = [
-  { icon: "history",          label: "Unlimited session history" },
-  { icon: "lightning-bolt",   label: "Live session tracker" },
-  { icon: "auto-fix",         label: "AI note enhancement" },
-  { icon: "notebook-outline", label: "Notes history, export & copy" },
+type Plan   = "pro" | "elite";
+type Period = "yearly" | "monthly";
+
+const BRAND = "#155DFC";
+
+const PLAN_META: Record<Plan, { label: string; tagline: string; color: string; accent: string }> = {
+  pro: {
+    label:   "Stakemate Pro",
+    tagline: "Serious players, serious stats",
+    color:   BRAND,
+    accent:  "#4B82FF",
+  },
+  elite: {
+    label:   "Stakemate Elite",
+    tagline: "Everything Pro + AI hand analysis",
+    color:   "#7C3AED",
+    accent:  "#9B5DF5",
+  },
+};
+
+const PRICING = {
+  pro: {
+    yearly:  { perMonth: "A$8.33", annual: "A$99.99", save: "Save 17%" },
+    monthly: { perMonth: "A$9.99", billing: "A$9.99/month" },
+  },
+  elite: {
+    yearly:  { perMonth: "A$16.67", annual: "A$199.99", save: "Save 17%" },
+    monthly: { perMonth: "A$19.99", billing: "A$19.99/month" },
+  },
+} as const;
+
+const PRODUCT_IDS: Record<Plan, Record<Period, string>> = {
+  pro:   { yearly: PRODUCT_PRO_YEARLY,   monthly: PRODUCT_PRO_MONTHLY   },
+  elite: { yearly: PRODUCT_ELITE_YEARLY, monthly: PRODUCT_ELITE_MONTHLY },
+};
+
+const PRO_FEATURES = [
+  "Session analytics & charts",
+  "Hourly rate tracking",
+  "Win/loss streaks",
+  "Multi-bankroll tracking",
+  "Hand history & replays",
+  "Tournament calendar",
+  "Staking manager",
+  "Social feed & follows",
+  "Dark mode",
+  "PDF exports",
+  "Currency conversion",
 ];
 
-type PlanKey = "lifetime" | "annual" | "monthly" | "weekly";
-
-interface PlanConfig {
-  key: PlanKey;
-  label: string;
-  period: string;
-  badge?: string;
-  sublabel: (price: string) => string;
-  fallbackPrice: string;
-}
-
-const PLANS: PlanConfig[] = [
-  {
-    key: "lifetime",
-    label: "Lifetime",
-    period: "one-time",
-    badge: "BEST DEAL",
-    sublabel: () => "Pay once, own it forever",
-    fallbackPrice: "$99.99",
-  },
-  {
-    key: "annual",
-    label: "Yearly",
-    period: "per year",
-    badge: "BEST VALUE",
-    sublabel: (price) => `~$${(parseFloat(price.replace(/[^0-9.]/g, "")) / 12).toFixed(2)}/mo`,
-    fallbackPrice: "$39.99",
-  },
-  {
-    key: "monthly",
-    label: "Monthly",
-    period: "per month",
-    sublabel: () => "Billed monthly, cancel anytime",
-    fallbackPrice: "$7.99",
-  },
-  {
-    key: "weekly",
-    label: "Weekly",
-    period: "per week",
-    sublabel: () => "Great for a trial run",
-    fallbackPrice: "$2.99",
-  },
+const ELITE_ONLY = [
+  "AI hand exploit analysis",
+  "AI session coaching",
 ];
 
-interface Props {
-  visible: boolean;
-  onClose: () => void;
-  feature?: ProFeature;
-}
-
-export function PaywallModal({ visible, onClose, feature }: Props) {
-  const { colors, radius } = usePokerTheme();
-  const { offerings, purchase, restore } = useSubscription();
+export function PaywallModal({
+  visible = false,
+  onClose,
+}: {
+  visible?: boolean;
+  onClose?: () => void;
+}) {
   const insets = useSafeAreaInsets();
+  const [plan, setPlan]     = useState<Plan>("pro");
+  const [period, setPeriod] = useState<Period>("yearly");
+  const { purchaseSubscription, restorePurchases, isLoading } = useSubscription();
 
-  const [selected, setSelected] = useState<PlanKey>("annual");
-  const [loading, setLoading]   = useState(false);
-  const [restoring, setRestoring] = useState(false);
-  const [error, setError]       = useState<string | null>(null);
+  const pricing   = PRICING[plan];
+  const meta      = PLAN_META[plan];
+  const productId = PRODUCT_IDS[plan][period];
 
-  const lifetimePkg = offerings?.availablePackages.find(p => p.product.identifier === "lifetime");
-  const weeklyPkg   = offerings?.availablePackages.find(p => p.product.identifier === "weekly");
-  const monthlyPkg  = offerings?.availablePackages.find(p => p.product.identifier === "monthly");
-  const annualPkg   = offerings?.availablePackages.find(p => p.product.identifier === "yearly");
-
-  function getPkg(key: PlanKey) {
-    if (key === "lifetime") return lifetimePkg;
-    if (key === "weekly")   return weeklyPkg;
-    if (key === "monthly")  return monthlyPkg;
-    return annualPkg;
+  async function handleSubscribe() {
+    await purchaseSubscription(productId);
   }
 
-  function getPrice(key: PlanKey, fallback: string) {
-    return getPkg(key)?.product.priceString ?? fallback;
-  }
-
-  async function handlePurchase() {
-    const pkg = getPkg(selected);
-    if (!pkg) {
-      setError("Products are not available right now. Please try again later.");
-      return;
+  async function handlePromoCode() {
+    if (Platform.OS !== "ios") return;
+    try {
+      await presentCodeRedemptionSheetIOS();
+    } catch {
+      Alert.alert("Not available", "Code redemption is not available right now.");
     }
-    setLoading(true);
-    setError(null);
-    const ok = await purchase(pkg.product.identifier);
-    setLoading(false);
-    if (ok) onClose();
-    else setError("Purchase was not completed. Please try again.");
   }
 
-  async function handleRestore() {
-    setRestoring(true);
-    setError(null);
-    const ok = await restore();
-    setRestoring(false);
-    if (ok) onClose();
-    else setError("No active subscription found for this account.");
+  function handleTerms() {
+    onClose?.();
+    router.push("/terms");
   }
-
-  const featureLabel = feature ? PRO_FEATURES[feature] : null;
-  const selectedPlan = PLANS.find(p => p.key === selected)!;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" }}>
-        <View style={{
-          backgroundColor: colors.bg.primary,
-          borderTopLeftRadius: 28, borderTopRightRadius: 28,
-          paddingBottom: insets.bottom > 0 ? insets.bottom + 8 : 24,
-          maxHeight: "92%",
-        }}>
-          {/* Close */}
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            style={{ position: "absolute", top: 16, right: 16, zIndex: 10 }}>
-            <MaterialCommunityIcons name="close" size={22} color={colors.text.tertiary} />
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
+      <View style={styles.root}>
+
+        {/* ── Hero ── */}
+        <View style={[styles.hero, { backgroundColor: meta.color }]}>
+          <TouchableOpacity onPress={onClose} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="close" size={18} color="rgba(255,255,255,0.8)" />
           </TouchableOpacity>
 
-          <ScrollView
-            contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 24, paddingBottom: 8 }}
-            showsVerticalScrollIndicator={false}
-            bounces={false}
-          >
-            {/* Header */}
-            <View style={{ alignItems: "center", marginBottom: 20 }}>
-              <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: colors.bg.brand + "22", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
-                <MaterialCommunityIcons name="crown" size={26} color={colors.text.brand} />
+          {/* SM wordmark */}
+          <View style={styles.heroMark}>
+            <Image
+              source={require("@/assets/images/SM.svg")}
+              style={styles.markIcon}
+              contentFit="contain"
+              tintColor="rgba(255,255,255,0.9)"
+            />
+            <Text style={styles.heroAppName}>Stakemate</Text>
+          </View>
+
+          {/* Plan label */}
+          <Text style={styles.heroPlanName}>{meta.label}</Text>
+          <Text style={styles.heroTagline}>{meta.tagline}</Text>
+
+          {/* Trial chip */}
+          <View style={styles.trialChip}>
+            <Ionicons name="gift-outline" size={13} color={meta.color} />
+            <Text style={[styles.trialChipText, { color: meta.color }]}>7-day free trial included</Text>
+          </View>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={[styles.scroll, { paddingBottom: 20 }]}
+          showsVerticalScrollIndicator={false}
+        >
+
+          {/* ── Plan switcher (underline tabs) ── */}
+          <View style={styles.planTabs}>
+            {(["pro", "elite"] as Plan[]).map((p) => (
+              <TouchableOpacity
+                key={p}
+                onPress={() => setPlan(p)}
+                style={[styles.planTab, plan === p && { borderBottomColor: PLAN_META[p].color, borderBottomWidth: 2 }]}
+                activeOpacity={0.75}
+              >
+                <Text style={[styles.planTabText, plan === p && { color: PLAN_META[p].color, fontWeight: "700" }]}>
+                  {PLAN_META[p].label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* ── Period selector (stacked rows) ── */}
+          <View style={styles.periodSection}>
+            {/* Yearly row */}
+            <TouchableOpacity
+              onPress={() => setPeriod("yearly")}
+              style={[styles.periodRow, period === "yearly" && { borderColor: meta.color, backgroundColor: `${meta.color}08` }]}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.periodCheck, period === "yearly" && { backgroundColor: meta.color, borderColor: meta.color }]}>
+                {period === "yearly" && <Ionicons name="checkmark" size={14} color="#fff" />}
               </View>
-              <Text style={{ color: colors.text.primary, fontSize: 22, fontWeight: "800", textAlign: "center" }}>
-                Upgrade to Pro
-              </Text>
-              {featureLabel ? (
-                <Text style={{ color: colors.text.secondary, fontSize: 13, textAlign: "center", marginTop: 6, lineHeight: 19 }}>
-                  <Text style={{ color: colors.text.brand, fontWeight: "700" }}>{featureLabel}</Text>
-                  {" "}is a Pro feature.
-                </Text>
-              ) : (
-                <Text style={{ color: colors.text.secondary, fontSize: 13, textAlign: "center", marginTop: 6 }}>
-                  Unlock everything PokerRoll has to offer.
-                </Text>
-              )}
-            </View>
-
-            {/* Feature list */}
-            <View style={{ gap: 10, marginBottom: 22 }}>
-              {FEATURES_LIST.map(f => (
-                <View key={f.label} style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-                  <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: colors.bg.brand + "18", alignItems: "center", justifyContent: "center" }}>
-                    <MaterialCommunityIcons name={f.icon} size={16} color={colors.text.brand} />
+              <View style={{ flex: 1 }}>
+                <View style={styles.periodRowTop}>
+                  <Text style={[styles.periodLabel, period === "yearly" && { color: "#0f172b" }]}>Yearly</Text>
+                  <View style={[styles.savePill, { backgroundColor: "#22C55E" }]}>
+                    <Text style={styles.savePillText}>{pricing.yearly.save}</Text>
                   </View>
-                  <Text style={{ color: colors.text.primary, fontSize: 14, fontWeight: "500", flex: 1 }}>{f.label}</Text>
-                  <MaterialCommunityIcons name="check-circle" size={16} color={colors.text.brand} />
                 </View>
-              ))}
-            </View>
+                <Text style={styles.periodNote}>Billed {pricing.yearly.annual}/yr · after trial</Text>
+              </View>
+              <View style={styles.periodPrice}>
+                <Text style={[styles.periodPriceAmount, period === "yearly" && { color: meta.color }]}>
+                  {pricing.yearly.perMonth}
+                </Text>
+                <Text style={styles.periodPricePer}>/mo</Text>
+              </View>
+            </TouchableOpacity>
 
-            {/* Plan selector — Free + 3 paid */}
-            <View style={{ gap: 10, marginBottom: 16 }}>
+            {/* Monthly row */}
+            <TouchableOpacity
+              onPress={() => setPeriod("monthly")}
+              style={[styles.periodRow, period === "monthly" && { borderColor: meta.color, backgroundColor: `${meta.color}08` }]}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.periodCheck, period === "monthly" && { backgroundColor: meta.color, borderColor: meta.color }]}>
+                {period === "monthly" && <Ionicons name="checkmark" size={14} color="#fff" />}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.periodLabel, period === "monthly" && { color: "#0f172b" }]}>Monthly</Text>
+                <Text style={styles.periodNote}>Billed {pricing.monthly.billing}</Text>
+              </View>
+              <View style={styles.periodPrice}>
+                <Text style={[styles.periodPriceAmount, period === "monthly" && { color: meta.color }]}>
+                  {pricing.monthly.perMonth}
+                </Text>
+                <Text style={styles.periodPricePer}>/mo</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
 
-              {PLANS.map(plan => {
-                const price = getPrice(plan.key, plan.fallbackPrice);
-                const isSelected = selected === plan.key;
-                return (
-                  <TouchableOpacity
-                    key={plan.key}
-                    onPress={() => setSelected(plan.key)}
-                    activeOpacity={0.8}
-                    style={{
-                      borderRadius: radius.md, borderWidth: 2,
-                      borderColor: isSelected ? colors.border.brand : colors.border.default,
-                      backgroundColor: isSelected ? colors.bg.brand + "12" : colors.bg.secondary,
-                      paddingHorizontal: 16, paddingVertical: 14,
-                      flexDirection: "row", alignItems: "center",
-                    }}
-                  >
-                    {/* Radio dot */}
-                    <View style={{
-                      width: 20, height: 20, borderRadius: 10, borderWidth: 2,
-                      borderColor: isSelected ? colors.bg.brand : colors.border.strong,
-                      alignItems: "center", justifyContent: "center", marginRight: 12,
-                    }}>
-                      {isSelected && (
-                        <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: colors.bg.brand }} />
-                      )}
+          {/* ── Features ── */}
+          <View style={styles.featuresSection}>
+            <Text style={styles.featuresHeading}>
+              {plan === "pro" ? "What's included in Pro" : "Everything in Pro, plus"}
+            </Text>
+
+            {plan === "elite" && (
+              <>
+                {ELITE_ONLY.map((f) => (
+                  <View key={f} style={styles.featureItem}>
+                    <View style={[styles.featCheck, { backgroundColor: "#7C3AED" }]}>
+                      <Ionicons name="hardware-chip-outline" size={12} color="#fff" />
                     </View>
-
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "700" }}>
-                          {plan.label}
-                        </Text>
-                        {plan.badge && (
-                          <View style={{ backgroundColor: colors.bg.brand, borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 }}>
-                            <Text style={{ color: colors.text.onBrand, fontSize: 9, fontWeight: "800", letterSpacing: 0.5 }}>
-                              {plan.badge}
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                      <Text style={{ color: isSelected ? colors.text.brand : colors.text.tertiary, fontSize: 12, marginTop: 2 }}>
-                        {plan.sublabel(price)}
-                      </Text>
+                    <Text style={[styles.featureText, { fontWeight: "700", color: "#7C3AED" }]}>{f}</Text>
+                    <View style={styles.eliteTag}>
+                      <Text style={styles.eliteTagText}>ELITE</Text>
                     </View>
-
-                    <View style={{ alignItems: "flex-end" }}>
-                      <Text style={{ color: colors.text.primary, fontSize: 17, fontWeight: "800" }}>{price}</Text>
-                      <Text style={{ color: colors.text.tertiary, fontSize: 11, marginTop: 1 }}>{plan.period}</Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Error */}
-            {error && (
-              <Text style={{ color: colors.text.danger, fontSize: 12, textAlign: "center", marginBottom: 10 }}>
-                {error}
-              </Text>
+                  </View>
+                ))}
+                <View style={[styles.divider, { marginVertical: 12 }]} />
+                <Text style={[styles.featuresHeading, { marginBottom: 10 }]}>Plus all Pro features</Text>
+              </>
             )}
 
-            {/* Subscribe button */}
-            <TouchableOpacity onPress={handlePurchase} disabled={loading} activeOpacity={0.85}
-              style={{ backgroundColor: colors.bg.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginBottom: 10 }}>
-              {loading
-                ? <ActivityIndicator color={colors.text.onBrand} />
-                : <Text style={{ color: colors.text.onBrand, fontSize: 16, fontWeight: "800" }}>
-                    {selected === "lifetime" ? "Get Lifetime Access" : `Start ${selectedPlan.label} Plan`}
-                  </Text>
-              }
-            </TouchableOpacity>
+            {PRO_FEATURES.map((f) => (
+              <View key={f} style={styles.featureItem}>
+                <View style={[styles.featCheck, { backgroundColor: `${meta.color}18` }]}>
+                  <Ionicons name="checkmark" size={13} color={meta.color} />
+                </View>
+                <Text style={styles.featureText}>{f}</Text>
+              </View>
+            ))}
+          </View>
+        </ScrollView>
 
-            {/* Restore */}
-            <TouchableOpacity onPress={handleRestore} disabled={restoring} style={{ alignItems: "center", paddingVertical: 8 }}>
-              {restoring
-                ? <ActivityIndicator color={colors.text.tertiary} size="small" />
-                : <Text style={{ color: colors.text.tertiary, fontSize: 13 }}>Restore Purchases</Text>
-              }
-            </TouchableOpacity>
+        {/* ── Sticky CTA ── */}
+        <View style={[styles.stickyBottom, { paddingBottom: insets.bottom + 12 }]}>
+          <TouchableOpacity
+            style={[styles.ctaBtn, { backgroundColor: meta.color }, isLoading && { opacity: 0.7 }]}
+            activeOpacity={0.88}
+            onPress={handleSubscribe}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <View style={styles.ctaInner}>
+                <Text style={styles.ctaText}>Start 7-day free trial</Text>
+                <View style={styles.ctaArrow}>
+                  <Ionicons name="arrow-forward" size={16} color={meta.color} />
+                </View>
+              </View>
+            )}
+          </TouchableOpacity>
 
-            {/* Legal */}
-            <Text style={{ color: colors.text.tertiary, fontSize: 10, textAlign: "center", marginTop: 8, lineHeight: 15 }}>
-              {Platform.OS === "ios"
-                ? "Payment charged to your Apple ID. Subscription auto-renews unless cancelled 24hrs before renewal."
-                : "Payment charged to your Google Play account. Cancel anytime in Google Play settings."
-              }
-            </Text>
-          </ScrollView>
+          <Text style={styles.ctaSub}>Then {period === "yearly" ? pricing.yearly.annual + "/yr" : pricing.monthly.billing} · Cancel anytime</Text>
+
+          <View style={styles.footer}>
+            <TouchableOpacity activeOpacity={0.6} onPress={handlePromoCode}>
+              <Text style={styles.footerLink}>Promo code</Text>
+            </TouchableOpacity>
+            <Text style={styles.footerDot}>·</Text>
+            <TouchableOpacity activeOpacity={0.6} onPress={() => restorePurchases()}>
+              <Text style={styles.footerLink}>Restore</Text>
+            </TouchableOpacity>
+            <Text style={styles.footerDot}>·</Text>
+            <TouchableOpacity activeOpacity={0.6} onPress={handleTerms}>
+              <Text style={styles.footerLink}>Terms</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </Modal>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: "#F8FAFC",
+  },
+
+  // Hero
+  hero: {
+    paddingTop: 20,
+    paddingHorizontal: 24,
+    paddingBottom: 28,
+  },
+  closeBtn: {
+    alignSelf: "flex-end",
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  heroMark: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 16,
+  },
+  markIcon: {
+    width: 46,
+    height: 30,
+  },
+  heroAppName: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  heroPlanName: {
+    color: "#fff",
+    fontSize: 28,
+    fontWeight: "900",
+    letterSpacing: -0.5,
+    marginBottom: 6,
+  },
+  heroTagline: {
+    color: "rgba(255,255,255,0.75)",
+    fontSize: 14,
+    fontWeight: "500",
+    marginBottom: 16,
+  },
+  trialChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#fff",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    alignSelf: "flex-start",
+  },
+  trialChipText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
+  scroll: {
+    paddingHorizontal: 20,
+    paddingTop: 0,
+  },
+
+  // Plan tabs (underline style)
+  planTabs: {
+    flexDirection: "row",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#E2E8F0",
+    marginBottom: 20,
+  },
+  planTab: {
+    flex: 1,
+    paddingVertical: 14,
+    alignItems: "center",
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
+  },
+  planTabText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#94A3B8",
+  },
+
+  // Period rows (vertical stacked)
+  periodSection: {
+    gap: 10,
+    marginBottom: 28,
+  },
+  periodRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    padding: 16,
+  },
+  periodCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: "#CBD5E1",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  periodRowTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 3,
+  },
+  periodLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#64748B",
+  },
+  savePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 20,
+  },
+  savePillText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#fff",
+  },
+  periodNote: {
+    fontSize: 12,
+    color: "#94A3B8",
+  },
+  periodPrice: {
+    alignItems: "flex-end",
+  },
+  periodPriceAmount: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#64748B",
+  },
+  periodPricePer: {
+    fontSize: 11,
+    color: "#94A3B8",
+  },
+
+  // Features
+  featuresSection: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#E2E8F0",
+  },
+  featuresHeading: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0f172b",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 16,
+  },
+  featureItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 12,
+  },
+  featCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  featureText: {
+    fontSize: 14,
+    color: "#374151",
+    flex: 1,
+  },
+  eliteTag: {
+    backgroundColor: "#EDE9FE",
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  eliteTagText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#7C3AED",
+    letterSpacing: 0.5,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#E2E8F0",
+  },
+
+  // Sticky bottom
+  stickyBottom: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    backgroundColor: "#F8FAFC",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#E2E8F0",
+  },
+  ctaBtn: {
+    borderRadius: 14,
+    paddingVertical: 17,
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  ctaInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  ctaText: {
+    color: "#fff",
+    fontSize: 17,
+    fontWeight: "800",
+    letterSpacing: -0.2,
+  },
+  ctaArrow: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ctaSub: {
+    fontSize: 12,
+    color: "#94A3B8",
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  footer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 10,
+  },
+  footerDot: {
+    fontSize: 13,
+    color: "#CBD5E1",
+  },
+  footerLink: {
+    fontSize: 13,
+    color: "#64748B",
+    fontWeight: "500",
+  },
+});

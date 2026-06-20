@@ -1,9 +1,9 @@
 import { useAuth } from "@/context/AuthContext";
-import { PokerRollLogo } from "@/components/PokerRollLogo";
+import { StakemateLogo } from "@/components/StakemateLogo";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Text, View } from "react-native";
+import { Animated, View } from "react-native";
 
 export default function SplashScreen() {
   const { colors } = usePokerTheme();
@@ -32,42 +32,13 @@ export default function SplashScreen() {
     <View
       style={{
         flex: 1,
-        backgroundColor: colors.bg.primary,
+        backgroundColor: "#155DFC",
         alignItems: "center",
         justifyContent: "center",
       }}
     >
-      <Animated.View
-        style={{
-          opacity: fadeAnim,
-          flexDirection: "row",
-          alignItems: "center",
-        }}
-      >
-        <PokerRollLogo size={100} style={{ marginRight: 14 }} />
-        <View>
-          <Text
-            style={{
-              color: colors.text.primary,
-              fontSize: 32,
-              fontWeight: "800",
-              letterSpacing: 0.3,
-              lineHeight: 36,
-            }}
-          >
-            PokerRoll
-          </Text>
-          <Text
-            style={{
-              color: colors.text.tertiary,
-              fontSize: 14,
-              letterSpacing: 0.4,
-              marginTop: 4,
-            }}
-          >
-            by Stakemate
-          </Text>
-        </View>
+      <Animated.View style={{ opacity: fadeAnim, alignItems: "center" }}>
+        <StakemateLogo size={180} />
       </Animated.View>
     </View>
   );

@@ -4,15 +4,13 @@ import {
   HandMetadata, NoteEntry, saveNoteEntry, Session,
   updateNoteEntry,
 } from "@/db/database";
-import { PaywallModal } from "@/components/PaywallModal";
+import { createPost } from "@/lib/social";
+import { useAuth } from "@/context/AuthContext";
 import { HandAnalysisModal } from "@/components/HandAnalysisModal";
 import { CardText } from "@/components/CardText";
 import { CardRow } from "@/components/PlayingCard";
-import { useSubscription } from "@/context/SubscriptionContext";
-import { FREE_NOTES_LIMIT } from "@/constants/subscription";
-import { getTrialStatus, markTrialStarted } from "@/hooks/use-trial";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
@@ -20,7 +18,7 @@ import { useFocusEffect, useNavigation } from "expo-router";
 import { useCallback, useLayoutEffect, useState } from "react";
 import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Modal,
-  Platform, ScrollView, StyleSheet, Text, TextInput,
+  Platform, ScrollView, Share, StyleSheet, Switch, Text, TextInput,
   TouchableOpacity, View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -102,8 +100,8 @@ function ChipSelect({ label, options, value, onChange, colors }: {
 
 // ─── Add / Edit Modal ─────────────────────────────────────────────────────────
 
-function NoteEditorModal({
-  visible, initial, sessions, onClose, onSaved, colors, isPro,
+export function NoteEditorModal({
+  visible, initial, sessions, onClose, onSaved, colors,
 }: {
   visible: boolean;
   initial: NoteEntry | null;
@@ -111,7 +109,6 @@ function NoteEditorModal({
   onClose: () => void;
   onSaved: () => void;
   colors: any;
-  isPro: boolean;
 }) {
   const isEdit = !!initial;
   const initMeta = initial ? (parseMetadata(initial) ?? {}) : {};
@@ -230,11 +227,11 @@ function NoteEditorModal({
             }}
           >
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <MaterialCommunityIcons name="cards-playing-outline" size={16} color={colors.text.brand} />
+              <Ionicons name="card-outline" size={16} color={colors.text.brand} />
               <Text style={{ color: colors.text.primary, fontSize: 14, fontWeight: "600" }}>Hand Details</Text>
               <Text style={{ color: colors.text.tertiary, fontSize: 12 }}>(optional)</Text>
             </View>
-            <MaterialCommunityIcons name={handOpen ? "chevron-up" : "chevron-down"} size={18} color={colors.text.tertiary} />
+            <Ionicons name={handOpen ? "chevron-up" : "chevron-down"} size={18} color={colors.text.tertiary} />
           </TouchableOpacity>
 
           {handOpen && (
@@ -295,16 +292,16 @@ function NoteEditorModal({
                     <Text style={{ color: colors.text.tertiary, fontSize: 14 }}>Standalone note</Text>
                   )}
                 </View>
-                <MaterialCommunityIcons name={pickerOpen ? "chevron-up" : "chevron-down"} size={20} color={colors.text.tertiary} />
+                <Ionicons name={pickerOpen ? "chevron-up" : "chevron-down"} size={20} color={colors.text.tertiary} />
               </TouchableOpacity>
 
               {pickerOpen && (
                 <View style={{ backgroundColor: colors.bg.secondary, borderRadius: 12, borderWidth: 1, borderColor: colors.border.default, marginTop: 4, maxHeight: 220 }}>
                   <ScrollView showsVerticalScrollIndicator={false}>
                     <TouchableOpacity onPress={() => { setSessionId(0); setPickerOpen(false); }} style={{ paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderColor: colors.border.subtle, flexDirection: "row", alignItems: "center", gap: 10 }}>
-                      <MaterialCommunityIcons name="note-outline" size={18} color={colors.text.tertiary} />
+                      <Ionicons name="document-outline" size={18} color={colors.text.tertiary} />
                       <Text style={{ color: sessionId === 0 ? colors.text.brand : colors.text.primary, fontSize: 14, fontWeight: sessionId === 0 ? "700" : "400" }}>Standalone note</Text>
-                      {sessionId === 0 && <MaterialCommunityIcons name="check" size={16} color={colors.text.brand} style={{ marginLeft: "auto" }} />}
+                      {sessionId === 0 && <Ionicons name="checkmark" size={16} color={colors.text.brand} style={{ marginLeft: "auto" }} />}
                     </TouchableOpacity>
                     {sessions.map(s => (
                       <TouchableOpacity key={s.id} onPress={() => { setSessionId(s.id); setPickerOpen(false); }} style={{ paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderColor: colors.border.subtle, flexDirection: "row", alignItems: "center", gap: 10 }}>
@@ -314,7 +311,7 @@ function NoteEditorModal({
                           </Text>
                           <Text style={{ color: colors.text.tertiary, fontSize: 12 }}>{s.venue || "No venue"} · {s.profit >= 0 ? "+" : ""}${s.profit.toFixed(0)}</Text>
                         </View>
-                        {sessionId === s.id && <MaterialCommunityIcons name="check" size={16} color={colors.text.brand} />}
+                        {sessionId === s.id && <Ionicons name="checkmark" size={16} color={colors.text.brand} />}
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
@@ -342,36 +339,29 @@ function NoteEditorModal({
           </View>
 
           {/* Compress */}
-          {isPro ? (
-            <TouchableOpacity onPress={handleCompress} disabled={compressing || !body.trim()} activeOpacity={0.8}
-              style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#0d9488", borderRadius: 12, paddingVertical: 14, opacity: !body.trim() ? 0.4 : 1 }}>
-              {compressing ? <ActivityIndicator color="#fff" size="small" /> : <MaterialCommunityIcons name="text-short" size={18} color="#fff" />}
-              <Text style={{ color: "#fff", fontSize: 15, fontWeight: "700" }}>{compressing ? "Compressing…" : "Compress to Shorthand"}</Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#0d948822", borderRadius: 12, paddingVertical: 14, borderWidth: 1, borderColor: "#0d948844" }}>
-              <MaterialCommunityIcons name="crown" size={16} color="#0d9488" />
-              <Text style={{ color: "#0d9488", fontSize: 14, fontWeight: "700" }}>Compress to Shorthand · Pro only</Text>
-            </View>
-          )}
+          <TouchableOpacity onPress={handleCompress} disabled={compressing || !body.trim()} activeOpacity={0.8}
+            style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#0d9488", borderRadius: 12, paddingVertical: 14, opacity: !body.trim() ? 0.4 : 1 }}>
+            {compressing ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="list-outline" size={18} color="#fff" />}
+            <Text style={{ color: "#fff", fontSize: 15, fontWeight: "700" }}>{compressing ? "Compressing…" : "Compress to Shorthand"}</Text>
+          </TouchableOpacity>
 
           {/* Compressed preview */}
           {compressedPreview && (
             <View style={{ backgroundColor: "#0d948814", borderRadius: 12, borderWidth: 1, borderColor: "#0d948844", padding: 14, gap: 12 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <MaterialCommunityIcons name="check-circle-outline" size={16} color="#0d9488" />
+                <Ionicons name="checkmark-circle-outline" size={16} color="#0d9488" />
                 <Text style={{ color: "#0d9488", fontSize: 13, fontWeight: "700" }}>Compressed Version</Text>
               </View>
               <Text style={{ color: colors.text.primary, fontSize: 13, lineHeight: 21, fontFamily: "monospace" }}>{compressedPreview}</Text>
               <View style={{ flexDirection: "row", gap: 8 }}>
                 <TouchableOpacity onPress={() => { setBody(compressedPreview); setCompressedPreview(null); }}
                   style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#0d9488", borderRadius: 10, paddingVertical: 11 }}>
-                  <MaterialCommunityIcons name="check" size={16} color="#fff" />
+                  <Ionicons name="checkmark" size={16} color="#fff" />
                   <Text style={{ color: "#fff", fontSize: 14, fontWeight: "700" }}>Use This</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => setCompressedPreview(null)}
                   style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: colors.bg.secondary, borderRadius: 10, paddingVertical: 11, borderWidth: 1, borderColor: colors.border.default }}>
-                  <MaterialCommunityIcons name="close" size={16} color={colors.text.secondary} />
+                  <Ionicons name="close" size={16} color={colors.text.secondary} />
                   <Text style={{ color: colors.text.secondary, fontSize: 14, fontWeight: "700" }}>Keep Original</Text>
                 </TouchableOpacity>
               </View>
@@ -382,6 +372,241 @@ function NoteEditorModal({
     </Modal>
   );
 }
+
+// ─── Share Note Modal ─────────────────────────────────────────────────────────
+
+function ShareNoteModal({
+  entry, visible, onClose, colors, userId,
+}: {
+  entry: NoteEntry | null;
+  visible: boolean;
+  onClose: () => void;
+  colors: any;
+  userId: string | undefined;
+}) {
+  const insets = useSafeAreaInsets();
+  const [caption,     setCaption]     = useState("");
+  const [friendsOnly, setFriendsOnly] = useState(false);
+  const [posting,     setPosting]     = useState(false);
+
+  const BRAND = "#155DFC";
+
+  async function handlePostToCommunity() {
+    if (!userId) { Alert.alert("Not signed in", "Sign in to share to the community."); return; }
+    if (!entry)  return;
+    setPosting(true);
+    try {
+      const noteText  = noteDisplayText(entry);
+      const baseText  = entry.title ? `${entry.title}\n\n${noteText}` : noteText;
+      const content   = caption.trim() ? `${caption.trim()}\n\n${baseText}` : baseText;
+      await createPost({
+        user_id: userId,
+        content,
+        session_type: "cash",
+        visibility: friendsOnly ? "friends" : "public",
+      });
+      setCaption("");
+      onClose();
+      Alert.alert(
+        friendsOnly ? "Shared with followers!" : "Posted to community!",
+        friendsOnly
+          ? "Your hand note is visible to people who follow you."
+          : "Your hand note is now on the community feed.",
+      );
+    } catch {
+      Alert.alert("Error", "Could not share to community.");
+    } finally {
+      setPosting(false);
+    }
+  }
+
+  async function handleShareToFriends() {
+    if (!entry) return;
+    onClose();
+    try {
+      const text = buildExportText(entry);
+      await Share.share({ message: text, title: entry.title || "Hand Note" });
+    } catch { /* cancelled */ }
+  }
+
+  if (!entry) return null;
+
+  const preview = (entry.title || noteDisplayText(entry)).slice(0, 80);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <View style={[shareStyles.sheet, { backgroundColor: colors.bg.primary, paddingBottom: insets.bottom + 20 }]}>
+            {/* Handle */}
+            <View style={[shareStyles.handle, { backgroundColor: colors.border.default }]} />
+
+            {/* Header */}
+            <View style={shareStyles.headerRow}>
+              <Text style={[shareStyles.title, { color: colors.text.primary }]}>Share Hand Note</Text>
+              <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <View style={[shareStyles.closeBtn, { backgroundColor: colors.bg.secondary }]}>
+                  <Ionicons name="close" size={16} color={colors.text.secondary} />
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            {/* Note preview chip */}
+            <View style={[shareStyles.preview, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
+              <View style={[shareStyles.previewIcon, { backgroundColor: `${BRAND}14` }]}>
+                <Ionicons name="document-text-outline" size={16} color={BRAND} />
+              </View>
+              <Text style={[shareStyles.previewText, { color: colors.text.secondary }]} numberOfLines={2}>
+                {preview}
+              </Text>
+            </View>
+
+            {/* Caption */}
+            <TextInput
+              value={caption}
+              onChangeText={setCaption}
+              placeholder="Add a caption… (optional)"
+              placeholderTextColor={colors.text.disabled}
+              multiline
+              maxLength={200}
+              style={[shareStyles.captionInput, {
+                backgroundColor: colors.bg.secondary,
+                color: colors.text.primary,
+                borderColor: colors.border.default,
+              }]}
+            />
+
+            {/* Friends-only toggle */}
+            <View style={[shareStyles.toggleRow, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary }]}>
+              <View style={{ flex: 1, gap: 2 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Ionicons name="people-outline" size={16} color={friendsOnly ? BRAND : colors.text.secondary} />
+                  <Text style={[shareStyles.toggleLabel, { color: colors.text.primary }]}>Followers only</Text>
+                </View>
+                <Text style={[shareStyles.toggleSub, { color: colors.text.tertiary }]}>
+                  {friendsOnly ? "Only your followers will see this post" : "Visible to everyone on the community feed"}
+                </Text>
+              </View>
+              <Switch
+                value={friendsOnly}
+                onValueChange={setFriendsOnly}
+                trackColor={{ false: colors.border.default, true: `${BRAND}55` }}
+                thumbColor={friendsOnly ? BRAND : colors.text.tertiary}
+              />
+            </View>
+
+            {/* Actions */}
+            <TouchableOpacity
+              onPress={handlePostToCommunity}
+              disabled={posting}
+              activeOpacity={0.88}
+              style={[shareStyles.primaryBtn, { backgroundColor: BRAND, opacity: posting ? 0.6 : 1 }]}
+            >
+              {posting
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <Ionicons name={friendsOnly ? "people" : "earth"} size={17} color="#fff" />
+              }
+              <Text style={shareStyles.primaryBtnText}>
+                {posting ? "Posting…" : friendsOnly ? "Post to Followers" : "Post to Community"}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleShareToFriends}
+              activeOpacity={0.8}
+              style={[shareStyles.secondaryBtn, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary }]}
+            >
+              <Ionicons name="share-outline" size={17} color={colors.text.secondary} />
+              <Text style={[shareStyles.secondaryBtnText, { color: colors.text.secondary }]}>Share via…</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+const shareStyles = StyleSheet.create({
+  sheet: {
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+  },
+  handle: {
+    width: 40, height: 4, borderRadius: 2,
+    alignSelf: "center", marginBottom: 20,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  title: { fontSize: 18, fontWeight: "800" },
+  closeBtn: {
+    width: 30, height: 30, borderRadius: 15,
+    alignItems: "center", justifyContent: "center",
+  },
+  preview: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 12,
+    marginBottom: 12,
+  },
+  previewIcon: {
+    width: 34, height: 34, borderRadius: 8,
+    alignItems: "center", justifyContent: "center",
+  },
+  previewText: { flex: 1, fontSize: 13, lineHeight: 19 },
+  captionInput: {
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    fontSize: 14,
+    lineHeight: 20,
+    minHeight: 72,
+    textAlignVertical: "top",
+    marginBottom: 12,
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  toggleLabel: { fontSize: 14, fontWeight: "600" },
+  toggleSub: { fontSize: 12, lineHeight: 17 },
+  primaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 14,
+    paddingVertical: 15,
+    marginBottom: 10,
+  },
+  primaryBtnText: { color: "#fff", fontSize: 15, fontWeight: "700" },
+  secondaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+  },
+  secondaryBtnText: { fontSize: 15, fontWeight: "600" },
+});
 
 // ─── Tag chip ─────────────────────────────────────────────────────────────────
 
@@ -396,7 +621,7 @@ function Tag({ label, colors }: { label: string; colors: any }) {
 // ─── Note Card ────────────────────────────────────────────────────────────────
 
 function NoteCard({
-  entry, onEdit, onDelete, onCopy, onExport, onReviewHand, colors,
+  entry, onEdit, onDelete, onCopy, onExport, onReviewHand, onShare, colors,
 }: {
   entry: NoteEntry;
   onEdit: () => void;
@@ -404,6 +629,7 @@ function NoteCard({
   onCopy: () => void;
   onExport: () => void;
   onReviewHand: () => void;
+  onShare: () => void;
   colors: any;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -433,13 +659,13 @@ function NoteCard({
             <Text style={[styles.authorName, { color: colors.text.primary }]}>My Hand</Text>
             {isEnhanced && (
               <View style={styles.aiBadge}>
-                <MaterialCommunityIcons name="auto-fix" size={9} color="#7c3aed" />
+                <Ionicons name="color-wand-outline" size={9} color="#7c3aed" />
                 <Text style={styles.aiBadgeText}>AI</Text>
               </View>
             )}
             {isReviewed && (
               <View style={[styles.aiBadge, { backgroundColor: colors.text.danger + "18" }]}>
-                <MaterialCommunityIcons name="cards-playing-outline" size={9} color={colors.text.danger} />
+                <Ionicons name="card-outline" size={9} color={colors.text.danger} />
                 <Text style={[styles.aiBadgeText, { color: colors.text.danger }]}>Reviewed</Text>
               </View>
             )}
@@ -448,7 +674,7 @@ function NoteCard({
         </View>
 
         <TouchableOpacity onPress={() => setExpanded(e => !e)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <MaterialCommunityIcons name={expanded ? "chevron-up" : "chevron-down"} size={20} color={colors.text.tertiary} />
+          <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={20} color={colors.text.tertiary} />
         </TouchableOpacity>
       </View>
 
@@ -505,22 +731,27 @@ function NoteCard({
 
           <View style={[styles.actionBar, { borderTopColor: colors.border.subtle }]}>
             <TouchableOpacity onPress={onReviewHand} activeOpacity={0.7} style={styles.actionBarBtn}>
-              <MaterialCommunityIcons name="cards-playing-outline" size={18} color={colors.text.tertiary} />
+              <Ionicons name="card-outline" size={18} color={colors.text.tertiary} />
               <Text style={[styles.actionBarLabel, { color: colors.text.tertiary }]}>Review</Text>
             </TouchableOpacity>
             <View style={{ width: 1, height: 18, backgroundColor: colors.border.subtle }} />
             <TouchableOpacity onPress={onEdit} activeOpacity={0.7} style={styles.actionBarBtn}>
-              <MaterialCommunityIcons name="pencil-outline" size={18} color={colors.text.tertiary} />
+              <Ionicons name="create-outline" size={18} color={colors.text.tertiary} />
               <Text style={[styles.actionBarLabel, { color: colors.text.tertiary }]}>Edit</Text>
             </TouchableOpacity>
             <View style={{ width: 1, height: 18, backgroundColor: colors.border.subtle }} />
             <TouchableOpacity onPress={onCopy} activeOpacity={0.7} style={styles.actionBarBtn}>
-              <MaterialCommunityIcons name="content-copy" size={18} color={colors.text.tertiary} />
+              <Ionicons name="copy-outline" size={18} color={colors.text.tertiary} />
               <Text style={[styles.actionBarLabel, { color: colors.text.tertiary }]}>Copy</Text>
             </TouchableOpacity>
             <View style={{ width: 1, height: 18, backgroundColor: colors.border.subtle }} />
+            <TouchableOpacity onPress={onShare} activeOpacity={0.7} style={styles.actionBarBtn}>
+              <Ionicons name="share-social-outline" size={18} color={colors.text.brand} />
+              <Text style={[styles.actionBarLabel, { color: colors.text.brand }]}>Share</Text>
+            </TouchableOpacity>
+            <View style={{ width: 1, height: 18, backgroundColor: colors.border.subtle }} />
             <TouchableOpacity onPress={onDelete} activeOpacity={0.7} style={styles.actionBarBtn}>
-              <MaterialCommunityIcons name="delete-outline" size={18} color={colors.text.danger} />
+              <Ionicons name="trash-outline" size={18} color={colors.text.danger} />
               <Text style={[styles.actionBarLabel, { color: colors.text.danger }]}>Delete</Text>
             </TouchableOpacity>
           </View>
@@ -535,16 +766,16 @@ function NoteCard({
 
 export default function NotesScreen() {
   const { colors } = usePokerTheme();
+  const { user, profile } = useAuth();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-  const { isPro } = useSubscription();
   const [notes,    setNotes]    = useState<NoteEntry[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [editorVisible, setEditorVisible] = useState(false);
   const [editTarget,    setEditTarget]    = useState<NoteEntry | null>(null);
   const [toast,         setToast]         = useState<string | null>(null);
-  const [paywallVisible,  setPaywallVisible]  = useState(false);
   const [handReviewEntry, setHandReviewEntry] = useState<NoteEntry | null>(null);
+  const [shareEntry,      setShareEntry]      = useState<NoteEntry | null>(null);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -554,12 +785,12 @@ export default function NotesScreen() {
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           style={{ flexDirection: "row", alignItems: "center", gap: 5, marginRight: 16 }}
         >
-          <MaterialCommunityIcons name="plus" size={18} color={colors.text.brand} />
+          <Ionicons name="add" size={18} color={colors.text.brand} />
           <Text style={{ color: colors.text.brand, fontSize: 15, fontWeight: "700" }}>Add</Text>
         </TouchableOpacity>
       ),
     });
-  }, [navigation, colors, notes.length, isPro]);
+  }, [navigation, colors, notes.length]);
 
   useFocusEffect(useCallback(() => {
     setNotes(getNoteHistory());
@@ -600,27 +831,23 @@ export default function NotesScreen() {
     }
   }
 
-  const TAB_BAR_H = (insets.bottom > 0 ? insets.bottom : 16) + 68;
-  const trial     = getTrialStatus();
-  const canUseAI  = isPro || trial.allowed;
-  const atFreeLimit = !isPro && !trial.allowed && notes.length >= FREE_NOTES_LIMIT;
+  function handleShare(entry: NoteEntry) {
+    setShareEntry(entry);
+  }
+
+  const TAB_BAR_H = 49 + insets.bottom;
 
   function handleReviewHand(entry: NoteEntry) {
-    const t = getTrialStatus();
-    if (!isPro && !t.allowed) { setPaywallVisible(true); return; }
-    markTrialStarted();
     setHandReviewEntry(entry);
   }
 
   function handleAddPress() {
-    if (atFreeLimit) { setPaywallVisible(true); return; }
     setEditTarget(null);
     setEditorVisible(true);
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
-      <PaywallModal visible={paywallVisible} feature="unlimitedNotes" onClose={() => setPaywallVisible(false)} />
+    <View style={{ flex: 1, backgroundColor: colors.bg.secondary, paddingTop: insets.top }}>
       <HandAnalysisModal
         visible={!!handReviewEntry}
         notes={handReviewEntry ? (handReviewEntry.enhanced_notes ?? handReviewEntry.raw_notes) : ""}
@@ -630,21 +857,18 @@ export default function NotesScreen() {
         onSaved={refresh}
       />
 
+      <ShareNoteModal
+        entry={shareEntry}
+        visible={!!shareEntry}
+        onClose={() => setShareEntry(null)}
+        colors={colors}
+        userId={user?.id ?? profile?.id}
+      />
+
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: TAB_BAR_H + 80 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Free usage banner */}
-        {!isPro && (
-          <TouchableOpacity onPress={() => setPaywallVisible(true)} activeOpacity={0.85}
-            style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#7c3aed14", borderRadius: 12, borderWidth: 1, borderColor: "#7c3aed33", padding: 12, marginBottom: 16 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <MaterialCommunityIcons name="crown" size={16} color="#7c3aed" />
-              <Text style={{ color: "#7c3aed", fontSize: 13, fontWeight: "600" }}>{notes.length}/{FREE_NOTES_LIMIT} free notes used</Text>
-            </View>
-            <Text style={{ color: "#7c3aed", fontSize: 12, fontWeight: "700" }}>Upgrade →</Text>
-          </TouchableOpacity>
-        )}
 
         {/* Top bar */}
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
@@ -654,7 +878,7 @@ export default function NotesScreen() {
           {notes.length > 0 && (
             <TouchableOpacity onPress={handleExportAll}
               style={{ flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: colors.border.default }}>
-              <MaterialCommunityIcons name="export-variant" size={14} color={colors.text.secondary} />
+              <Ionicons name="share-outline" size={14} color={colors.text.secondary} />
               <Text style={{ color: colors.text.secondary, fontSize: 12, fontWeight: "600" }}>Export All</Text>
             </TouchableOpacity>
           )}
@@ -663,7 +887,7 @@ export default function NotesScreen() {
         {/* Empty state */}
         {notes.length === 0 && (
           <View style={{ alignItems: "center", marginTop: 80, gap: 12 }}>
-            <MaterialCommunityIcons name="cards-playing-outline" size={56} color={colors.text.tertiary} />
+            <Ionicons name="card-outline" size={56} color={colors.text.tertiary} />
             <Text style={{ color: colors.text.tertiary, fontSize: 16, fontWeight: "600" }}>No hands logged yet</Text>
             <Text style={{ color: colors.text.tertiary, fontSize: 13, textAlign: "center", paddingHorizontal: 40, lineHeight: 19 }}>
               Tap <Text style={{ fontWeight: "700", color: colors.text.brand }}>Add</Text> to record a hand with position, cards and notes.
@@ -682,7 +906,7 @@ export default function NotesScreen() {
             onCopy={() => handleCopy(entry)}
             onExport={() => handleExport(entry)}
             onReviewHand={() => handleReviewHand(entry)}
-
+            onShare={() => handleShare(entry)}
           />
         ))}
       </ScrollView>
@@ -702,7 +926,6 @@ export default function NotesScreen() {
         onClose={() => setEditorVisible(false)}
         onSaved={refresh}
         colors={colors}
-        isPro={canUseAI}
       />
     </View>
   );

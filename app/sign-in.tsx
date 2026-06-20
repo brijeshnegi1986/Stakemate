@@ -1,7 +1,7 @@
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { PokerRollLogo } from "@/components/PokerRollLogo";
+import { StakemateLogo } from "@/components/StakemateLogo";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Linking from "expo-linking";
 import { router } from "expo-router";
@@ -74,10 +74,10 @@ export default function SignInScreen() {
 
       {/* Main content */}
       <View style={styles.content}>
-        <PokerRollLogo size={72} style={{ marginBottom: 28 }} />
+        <StakemateLogo size={72} style={{ marginBottom: 28 }} />
 
         <Text style={[styles.title, { color: colors.text.primary }]}>
-          Sign in to PokerRoll
+          Sign in to Stakemate
         </Text>
         <Text style={[styles.subtitle, { color: colors.text.secondary }]}>
           Back up your sessions, join challenges,{"\n"}and unlock all features.
