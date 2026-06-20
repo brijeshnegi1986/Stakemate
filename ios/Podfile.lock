@@ -73,7 +73,7 @@ PODS:
     - ExpoModulesCore
   - ExpoLogBox (56.0.12):
     - React-Core
-  - ExpoModulesCore (56.0.14):
+  - ExpoModulesCore (56.0.17):
     - ExpoModulesJSI
     - hermes-engine
     - RCTRequired
@@ -97,13 +97,13 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
-  - ExpoModulesJSI (56.0.7):
+  - ExpoModulesJSI (56.0.10):
     - React-Core
     - ReactCommon
-  - ExpoModulesWorklets (56.0.14):
+  - ExpoModulesWorklets (56.0.17):
     - ExpoModulesCore
     - ExpoModulesJSI
-  - ExpoModulesWorkletsAdapter (56.0.14):
+  - ExpoModulesWorkletsAdapter (56.0.17):
     - ExpoModulesCore
     - ExpoModulesJSI
     - ExpoModulesWorklets
@@ -2662,10 +2662,10 @@ SPEC CHECKSUMS:
   ExpoLinking: 49cc5ddd93b68506c588aa1985c27b795e6d69d6
   ExpoLocation: d47116c4daea734eea77648c36503a52b4ed63fc
   ExpoLogBox: 7aa03244fe5eeced5129e4ec7ad5bd9a3994378e
-  ExpoModulesCore: 96847f4543fb6ef324301263f0274c42bb4675b2
-  ExpoModulesJSI: f25a013ea9a79904bdd535e4bea0872e155cde09
-  ExpoModulesWorklets: 3f847eb6ba544bd4b55d585f89b3b18f8cd73a72
-  ExpoModulesWorkletsAdapter: a538403990508224d8401ff2ac544ca83df52eb6
+  ExpoModulesCore: de3243a42ba3ff52c3d84e079382f2a24516e2d7
+  ExpoModulesJSI: abc606cf32f6eeb4e2ad44ec3fc4b24143abd8f6
+  ExpoModulesWorklets: 25d712f4e0a4eb37397d46c0ff5b450eca897fd1
+  ExpoModulesWorkletsAdapter: c141a7854ac985cda989175ae6944c1bfe3ff91b
   ExpoNotifications: 87875dae0faded5284004bc1204990947d3f64e0
   ExpoRouter: 806ab2bc2124594c624ffe6fde15c28e4c4f0b03
   ExpoSecureStore: f1bd083c1b7b8d4142013ffcc0082d377d9f49f4
