@@ -12,7 +12,6 @@
       "distribution": "store",
       "channel": "staging",
       "ios": {
-        "bundleIdentifier": "com.stakemate.pokerroll.staging",
         "buildConfiguration": "Release"
       }
     },
