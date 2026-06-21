@@ -36,9 +36,9 @@ const ELITE_SKUS = new Set([PRODUCT_ELITE_MONTHLY, PRODUCT_ELITE_YEARLY]);
 const PRO_SKUS   = new Set([PRODUCT_PRO_MONTHLY,   PRODUCT_PRO_YEARLY]);
 
 const SubscriptionContext = createContext<SubscriptionState>({
-  tier: "free",
-  isPro: false,
-  isElite: false,
+  tier: "elite",
+  isPro: true,
+  isElite: true,
   isLoading: false,
   purchaseSubscription: async () => {},
   restorePurchases: async () => {},
@@ -114,8 +114,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     <SubscriptionContext.Provider
       value={{
         tier,
-        isPro: tier === "pro" || tier === "elite",
-        isElite: tier === "elite",
+        isPro: true,
+        isElite: true,
         isLoading,
         purchaseSubscription,
         restorePurchases,

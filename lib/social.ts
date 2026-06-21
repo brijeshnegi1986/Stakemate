@@ -29,6 +29,9 @@ export type SocialPost = {
   created_at: string;
   profile: SocialProfile;
   reactions: ReactionGroup[];
+  comment_count: number;
+  save_count: number;
+  saved_by_me: boolean;
 };
 
 export type CreatePostInput = {
@@ -55,11 +58,14 @@ export type SocialComment = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+const SAVE_EMOJI = "⭐";
+
 // Posts query — no profiles join (FK points to auth.users, not public.profiles)
 const POST_QUERY = `
   id, user_id, session_type, session_name, venue, status,
   amount, amount_label, is_live, content, created_at,
-  social_reactions (emoji, user_id)
+  social_reactions (emoji, user_id),
+  social_comments (id)
 ` as const;
 
 async function fetchProfiles(userIds: string[]): Promise<Map<string, SocialProfile>> {
@@ -79,10 +85,13 @@ function normalizePosts(rows: any[], currentUserId: string, profilesMap: Map<str
     const grouped: Record<string, { count: number; reacted: boolean }> = {};
 
     for (const r of rawReactions) {
+      if (r.emoji === SAVE_EMOJI) continue; // saves tracked separately
       if (!grouped[r.emoji]) grouped[r.emoji] = { count: 0, reacted: false };
       grouped[r.emoji].count++;
       if (r.user_id === currentUserId) grouped[r.emoji].reacted = true;
     }
+
+    const saveReactions = rawReactions.filter((r) => r.emoji === SAVE_EMOJI);
 
     return {
       id: row.id,
@@ -98,6 +107,9 @@ function normalizePosts(rows: any[], currentUserId: string, profilesMap: Map<str
       created_at: row.created_at,
       profile: profilesMap.get(row.user_id) ?? { id: row.user_id, username: null, display_name: null, avatar_url: null },
       reactions: Object.entries(grouped).map(([emoji, v]) => ({ emoji, ...v })),
+      comment_count: (row.social_comments ?? []).length,
+      save_count: saveReactions.length,
+      saved_by_me: saveReactions.some((r) => r.user_id === currentUserId),
     };
   });
 }
@@ -133,6 +145,20 @@ export async function fetchFollowingFeed(currentUserId: string, limit = 20, offs
     .in("visibility", ["public", "friends"])
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
+
+  if (error) throw error;
+  const profilesMap = await fetchProfiles([...new Set((data ?? []).map((r: any) => r.user_id))]);
+  return normalizePosts(data, currentUserId, profilesMap);
+}
+
+export async function fetchTournamentFeed(currentUserId: string, limit = 30): Promise<SocialPost[]> {
+  const { data, error } = await supabase
+    .from("social_posts")
+    .select(POST_QUERY)
+    .eq("visibility", "public")
+    .eq("session_type", "tournament")
+    .order("created_at", { ascending: false })
+    .limit(limit);
 
   if (error) throw error;
   const profilesMap = await fetchProfiles([...new Set((data ?? []).map((r: any) => r.user_id))]);
@@ -290,6 +316,65 @@ export async function addComment(postId: string, userId: string, content: string
 
 export async function deleteComment(commentId: string): Promise<void> {
   await supabase.from("social_comments").delete().eq("id", commentId);
+}
+
+// ─── Tournament saves (⭐) ─────────────────────────────────────────────────────
+
+export async function saveTournamentPost(postId: string, userId: string): Promise<void> {
+  await supabase.from("social_reactions").insert({ post_id: postId, user_id: userId, emoji: SAVE_EMOJI });
+}
+
+export async function unsaveTournamentPost(postId: string, userId: string): Promise<void> {
+  await supabase.from("social_reactions").delete()
+    .eq("post_id", postId).eq("user_id", userId).eq("emoji", SAVE_EMOJI);
+}
+
+export async function fetchSavedTournamentPosts(currentUserId: string): Promise<SocialPost[]> {
+  const { data: saves } = await supabase
+    .from("social_reactions")
+    .select("post_id")
+    .eq("user_id", currentUserId)
+    .eq("emoji", SAVE_EMOJI);
+
+  const postIds = (saves ?? []).map((s: any) => s.post_id);
+  if (!postIds.length) return [];
+
+  const { data, error } = await supabase
+    .from("social_posts")
+    .select(POST_QUERY)
+    .in("id", postIds)
+    .eq("session_type", "tournament")
+    .order("status", { ascending: true });
+
+  if (error) throw error;
+  const profilesMap = await fetchProfiles([...new Set((data ?? []).map((r: any) => r.user_id))]);
+  return normalizePosts(data, currentUserId, profilesMap);
+}
+
+// ─── Elite: publish tournament to community ────────────────────────────────────
+
+export type PublishTournamentInput = {
+  userId: string;
+  name: string;
+  venue?: string | null;
+  buyIn?: string | null;
+  date: string;          // YYYY-MM-DD stored in status field
+  description?: string | null;
+  series?: string | null; // series name if part of a series
+};
+
+export async function publishTournament(input: PublishTournamentInput): Promise<SocialPost> {
+  return createPost({
+    user_id: input.userId,
+    session_type: "tournament",
+    session_name: input.name,
+    venue: input.venue ?? null,
+    amount_label: input.buyIn ?? null,
+    status: input.date,
+    content: [input.series ? `Series: ${input.series}` : null, input.description ?? null]
+      .filter(Boolean).join("\n") || null,
+    visibility: "public",
+  });
 }
 
 // ─── Time formatting ──────────────────────────────────────────────────────────

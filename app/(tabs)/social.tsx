@@ -7,20 +7,17 @@ import {
   fetchComments,
   fetchFollowingFeed,
   fetchPublicFeed,
-  followPlayer,
   getFollowingIds,
-  getSuggestedPlayers,
-  searchPlayers,
   SocialComment,
   SocialPost,
   SocialProfile,
   timeAgo,
   toggleReaction,
-  unfollowPlayer,
 } from "@/lib/social";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -34,7 +31,6 @@ import {
   ScrollView,
   Share,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -45,7 +41,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 const BRAND = "#155DFC";
 const REACTION_EMOJIS = ["🔥", "💰", "🎉", "👏", "😅", "🤑"];
 
-type Tab = "feed" | "players";
+type Tab = "public" | "following";
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
@@ -74,58 +70,91 @@ function ComposeModal({
   onPosted: (post: SocialPost) => void;
 }) {
   const { colors } = usePokerTheme();
+  const insets = useSafeAreaInsets();
   const { user, profile } = useAuth();
-  const [text,        setText]        = useState("");
-  const [posting,     setPosting]     = useState(false);
-  const [friendsOnly, setFriendsOnly] = useState(false);
+  const [text,    setText]    = useState("");
+  const [image,   setImage]   = useState<string | null>(null);
+  const [posting, setPosting] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const displayName = profile?.display_name || profile?.username || "You";
+  const canPost = text.trim().length > 0;
+
+  function resetAndClose() {
+    setText("");
+    setImage(null);
+    onClose();
+  }
 
   const handlePost = async () => {
     const trimmed = text.trim();
     const uid = user?.id ?? profile?.id;
-    if (!trimmed) { Alert.alert("Empty post", "Write something first."); return; }
-    if (!uid)     { Alert.alert("Not signed in", "Sign in to post."); return; }
+    if (!trimmed) return;
+    if (!uid) { Alert.alert("Not signed in", "Sign in to post."); return; }
     setPosting(true);
     try {
-      const post = await createTextPost(uid, trimmed, friendsOnly ? "friends" : "public");
+      const post = await createTextPost(uid, trimmed, "public");
       onPosted(post);
-      setText("");
-      onClose();
+      resetAndClose();
     } catch (e: any) {
-      console.error("createTextPost error:", e);
       Alert.alert("Could not post", e?.message ?? "Please try again.");
     } finally {
       setPosting(false);
     }
   };
 
+  async function handlePickImage() {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.85,
+    });
+    if (!result.canceled && result.assets[0]) setImage(result.assets[0].uri);
+  }
+
+  async function handleTakePhoto() {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (perm.status !== "granted") { Alert.alert("Camera access needed", "Allow camera access in Settings."); return; }
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.85,
+    });
+    if (!result.canceled && result.assets[0]) setImage(result.assets[0].uri);
+  }
+
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg.primary }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        {/* Header */}
-        <View style={[styles.composeHeader, { borderBottomColor: colors.border.default }]}>
-          <TouchableOpacity onPress={onClose} style={styles.composeCancel}>
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={resetAndClose}>
+      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg.primary }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+
+        {/* ── Nav header ── */}
+        <View style={[styles.composeNav, { paddingTop: 16, borderBottomColor: colors.border.default }]}>
+          <TouchableOpacity onPress={resetAndClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={[styles.composeCancelText, { color: colors.text.secondary }]}>Cancel</Text>
           </TouchableOpacity>
           <Text style={[styles.composeTitle, { color: colors.text.primary }]}>New Post</Text>
           <TouchableOpacity
             onPress={handlePost}
-            disabled={!text.trim() || posting}
-            style={[styles.composePostBtn, { backgroundColor: BRAND, opacity: !text.trim() || posting ? 0.5 : 1 }]}
+            disabled={!canPost || posting}
+            style={[styles.composePostBtn, { backgroundColor: BRAND, opacity: canPost && !posting ? 1 : 0.45 }]}
           >
             {posting
               ? <ActivityIndicator size="small" color="#fff" />
-              : <Text style={styles.composePostBtnText}>{friendsOnly ? "Post (Followers)" : "Post"}</Text>
+              : <Text style={styles.composePostBtnText}>Post</Text>
             }
           </TouchableOpacity>
         </View>
 
-        {/* Compose area */}
-        <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ flexGrow: 1 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* ── Author row + text area ── */}
           <View style={styles.composeBody}>
-            <Avatar uri={profile?.avatar_url} size={42} name={displayName} />
-            <View style={{ flex: 1 }}>
+            <Avatar uri={profile?.avatar_url} size={44} name={displayName} />
+            <View style={{ flex: 1, gap: 4 }}>
               <Text style={[styles.composeName, { color: colors.text.primary }]}>{displayName}</Text>
               <TextInput
                 ref={inputRef}
@@ -137,28 +166,45 @@ function ComposeModal({
                 onChangeText={setText}
                 maxLength={500}
                 style={[styles.composeInput, { color: colors.text.primary }]}
+                scrollEnabled={false}
               />
             </View>
           </View>
+
+          {/* ── Image preview ── */}
+          {image && (
+            <View style={styles.composeImageWrap}>
+              <Image source={{ uri: image }} style={styles.composeImage} contentFit="cover" />
+              <TouchableOpacity
+                onPress={() => setImage(null)}
+                style={styles.composeImageRemove}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close-circle" size={26} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ── Hint banner ── */}
+          <View style={[styles.composeHint, { backgroundColor: `${BRAND}0D`, borderColor: `${BRAND}25` }]}>
+            <Ionicons name="globe-outline" size={14} color={BRAND} />
+            <Text style={[styles.composeHintText, { color: colors.text.secondary }]}>
+              This post is <Text style={{ fontWeight: "700", color: colors.text.primary }}>public</Text> — it appears on your profile and may show on feeds of people who follow you.
+            </Text>
+          </View>
         </ScrollView>
 
-        {/* Footer */}
-        <View style={[styles.composeFooter, { borderTopColor: colors.border.default, paddingBottom: 16 }]}>
-          {/* Followers-only toggle */}
-          <View style={[styles.composeToggleRow, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary }]}>
-            <Ionicons name="people-outline" size={15} color={friendsOnly ? BRAND : colors.text.tertiary} />
-            <Text style={[styles.composeToggleLabel, { color: friendsOnly ? BRAND : colors.text.secondary }]}>
-              {friendsOnly ? "Followers only" : "Public"}
-            </Text>
-            <Switch
-              value={friendsOnly}
-              onValueChange={setFriendsOnly}
-              trackColor={{ false: colors.border.default, true: `${BRAND}55` }}
-              thumbColor={friendsOnly ? BRAND : colors.text.tertiary}
-              style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
-            />
+        {/* ── Footer toolbar ── */}
+        <View style={[styles.composeToolbar, { borderTopColor: colors.border.default, paddingBottom: insets.bottom + 8 }]}>
+          <View style={{ flexDirection: "row", gap: 4 }}>
+            <TouchableOpacity onPress={handlePickImage} style={[styles.composeToolBtn, { backgroundColor: colors.bg.secondary }]} activeOpacity={0.7}>
+              <Ionicons name="image-outline" size={20} color={colors.text.secondary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleTakePhoto} style={[styles.composeToolBtn, { backgroundColor: colors.bg.secondary }]} activeOpacity={0.7}>
+              <Ionicons name="camera-outline" size={20} color={colors.text.secondary} />
+            </TouchableOpacity>
           </View>
-          <Text style={[styles.composeCount, { color: text.length > 400 ? "#EF4444" : colors.text.tertiary }]}>
+          <Text style={[styles.composeCount, { color: text.length > 450 ? "#EF4444" : colors.text.tertiary }]}>
             {500 - text.length}
           </Text>
         </View>
@@ -170,13 +216,14 @@ function ComposeModal({
 // ─── Comments Modal ───────────────────────────────────────────────────────────
 
 function CommentsModal({
-  post, currentUserId, profile, visible, onClose,
+  post, currentUserId, profile, visible, onClose, onCommentAdded,
 }: {
   post: SocialPost | null;
   currentUserId: string;
   profile: any;
   visible: boolean;
   onClose: () => void;
+  onCommentAdded?: (postId: string) => void;
 }) {
   const { colors } = usePokerTheme();
   const insets = useSafeAreaInsets();
@@ -207,6 +254,7 @@ function CommentsModal({
     try {
       const comment = await addComment(post.id, currentUserId, text);
       setComments((prev) => [...prev, comment]);
+      onCommentAdded?.(post.id);
     } catch {
       Alert.alert("Error", "Could not post comment.");
       setInput(text);
@@ -230,98 +278,115 @@ function CommentsModal({
   };
 
   const displayName = profile?.display_name || profile?.username || "You";
+  const postAuthorName = post?.profile.display_name || post?.profile.username || "Player";
+  const postHandle = post?.profile.username ? `@${post.profile.username}` : null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      {/* Full-screen root — overlay colour lives here */}
-      <View style={styles.commentsRoot}>
-        {/* Tappable backdrop — sits behind the sheet */}
-        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={[styles.commentsPage, { backgroundColor: colors.bg.primary }]}>
 
-        {/* KAV wraps only the sheet so the input lifts above the keyboard */}
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <View style={[styles.commentsContainer, { backgroundColor: colors.bg.primary }]}>
-            {/* Handle */}
-            <View style={[styles.commentsHandle, { backgroundColor: colors.border.default }]} />
+        {/* ── Navigation header ── */}
+        <View style={[styles.commentsNavHeader, { paddingTop: insets.top + 10, borderBottomColor: colors.border.default }]}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.commentsBackBtn}>
+            <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
+          </TouchableOpacity>
+          <Text style={[styles.commentsNavTitle, { color: colors.text.primary }]}>Post</Text>
+          <View style={{ width: 38 }} />
+        </View>
 
-            {/* Header */}
-            <View style={[styles.commentsHeader, { borderBottomColor: colors.border.default }]}>
-              <Text style={[styles.commentsTitle, { color: colors.text.primary }]}>Comments</Text>
-              <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <View style={[styles.commentsCloseBtn, { backgroundColor: colors.bg.secondary }]}>
-                  <Ionicons name="close" size={16} color={colors.text.secondary} />
-                </View>
+        {/* ── Post preview ── */}
+        {post && (
+          <View style={[styles.commentsPostCard, { backgroundColor: colors.bg.secondary, borderBottomColor: colors.border.default }]}>
+            <View style={styles.commentsPostAuthor}>
+              <Avatar uri={post.profile.avatar_url} size={40} name={postAuthorName} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.commentsPostName, { color: colors.text.primary }]}>{postAuthorName}</Text>
+                <Text style={[styles.commentsPostSub, { color: colors.text.tertiary }]}>
+                  {postHandle ? `${postHandle} · ` : ""}{timeAgo(post.created_at)}
+                </Text>
+              </View>
+              <Ionicons name="ellipsis-horizontal" size={18} color={colors.text.tertiary} />
+            </View>
+            {post.content ? (
+              <Text style={[styles.commentsPostContent, { color: colors.text.primary }]}>{post.content}</Text>
+            ) : null}
+            <View style={[styles.commentsPostActions, { borderTopColor: colors.border.subtle }]}>
+              <TouchableOpacity style={[styles.commentsReactBtn, { borderColor: colors.border.default, backgroundColor: colors.bg.primary }]}>
+                <Ionicons name="add" size={13} color={colors.text.tertiary} />
+                <Text style={{ fontSize: 14 }}>😊</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.commentsShareBtn, { borderColor: colors.border.default, backgroundColor: colors.bg.primary }]}>
+                <Ionicons name="share-outline" size={16} color={colors.text.tertiary} />
               </TouchableOpacity>
             </View>
+          </View>
+        )}
 
-            {/* Comment list */}
-            {loading ? (
-              <View style={styles.commentsCenter}>
-                <ActivityIndicator color={BRAND} />
-              </View>
-            ) : comments.length === 0 ? (
-              <View style={styles.commentsCenter}>
-                <Ionicons name="chatbubble-outline" size={36} color={colors.text.tertiary} />
-                <Text style={{ color: colors.text.tertiary, fontSize: 14, marginTop: 8 }}>No comments yet. Be the first!</Text>
-              </View>
-            ) : (
-              <FlatList
-                data={comments}
-                keyExtractor={(c) => c.id}
-                style={styles.commentsList}
-                contentContainerStyle={{ padding: 16, gap: 16 }}
-                keyboardShouldPersistTaps="handled"
-                renderItem={({ item: c }) => {
-                  const name = c.profile.display_name || c.profile.username || "Player";
-                  const isOwn = c.user_id === currentUserId;
-                  return (
-                    <View style={styles.commentRow}>
-                      <Avatar uri={c.profile.avatar_url} size={32} name={name} />
-                      <View style={[styles.commentBubble, { backgroundColor: colors.bg.secondary }]}>
-                        <View style={styles.commentBubbleTop}>
-                          <Text style={[styles.commentName, { color: colors.text.primary }]}>{name}</Text>
-                          <Text style={[styles.commentTime, { color: colors.text.tertiary }]}>{timeAgo(c.created_at)}</Text>
-                          {isOwn && (
-                            <TouchableOpacity onPress={() => handleDeleteComment(c.id)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                              <Ionicons name="trash-outline" size={13} color={colors.text.tertiary} />
-                            </TouchableOpacity>
-                          )}
-                        </View>
-                        <Text style={[styles.commentText, { color: colors.text.secondary }]}>{c.content}</Text>
-                      </View>
+        {/* ── Comments list ── */}
+        {loading ? (
+          <View style={styles.commentsCenter}>
+            <ActivityIndicator color={BRAND} />
+          </View>
+        ) : comments.length === 0 ? (
+          <View style={styles.commentsCenter}>
+            <Ionicons name="chatbubbles-outline" size={48} color={colors.text.tertiary} />
+            <Text style={[styles.commentsEmptyText, { color: colors.text.tertiary }]}>No comments yet</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={comments}
+            keyExtractor={(c) => c.id}
+            contentContainerStyle={{ padding: 16, gap: 16 }}
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item: c }) => {
+              const name = c.profile.display_name || c.profile.username || "Player";
+              const isOwn = c.user_id === currentUserId;
+              return (
+                <View style={styles.commentRow}>
+                  <Avatar uri={c.profile.avatar_url} size={32} name={name} />
+                  <View style={[styles.commentBubble, { backgroundColor: colors.bg.secondary }]}>
+                    <View style={styles.commentBubbleTop}>
+                      <Text style={[styles.commentName, { color: colors.text.primary }]}>{name}</Text>
+                      <Text style={[styles.commentTime, { color: colors.text.tertiary }]}>{timeAgo(c.created_at)}</Text>
+                      {isOwn && (
+                        <TouchableOpacity onPress={() => handleDeleteComment(c.id)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                          <Ionicons name="trash-outline" size={13} color={colors.text.tertiary} />
+                        </TouchableOpacity>
+                      )}
                     </View>
-                  );
-                }}
-              />
-            )}
+                    <Text style={[styles.commentText, { color: colors.text.secondary }]}>{c.content}</Text>
+                  </View>
+                </View>
+              );
+            }}
+          />
+        )}
 
-            {/* Input */}
-            <View style={[styles.commentInputRow, { borderTopColor: colors.border.default, paddingBottom: insets.bottom + 8 }]}>
-              <Avatar uri={profile?.avatar_url} size={32} name={displayName} />
-              <View style={[styles.commentInputWrap, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
-                <TextInput
-                  ref={inputRef}
-                  value={input}
-                  onChangeText={setInput}
-                  placeholder="Add a comment…"
-                  placeholderTextColor={colors.text.disabled}
-                  style={[styles.commentInput, { color: colors.text.primary }]}
-                  returnKeyType="send"
-                  onSubmitEditing={handleSend}
-                  blurOnSubmit={false}
-                />
-                <TouchableOpacity
-                  onPress={handleSend}
-                  disabled={!input.trim() || sending}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  {sending
-                    ? <ActivityIndicator size="small" color={BRAND} />
-                    : <Ionicons name="send" size={18} color={input.trim() ? BRAND : colors.text.tertiary} />
-                  }
-                </TouchableOpacity>
-              </View>
-            </View>
+        {/* ── Comment input bar ── */}
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <View style={[styles.commentsInputBar, { borderTopColor: colors.border.default, paddingBottom: insets.bottom + 10, backgroundColor: colors.bg.primary }]}>
+            <Avatar uri={profile?.avatar_url} size={36} name={displayName} />
+            <TextInput
+              ref={inputRef}
+              value={input}
+              onChangeText={setInput}
+              placeholder="Write a comment"
+              placeholderTextColor={colors.text.disabled}
+              style={[styles.commentsTextInput, { color: colors.text.primary, backgroundColor: colors.bg.secondary }]}
+              returnKeyType="send"
+              onSubmitEditing={handleSend}
+              blurOnSubmit={false}
+            />
+            <TouchableOpacity
+              onPress={handleSend}
+              disabled={!input.trim() || sending}
+              style={[styles.commentsSendBtn, { opacity: !input.trim() || sending ? 0.55 : 1 }]}
+            >
+              {sending
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Text style={styles.commentsSendBtnText}>Comment</Text>
+              }
+            </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
       </View>
@@ -452,7 +517,9 @@ function PostCard({
           style={[styles.commentBtn, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}
         >
           <Ionicons name="chatbubble-outline" size={13} color={colors.text.tertiary} />
-          <Text style={[styles.commentBtnText, { color: colors.text.tertiary }]}>Comment</Text>
+          <Text style={[styles.commentBtnText, { color: colors.text.tertiary }]}>
+            {post.comment_count > 0 ? post.comment_count : "Comment"}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -512,27 +579,28 @@ export default function SocialScreen() {
   const { user, profile } = useAuth();
   const insets = useSafeAreaInsets();
 
-  const [tab, setTab]                     = useState<Tab>("feed");
-  const [feedFilter, setFeedFilter]       = useState<"all" | "following">("all");
+  const [tab, setTab]                     = useState<Tab>("public");
   const [posts, setPosts]                 = useState<SocialPost[]>([]);
   const [loading, setLoading]             = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
-  const [suggested, setSuggested]         = useState<SocialProfile[]>([]);
-  const [allPlayers, setAllPlayers]       = useState<SocialProfile[]>([]);
   const [followingIds, setFollowingIds]   = useState<Set<string>>(new Set());
-  const [searchQuery, setSearchQuery]     = useState("");
-  const [searchResults, setSearchResults] = useState<SocialProfile[]>([]);
-  const [searching, setSearching]         = useState(false);
   const [composeVisible, setComposeVisible] = useState(false);
   const [commentsPost, setCommentsPost]   = useState<SocialPost | null>(null);
-  const searchRef                         = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Animated header ──────────────────────────────────────────────────────
   const headerTranslateY = useRef(new Animated.Value(0)).current;
+  const contentMarginTop = useRef(new Animated.Value(0)).current;
   const lastScrollY      = useRef(0);
   const headerShown      = useRef(true);
   const headerHeightRef  = useRef(0);
   const [headerHeight, setHeaderHeight] = useState(0);
+
+  // Keep contentMarginTop in sync whenever headerHeight is first measured
+  useEffect(() => {
+    if (headerHeight > 0 && headerShown.current) {
+      contentMarginTop.setValue(headerHeight);
+    }
+  }, [headerHeight]);
 
   const handleScroll = useCallback((event: any) => {
     const y    = event.nativeEvent.contentOffset.y;
@@ -541,20 +609,34 @@ export default function SocialScreen() {
 
     if (diff > 6 && y > 10 && headerShown.current) {
       headerShown.current = false;
-      Animated.timing(headerTranslateY, {
-        toValue: -headerHeightRef.current,
-        duration: 220,
-        useNativeDriver: true,
-      }).start();
+      Animated.parallel([
+        Animated.timing(headerTranslateY, {
+          toValue: -headerHeightRef.current,
+          duration: 220,
+          useNativeDriver: true,
+        }),
+        Animated.timing(contentMarginTop, {
+          toValue: 0,
+          duration: 220,
+          useNativeDriver: false,
+        }),
+      ]).start();
     } else if ((diff < -6 || y <= 0) && !headerShown.current) {
       headerShown.current = true;
-      Animated.timing(headerTranslateY, {
-        toValue: 0,
-        duration: 220,
-        useNativeDriver: true,
-      }).start();
+      Animated.parallel([
+        Animated.timing(headerTranslateY, {
+          toValue: 0,
+          duration: 220,
+          useNativeDriver: true,
+        }),
+        Animated.timing(contentMarginTop, {
+          toValue: headerHeightRef.current,
+          duration: 220,
+          useNativeDriver: false,
+        }),
+      ]).start();
     }
-  }, [headerTranslateY]);
+  }, [headerTranslateY, contentMarginTop]);
 
   const userId = user?.id ?? "";
 
@@ -562,45 +644,22 @@ export default function SocialScreen() {
     if (!userId) { setLoading(false); return; }
     if (!silent) setLoading(true);
     try {
-      const [feedData, ids, sugg] = await Promise.all([
-        feedFilter === "all" ? fetchPublicFeed(userId) : fetchFollowingFeed(userId),
+      const [feedData, ids] = await Promise.all([
+        tab === "following" ? fetchFollowingFeed(userId) : fetchPublicFeed(userId),
         getFollowingIds(userId),
-        getSuggestedPlayers(userId, 20),
       ]);
       setPosts(feedData);
       setFollowingIds(new Set(ids));
-      setSuggested(sugg);
-      setAllPlayers(sugg);
     } catch (e) {
       console.error("Social load error:", e);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [userId, feedFilter]);
+  }, [userId, tab]);
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
-  useEffect(() => {
-    if (searchRef.current) clearTimeout(searchRef.current);
-    if (!searchQuery.trim()) { setSearchResults([]); setSearching(false); return; }
-    setSearching(true);
-    searchRef.current = setTimeout(async () => {
-      try {
-        const r = await searchPlayers(searchQuery.trim(), userId);
-        setSearchResults(r);
-      } catch { setSearchResults([]); }
-      finally { setSearching(false); }
-    }, 400);
-  }, [searchQuery, userId]);
-
-  const handleToggleFollow = async (playerId: string, currently: boolean) => {
-    if (!userId) return;
-    const next = new Set(followingIds);
-    if (currently) { next.delete(playerId); setFollowingIds(next); await unfollowPlayer(userId, playerId); }
-    else           { next.add(playerId);    setFollowingIds(next); await followPlayer(userId, playerId); }
-    getSuggestedPlayers(userId, 20).then((s) => { setSuggested(s); setAllPlayers(s); }).catch(() => {});
-  };
 
   const handleReact = async (postId: string, emoji: string, reacted: boolean) => {
     if (!userId) return;
@@ -630,25 +689,6 @@ export default function SocialScreen() {
     } catch { /* cancelled */ }
   };
 
-  const activePlayers = searchQuery.trim() ? searchResults : allPlayers;
-
-  // Filter pills rendered inside the feed FlatList header so they scroll with content
-  const feedListHeader = (
-    <View style={[styles.filterRow, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
-      {(["all", "following"] as const).map((f) => (
-        <TouchableOpacity
-          key={f}
-          onPress={() => setFeedFilter(f)}
-          style={[styles.filterPill, feedFilter === f && { backgroundColor: BRAND }]}
-          activeOpacity={0.8}
-        >
-          <Text style={[styles.filterPillText, { color: feedFilter === f ? "#fff" : colors.text.secondary }]}>
-            {f === "all" ? "All Posts" : "Following"}
-          </Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
 
   return (
     <View style={[styles.root, { backgroundColor: colors.bg.secondary }]}>
@@ -682,7 +722,7 @@ export default function SocialScreen() {
 
           {/* Underline tabs */}
           <View style={styles.tabBar}>
-            {([["feed", "Flash", "Feed"], ["players", "people", "Players"]] as const).map(([key, icon, label]) => (
+            {([ ["public", "globe", "Public"], ["following", "people", "Following"] ] as const).map(([key, icon, label]) => (
               <TouchableOpacity
                 key={key}
                 onPress={() => setTab(key)}
@@ -700,126 +740,56 @@ export default function SocialScreen() {
           </View>
         </View>
 
-        {/* Search bar */}
-        <View style={[styles.searchBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
-          <View style={[styles.searchInner, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
-            {searching
-              ? <ActivityIndicator size="small" color={colors.text.tertiary} style={{ width: 16 }} />
-              : <Ionicons name="search-outline" size={15} color={colors.text.tertiary} />}
-            <TextInput
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholder={tab === "feed" ? "Search posts…" : "Search players…"}
-              placeholderTextColor={colors.text.disabled}
-              returnKeyType="search"
-              style={{ flex: 1, color: colors.text.primary, fontSize: 14, paddingVertical: 0 }}
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close-circle" size={15} color={colors.text.tertiary} />
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
       </Animated.View>
 
-      {/* ── Scrollable content — offset by header height ── */}
-      <View style={{ flex: 1, marginTop: headerHeight }}>
+      {/* ── Scrollable content — margin shrinks to 0 when header hides, grows back when header returns ── */}
+      <Animated.View style={{ flex: 1, marginTop: contentMarginTop }}>
 
-        {/* Feed */}
-        {tab === "feed" && (
-          <FlatList
-            data={posts}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <PostCard
-                post={item}
-                currentUserId={userId}
-                onReact={handleReact}
-                onDelete={handleDelete}
-                onComment={setCommentsPost}
-              />
-            )}
-            onRefresh={() => { setRefreshing(true); loadData(true); }}
-            refreshing={refreshing}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 120 }}
-            ListHeaderComponent={feedListHeader}
-            ListEmptyComponent={
-              loading ? (
-                <View style={styles.centered}><ActivityIndicator size="large" color={BRAND} /></View>
-              ) : feedFilter === "following" ? (
-                <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
-                  <Ionicons name="people-outline" size={44} color={colors.text.tertiary} />
-                  <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No posts from your network</Text>
-                  <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>Follow players to see their sessions here.</Text>
-                  <TouchableOpacity onPress={() => setTab("players")} style={[styles.emptyAction, { backgroundColor: BRAND }]}>
-                    <Text style={styles.emptyActionText}>Find Players</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
-                  <Ionicons name="newspaper-outline" size={44} color={colors.text.tertiary} />
-                  <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>Nothing here yet</Text>
-                  <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>Be the first to post or share a session.</Text>
-                  <TouchableOpacity onPress={() => setComposeVisible(true)} style={[styles.emptyAction, { backgroundColor: BRAND }]}>
-                    <Ionicons name="create-outline" size={14} color="#fff" />
-                    <Text style={styles.emptyActionText}>Create Post</Text>
-                  </TouchableOpacity>
-                </View>
-              )
-            }
-          />
-        )}
-
-        {/* Players */}
-        {tab === "players" && (
-          <FlatList
-            data={activePlayers}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <PlayerRow player={item} following={followingIds.has(item.id)} onToggleFollow={handleToggleFollow} />
-            )}
-            onRefresh={() => { setRefreshing(true); loadData(true); }}
-            refreshing={refreshing}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            contentContainerStyle={{ paddingBottom: 120 }}
-            style={{ backgroundColor: colors.bg.primary }}
-            ListHeaderComponent={
-              suggested.length > 0 && !searchQuery.trim() ? (
-                <View style={{ padding: 16, paddingBottom: 8 }}>
-                  <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>SUGGESTED FOR YOU</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
-                    {suggested.slice(0, 8).map((p) => (
-                      <PlayerCard key={p.id} player={p} following={followingIds.has(p.id)} onToggleFollow={handleToggleFollow} />
-                    ))}
-                  </ScrollView>
-                  <View style={[styles.divider, { backgroundColor: colors.border.default, marginTop: 16, marginBottom: 8 }]} />
-                  <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>ALL PLAYERS</Text>
-                </View>
-              ) : null
-            }
-            ListEmptyComponent={
-              loading ? (
-                <View style={styles.centered}><ActivityIndicator size="large" color={BRAND} /></View>
-              ) : (
-                <View style={[styles.emptyCard, { borderColor: colors.border.default, margin: 16 }]}>
-                  <Ionicons name="people-outline" size={44} color={colors.text.tertiary} />
-                  <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>
-                    {searchQuery.trim() ? `No results for "${searchQuery}"` : "No other players yet"}
-                  </Text>
-                  <TouchableOpacity onPress={handleInvite} style={[styles.emptyAction, { backgroundColor: BRAND }]}>
-                    <Ionicons name="person-add-outline" size={14} color="#fff" />
-                    <Text style={styles.emptyActionText}>Invite Players</Text>
-                  </TouchableOpacity>
-                </View>
-              )
-            }
-          />
-        )}
-      </View>
+        {/* Public / Following feed */}
+        <FlatList
+          key={tab}
+          data={posts}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <PostCard
+              post={item}
+              currentUserId={userId}
+              onReact={handleReact}
+              onDelete={handleDelete}
+              onComment={setCommentsPost}
+            />
+          )}
+          onRefresh={() => { setRefreshing(true); loadData(true); }}
+          refreshing={refreshing}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 120 }}
+          ListEmptyComponent={
+            loading ? (
+              <View style={styles.centered}><ActivityIndicator size="large" color={BRAND} /></View>
+            ) : tab === "following" ? (
+              <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
+                <Ionicons name="people-outline" size={44} color={colors.text.tertiary} />
+                <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No posts from people you follow</Text>
+                <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>Follow players to see their sessions here.</Text>
+                <TouchableOpacity onPress={() => setTab("public")} style={[styles.emptyAction, { backgroundColor: BRAND }]}>
+                  <Text style={styles.emptyActionText}>Explore Public Posts</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
+                <Ionicons name="newspaper-outline" size={44} color={colors.text.tertiary} />
+                <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>Nothing here yet</Text>
+                <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>Be the first to post or share a session.</Text>
+                <TouchableOpacity onPress={() => setComposeVisible(true)} style={[styles.emptyAction, { backgroundColor: BRAND }]}>
+                  <Ionicons name="create-outline" size={14} color="#fff" />
+                  <Text style={styles.emptyActionText}>Create Post</Text>
+                </TouchableOpacity>
+              </View>
+            )
+          }
+        />
+      </Animated.View>
 
       {/* ── Modals ── */}
       <ComposeModal
@@ -834,6 +804,11 @@ export default function SocialScreen() {
         currentUserId={userId}
         profile={profile}
         onClose={() => setCommentsPost(null)}
+        onCommentAdded={(postId) =>
+          setPosts((prev) => prev.map((p) =>
+            p.id === postId ? { ...p, comment_count: p.comment_count + 1 } : p
+          ))
+        }
       />
     </View>
   );
@@ -904,75 +879,101 @@ const styles = StyleSheet.create({
   commentBtnText: { fontSize: 12, fontWeight: "600" },
 
   // Compose modal
-  composeHeader: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  composeCancel: { width: 70 },
-  composeCancelText: { fontSize: 15 },
-  composeTitle: { flex: 1, textAlign: "center", fontSize: 16, fontWeight: "700" },
-  composePostBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, minWidth: 70, alignItems: "center" },
-  composePostBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
-  composeBody: { flexDirection: "row", gap: 12, padding: 16 },
-  composeName: { fontSize: 14, fontWeight: "700", marginBottom: 6 },
-  composeInput: { fontSize: 16, lineHeight: 24, minHeight: 120 },
-  composeFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth },
-  composeCount: { fontSize: 13 },
-  composeToggleRow: {
+  composeNav: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  composeToggleLabel: { fontSize: 12, fontWeight: "600" },
-
-  // Comments modal
-  commentsRoot: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.45)",
-  },
-  commentsContainer: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: "85%",
-    overflow: "hidden",
-  },
-  commentsHandle: {
-    width: 40, height: 4, borderRadius: 2,
-    alignSelf: "center", marginTop: 12, marginBottom: 4,
-  },
-  commentsHeader: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: 16, paddingVertical: 14,
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  commentsTitle: { fontSize: 16, fontWeight: "700" },
-  commentsCloseBtn: {
-    width: 30, height: 30, borderRadius: 15,
+  composeCancelText: { fontSize: 15 },
+  composeTitle: { fontSize: 16, fontWeight: "700" },
+  composePostBtn: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20, alignItems: "center" },
+  composePostBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  composeBody: { flexDirection: "row", gap: 12, padding: 16, paddingBottom: 8 },
+  composeName: { fontSize: 14, fontWeight: "700" },
+  composeInput: { fontSize: 16, lineHeight: 24, minHeight: 100, marginTop: 4 },
+  composeImageWrap: { position: "relative", marginHorizontal: 16, marginBottom: 12, borderRadius: 14, overflow: "hidden" },
+  composeImage: { width: "100%", height: 200, borderRadius: 14 },
+  composeImageRemove: { position: "absolute", top: 8, right: 8 },
+  composeHint: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  composeHintText: { flex: 1, fontSize: 13, lineHeight: 18 },
+  composeToolbar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  composeToolBtn: { width: 38, height: 38, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  composeCount: { fontSize: 13 },
+
+  // Comments modal — full-screen page layout
+  commentsPage: { flex: 1 },
+  commentsNavHeader: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  commentsBackBtn: { width: 38, alignItems: "flex-start" },
+  commentsNavTitle: { fontSize: 17, fontWeight: "700" },
+  commentsPostCard: {
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  commentsPostAuthor: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
+  commentsPostName: { fontSize: 14, fontWeight: "700" },
+  commentsPostSub: { fontSize: 12, marginTop: 1 },
+  commentsPostContent: { fontSize: 15, lineHeight: 22, marginBottom: 12 },
+  commentsPostActions: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  commentsReactBtn: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 20, borderWidth: StyleSheet.hairlineWidth,
+  },
+  commentsShareBtn: {
+    width: 32, height: 32, borderRadius: 16,
     alignItems: "center", justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
   },
   commentsCenter: {
-    paddingVertical: 40, alignItems: "center",
+    flex: 1, alignItems: "center", justifyContent: "center", gap: 10,
   },
-  commentsList: { flexShrink: 1 },
+  commentsEmptyText: { fontSize: 15, fontWeight: "500" },
   commentRow: { flexDirection: "row", gap: 10 },
   commentBubble: { flex: 1, borderRadius: 14, padding: 12 },
   commentBubbleTop: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
   commentName: { fontSize: 13, fontWeight: "700", flex: 1 },
   commentTime: { fontSize: 11 },
   commentText: { fontSize: 14, lineHeight: 20 },
-  commentInputRow: {
+  commentsInputBar: {
     flexDirection: "row", alignItems: "center", gap: 10,
     paddingHorizontal: 14, paddingTop: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  commentInputWrap: {
-    flex: 1, flexDirection: "row", alignItems: "center",
-    borderRadius: 22, borderWidth: 1,
-    paddingHorizontal: 14, paddingVertical: 8, gap: 8,
+  commentsTextInput: {
+    flex: 1, fontSize: 14, borderRadius: 22,
+    paddingHorizontal: 14, paddingVertical: 10,
   },
-  commentInput: { flex: 1, fontSize: 14, paddingVertical: 0 },
+  commentsSendBtn: {
+    backgroundColor: "#7C3AED",
+    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 22,
+  },
+  commentsSendBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 
   // Players
   playerCard: { width: 130, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, padding: 14, alignItems: "center", gap: 6 },
