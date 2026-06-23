@@ -26,6 +26,7 @@ export type SocialPost = {
   amount_label: string | null;
   is_live: boolean;
   content: string | null;
+  image_url: string | null;
   created_at: string;
   profile: SocialProfile;
   reactions: ReactionGroup[];
@@ -43,6 +44,7 @@ export type CreatePostInput = {
   amount?: number | null;
   amount_label?: string | null;
   content?: string | null;
+  image_url?: string | null;
   is_live?: boolean;
   visibility?: "public" | "friends";
 };
@@ -63,7 +65,7 @@ const SAVE_EMOJI = "⭐";
 // Posts query — no profiles join (FK points to auth.users, not public.profiles)
 const POST_QUERY = `
   id, user_id, session_type, session_name, venue, status,
-  amount, amount_label, is_live, content, created_at,
+  amount, amount_label, is_live, content, image_url, created_at,
   social_reactions (emoji, user_id),
   social_comments (id)
 ` as const;
@@ -104,6 +106,7 @@ function normalizePosts(rows: any[], currentUserId: string, profilesMap: Map<str
       amount_label: row.amount_label,
       is_live: row.is_live,
       content: row.content,
+      image_url: row.image_url ?? null,
       created_at: row.created_at,
       profile: profilesMap.get(row.user_id) ?? { id: row.user_id, username: null, display_name: null, avatar_url: null },
       reactions: Object.entries(grouped).map(([emoji, v]) => ({ emoji, ...v })),
@@ -185,18 +188,16 @@ export async function getSuggestedPlayers(currentUserId: string, limit = 10): Pr
 
   const followingIds = follows?.map((f: any) => f.following_id) ?? [];
 
-  let query = supabase
+  const excludeClause = followingIds.length ? `(${followingIds.join(",")})` : null;
+
+  const { data } = await supabase
     .from("profiles")
     .select("id, username, display_name, avatar_url")
     .neq("id", currentUserId)
     .not("username", "is", null)
+    .not("id", "in", excludeClause ?? `('00000000-0000-0000-0000-000000000000')`)
     .limit(limit);
 
-  if (followingIds.length) {
-    query = query.not("id", "in", `(${followingIds.join(",")})`);
-  }
-
-  const { data } = await query;
   return data ?? [];
 }
 
@@ -360,21 +361,113 @@ export type PublishTournamentInput = {
   buyIn?: string | null;
   date: string;          // YYYY-MM-DD stored in status field
   description?: string | null;
-  series?: string | null; // series name if part of a series
+  series?: string | null;
+  imageUri?: string | null; // local file URI from image picker
 };
 
 export async function publishTournament(input: PublishTournamentInput): Promise<SocialPost> {
+  let imageUrl: string | null = null;
+
+  if (input.imageUri) {
+    try {
+      const ext  = input.imageUri.split(".").pop()?.split("?")[0] ?? "jpg";
+      const path = `${input.userId}/${Date.now()}.${ext}`;
+      const formData = new FormData();
+      formData.append("file", { uri: input.imageUri, name: `image.${ext}`, type: `image/${ext}` } as any);
+      const { error: uploadErr } = await supabase.storage
+        .from("tournament-images")
+        .upload(path, formData, { contentType: `image/${ext}`, upsert: true });
+      if (!uploadErr) {
+        const { data: { publicUrl } } = supabase.storage
+          .from("tournament-images")
+          .getPublicUrl(path);
+        imageUrl = publicUrl;
+      }
+    } catch { /* image upload failed — publish without image */ }
+  }
+
+  const contentParts = [
+    input.series ? `Series: ${input.series}` : null,
+    input.description ?? null,
+  ].filter(Boolean) as string[];
+
   return createPost({
-    user_id: input.userId,
+    user_id:      input.userId,
     session_type: "tournament",
     session_name: input.name,
-    venue: input.venue ?? null,
+    venue:        input.venue ?? null,
     amount_label: input.buyIn ?? null,
-    status: input.date,
-    content: [input.series ? `Series: ${input.series}` : null, input.description ?? null]
-      .filter(Boolean).join("\n") || null,
-    visibility: "public",
+    status:       input.date,
+    image_url:    imageUrl,
+    content:      contentParts.length > 0 ? contentParts.join("\n") : input.name,
+    visibility:   "public",
   });
+}
+
+// ─── Full profile with counts ─────────────────────────────────────────────────
+
+export type FullProfile = SocialProfile & {
+  bio: string | null;
+  location: string | null;
+  follower_count: number;
+  following_count: number;
+  hendon_mob_url: string | null;
+};
+
+export async function getProfileWithCounts(
+  profileId: string,
+  currentUserId: string
+): Promise<{ profile: FullProfile; isFollowing: boolean } | null> {
+  const [profileRes, followerRes, followingRes, isFollowingRes] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("id, username, display_name, avatar_url, bio, location, hendon_mob_url")
+      .eq("id", profileId)
+      .single(),
+    supabase
+      .from("social_follows")
+      .select("follower_id", { count: "exact", head: true })
+      .eq("following_id", profileId),
+    supabase
+      .from("social_follows")
+      .select("following_id", { count: "exact", head: true })
+      .eq("follower_id", profileId),
+    supabase
+      .from("social_follows")
+      .select("follower_id")
+      .eq("follower_id", currentUserId)
+      .eq("following_id", profileId)
+      .maybeSingle(),
+  ]);
+
+  if (!profileRes.data) return null;
+
+  return {
+    profile: {
+      ...profileRes.data,
+      follower_count: followerRes.count ?? 0,
+      following_count: followingRes.count ?? 0,
+    },
+    isFollowing: !!isFollowingRes.data,
+  };
+}
+
+export async function getUserPosts(
+  profileId: string,
+  currentUserId: string,
+  limit = 30
+): Promise<SocialPost[]> {
+  const { data, error } = await supabase
+    .from("social_posts")
+    .select(POST_QUERY)
+    .eq("user_id", profileId)
+    .eq("visibility", "public")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error || !data) return [];
+  const profilesMap = await fetchProfiles([profileId]);
+  return normalizePosts(data, currentUserId, profilesMap);
 }
 
 // ─── Time formatting ──────────────────────────────────────────────────────────

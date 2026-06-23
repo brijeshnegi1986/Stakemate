@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { pullFromCloud } from "@/lib/sync";
 import { Session, User } from "@supabase/supabase-js";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { createContext, useContext, useEffect, useState } from "react";
@@ -75,10 +76,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
-      if (session) fetchProfile(session.user.id);
-      else setProfile(null);
+      if (session) {
+        fetchProfile(session.user.id);
+        if (event === "SIGNED_IN") {
+          pullFromCloud(session.user.id).catch(console.error);
+        }
+      } else {
+        setProfile(null);
+      }
     });
 
     Linking.getInitialURL().then((url) => { if (url) handleDeepLink(url); });

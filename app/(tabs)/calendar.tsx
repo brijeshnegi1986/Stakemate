@@ -1,9 +1,12 @@
 import { PaywallModal } from "@/components/PaywallModal";
+import { SegmentedControl } from "@/components/SegmentedControl";
+import { SellStakesModal } from "@/components/SellStakesModal";
 import { useAuth } from "@/context/AuthContext";
 import { useSubscription } from "@/context/SubscriptionContext";
 import {
   addTournamentEvent,
   deleteTournamentEvent,
+  getSetting,
   getTournamentEvents,
   TournamentEvent,
 } from "@/db/database";
@@ -12,19 +15,20 @@ import {
   createPost,
   fetchSavedTournamentPosts,
   fetchTournamentFeed,
-  publishTournament,
-  PublishTournamentInput,
+  followPlayer,
   saveTournamentPost,
   SocialPost,
+  unfollowPlayer,
   unsaveTournamentPost,
 } from "@/lib/social";
+import { cancelStakeDeal, claimStake, getOpenDealByAuthorAndTournament, getStakeDeal } from "@/lib/stakes";
+import { deleteMySubmission, fetchMyPendingSubmissions, fetchOfficialTournaments, OfficialTournament, submitTournamentToDirectory } from "@/lib/tournaments";
 import { Ionicons } from "@expo/vector-icons";
 import * as Calendar from "expo-calendar";
-import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import * as Notifications from "expo-notifications";
 import { useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -54,6 +58,21 @@ const MONTHS = [
 ];
 
 type CalTab = "schedule" | "tournaments";
+
+function fmt12h(time: string): string {
+  const [hStr, mStr] = time.split(":");
+  const h = parseInt(hStr, 10);
+  const m = parseInt(mStr ?? "0", 10);
+  const ampm = h < 12 ? "am" : "pm";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, "0")}${ampm}`;
+}
+
+function reformat24hInText(text: string): string {
+  return text.replace(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g, (_, h, m) =>
+    fmt12h(`${h}:${m}`)
+  );
+}
 
 function toYMD(year: number, month: number, day: number) {
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -107,25 +126,34 @@ async function scheduleNotifications(event: TournamentEvent) {
 
 async function addToDeviceCalendar(event: TournamentEvent): Promise<boolean> {
   try {
-    const permResult = await (Calendar as any).requestCalendarPermissionsAsync?.();
+    const permResult = await Calendar.requestCalendarPermissions();
     if (permResult?.status !== "granted") return false;
 
-    const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
-    let calendarId: string | undefined;
+    let targetCal: any = null;
 
     if (Platform.OS === "ios") {
-      const defaultCal = calendars.find((c) => c.allowsModifications && c.type === "local");
-      calendarId = defaultCal?.id;
-    } else {
-      const primary = calendars.find((c) => c.isPrimary && c.allowsModifications);
-      calendarId = primary?.id ?? calendars.find((c) => c.allowsModifications)?.id;
+      try {
+        targetCal = Calendar.getDefaultCalendarSync();
+      } catch { /* fall through to manual search */ }
     }
-    if (!calendarId) return false;
+
+    if (!targetCal) {
+      const calendars = await Calendar.getCalendars(Calendar.EntityTypes.EVENT);
+      if (Platform.OS === "ios") {
+        targetCal = calendars.find((c) => c.allowsModifications && (c.type === "caldav" || c.type === "local"))
+          ?? calendars.find((c) => c.allowsModifications);
+      } else {
+        targetCal = calendars.find((c: any) => c.isPrimary && c.allowsModifications)
+          ?? calendars.find((c) => c.allowsModifications);
+      }
+    }
+
+    if (!targetCal) return false;
 
     const start = new Date(event.date + "T09:00:00");
     const end   = new Date(event.date + "T18:00:00");
 
-    await Calendar.createEventAsync(calendarId, {
+    await targetCal.createEvent({
       title: event.name,
       startDate: start,
       endDate: end,
@@ -153,6 +181,7 @@ export default function CalendarScreen() {
   const [events, setEvents]                     = useState<TournamentEvent[]>([]);
   const [showAddModal, setShowAddModal]         = useState(false);
   const [shareEvent, setShareEvent]             = useState<TournamentEvent | null>(null);
+  const [stakeEvent, setStakeEvent]             = useState<TournamentEvent | null>(null);
   const [showSettings, setShowSettings]         = useState(false);
   const [showPaywall, setShowPaywall]           = useState(false);
   const [showPublish, setShowPublish]           = useState(false);
@@ -160,6 +189,13 @@ export default function CalendarScreen() {
   const [savedTournaments, setSavedTournaments] = useState<SocialPost[]>([]);
   const [loadingTournaments, setLoadingTournaments] = useState(false);
   const [loadingSaved, setLoadingSaved]         = useState(false);
+  const [officialTournaments, setOfficialTournaments] = useState<OfficialTournament[]>([]);
+  const [loadingOfficial, setLoadingOfficial]   = useState(false);
+  const [pendingSubmissions, setPendingSubmissions] = useState<OfficialTournament[]>([]);
+  const [filterState, setFilterState]           = useState<string>(() => getSetting("defaultState") ?? "NSW");
+  const [searchQuery, setSearchQuery]           = useState("");
+  const [selectedSeries, setSelectedSeries]     = useState<string | null>(null);
+  const [scheduleView, setScheduleView]         = useState<"list" | "month">("month");
   const [hidePastEvents, setHidePastEvents]     = useState(false);
   const [calAccessGranted, setCalAccessGranted] = useState<boolean | null>(null);
 
@@ -173,7 +209,7 @@ export default function CalendarScreen() {
       setEvents(getTournamentEvents());
       (async () => {
         try {
-          const r = await (Calendar as any).getCalendarPermissionsAsync?.();
+          const r = await Calendar.getCalendarPermissions();
           setCalAccessGranted(r?.status === "granted");
         } catch {
           setCalAccessGranted(false);
@@ -200,6 +236,22 @@ export default function CalendarScreen() {
           .finally(() => setLoadingTournaments(false));
       }
     }, [calTab, user?.id])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (calTab !== "tournaments") return;
+      setLoadingOfficial(true);
+      fetchOfficialTournaments({ state: filterState, search: searchQuery })
+        .then(setOfficialTournaments)
+        .catch(() => setOfficialTournaments([]))
+        .finally(() => setLoadingOfficial(false));
+      if (user?.id && isElite) {
+        fetchMyPendingSubmissions(user.id)
+          .then(setPendingSubmissions)
+          .catch(() => setPendingSubmissions([]));
+      }
+    }, [calTab, filterState, searchQuery, user?.id, isElite])
   );
 
   async function handleToggleSave(post: SocialPost) {
@@ -244,6 +296,37 @@ export default function CalendarScreen() {
   const eventDates = new Set(events.map((e) => e.date));
   const todayYMD   = toYMD(today.getFullYear(), today.getMonth(), today.getDate());
 
+  // Group official tournaments by series (only when not searching)
+  const { seriesGroups, soloTournaments } = useMemo(() => {
+    if (searchQuery.trim()) return { seriesGroups: [], soloTournaments: officialTournaments };
+    const map = new Map<string, OfficialTournament[]>();
+    const solo: OfficialTournament[] = [];
+    for (const t of officialTournaments) {
+      if (t.series) {
+        const arr = map.get(t.series) ?? [];
+        arr.push(t);
+        map.set(t.series, arr);
+      } else {
+        solo.push(t);
+      }
+    }
+    const groups: { name: string; imageUrl: string | null; dateFrom: string; dateTo: string; tournaments: OfficialTournament[] }[] = [];
+    for (const [name, tournaments] of map) {
+      if (tournaments.length === 1) {
+        solo.push(tournaments[0]);
+      } else {
+        groups.push({
+          name,
+          imageUrl: tournaments[0].series_image_url ?? null,
+          dateFrom: tournaments[0].tournament_date,
+          dateTo: tournaments[tournaments.length - 1].tournament_date,
+          tournaments,
+        });
+      }
+    }
+    return { seriesGroups: groups, soloTournaments: solo };
+  }, [officialTournaments, searchQuery]);
+
   function prevMonth() {
     if (viewMonth === 0) { setViewMonth(11); setViewYear((y) => y - 1); }
     else setViewMonth((m) => m - 1);
@@ -265,15 +348,15 @@ export default function CalendarScreen() {
     setShowAddModal(true);
   }
 
-  async function handleSave() {
+  async function handleSave(date: string = todayYMD) {
     if (!form.name.trim()) return;
-    const date = selectedDate ?? todayYMD;
     const saved = addTournamentEvent({
       name:  form.name.trim(),
       date,
       venue: form.venue.trim(),
       buyin: form.buyin.trim(),
       notes: form.notes.trim(),
+      image_url: formImage ?? "",
     });
 
     refresh();
@@ -283,6 +366,7 @@ export default function CalendarScreen() {
       id: saved, date, created_at: Date.now(),
       name: form.name.trim(), venue: form.venue.trim(),
       buyin: form.buyin.trim(), notes: form.notes.trim(),
+      image_url: formImage ?? "",
     };
 
     await scheduleNotifications(savedEvent);
@@ -306,7 +390,7 @@ export default function CalendarScreen() {
 
   async function handlePickImage() {
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"] as any,
       allowsEditing: true,
       aspect: [16, 9],
       quality: 0.8,
@@ -316,16 +400,88 @@ export default function CalendarScreen() {
     }
   }
 
+  // Idempotent: check server for existing deal before opening create form
+  async function handleSellStakesPress(e: TournamentEvent) {
+    const uid = user?.id ?? profile?.id ?? "";
+
+    // Local state already has a deal ID — open directly
+    if (e.stake_deal_id) { setStakeEvent(e); return; }
+
+    // No local record — check server to prevent duplicate creation
+    if (uid) {
+      try {
+        const existing = await getOpenDealByAuthorAndTournament(uid, e.name);
+        if (existing) {
+          // Heal local state then open dashboard
+          setEvents((prev) => prev.map((evt) => evt.id === e.id ? { ...evt, stake_deal_id: existing.id } : evt));
+          setStakeEvent({ ...e, stake_deal_id: existing.id });
+          return;
+        }
+      } catch { /* fall through to create */ }
+    }
+
+    setStakeEvent(e);
+  }
+
+  async function handleShareStakeDeal(event: TournamentEvent) {
+    if (!user?.id) { Alert.alert("Not signed in", "Sign in to share to the community."); return; }
+    if (!event.stake_deal_id) return;
+    try {
+      const deal = await getStakeDeal(event.stake_deal_id);
+      if (!deal) {
+        Alert.alert(
+          "Stake Deal Unavailable",
+          "This stake deal may have been filled or cancelled. You can still create a new deal from the event card."
+        );
+        return;
+      }
+      if (deal.status !== "open") {
+        Alert.alert("Deal No Longer Open", `This stake deal is currently "${deal.status}". Only open deals can be advertised.`);
+        return;
+      }
+      const remaining = deal.total_action_selling - deal.action_claimed;
+      const price     = deal.price_per_percent ? `$${deal.price_per_percent} per %` : null;
+      const min       = deal.min_piece > 1 ? ` · Min ${deal.min_piece}%` : "";
+      const lines = [
+        `🃏 Selling action — ${event.name}`,
+        `📊 ${deal.total_action_selling}% total · ${remaining}% remaining`,
+        event.venue ? `📍 ${event.venue}` : null,
+        event.buyin ? `💰 Buy-in: ${event.buyin}` : null,
+        price ? `🏷️ ${price}${deal.markup !== 1 ? ` (${deal.markup}× markup)` : ""}${min}` : null,
+        deal.notes ? `📝 ${deal.notes}` : null,
+        "Interested? Drop a comment or DM to claim your piece. 🤝",
+      ].filter(Boolean).join("\n");
+      await createPost({
+        user_id: user.id,
+        session_type: "tournament",
+        session_name: event.name,
+        venue: event.venue || null,
+        content: lines,
+        visibility: "public",
+      });
+      Alert.alert("Advertised!", "Your stake deal has been posted to the community feed.");
+    } catch (e: any) {
+      Alert.alert("Could not share", e?.message ?? "Please try again.");
+    }
+  }
+
   function handleDelete(id: number) {
     Alert.alert("Delete Event", "Remove this tournament from your calendar?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: () => { deleteTournamentEvent(id); refresh(); } },
+      {
+        text: "Delete", style: "destructive", onPress: () => {
+          const evt = events.find((e) => e.id === id);
+          if (evt?.stake_deal_id) cancelStakeDeal(evt.stake_deal_id).catch(() => {});
+          deleteTournamentEvent(id);
+          refresh();
+        },
+      },
     ]);
   }
 
   async function handleRequestCalAccess() {
     try {
-      const r = await (Calendar as any).requestCalendarPermissionsAsync?.();
+      const r = await Calendar.requestCalendarPermissions();
       const granted = r?.status === "granted";
       setCalAccessGranted(granted);
       Alert.alert(
@@ -365,16 +521,28 @@ export default function CalendarScreen() {
             <Text style={[styles.headerName, { color: colors.text.primary }]} numberOfLines={1}>{displayName}</Text>
           </View>
           <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
-            {/* Add personal tournament — Pro/Elite only */}
-            {isPro && (
+            {/* Add Custom — Schedule tab only, Pro/Elite */}
+            {isPro && calTab === "schedule" && (
               <TouchableOpacity
                 onPress={() => openAddModal(selectedDate ?? todayYMD)}
-                style={[styles.addHeaderBtn, { backgroundColor: BRAND }]}
+                style={[styles.addCustomBtn, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary }]}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="add" size={16} color={colors.text.secondary} />
+                <Text style={[styles.addCustomBtnText, { color: colors.text.secondary }]}>Add Custom</Text>
+              </TouchableOpacity>
+            )}
+            {/* Publish — Tournaments tab, Elite only */}
+            {calTab === "tournaments" && isElite && (
+              <TouchableOpacity
+                onPress={() => setShowPublish(true)}
+                style={[styles.addHeaderBtn, { backgroundColor: PURPLE }]}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 activeOpacity={0.85}
               >
-                <Ionicons name="add" size={18} color="#fff" />
-                <Text style={styles.addHeaderBtnText}>Add</Text>
+                <Ionicons name="add-circle-outline" size={16} color="#fff" />
+                <Text style={styles.addHeaderBtnText}>Publish</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity
@@ -389,215 +557,113 @@ export default function CalendarScreen() {
         </View>
 
         {/* Segmented control */}
-        <View style={[styles.segmented, { backgroundColor: colors.bg.secondary }]}>
-          {(["schedule", "tournaments"] as CalTab[]).map((t) => (
-            <TouchableOpacity
-              key={t}
-              onPress={() => setCalTab(t)}
-              style={[
-                styles.segmentBtn,
-                calTab === t && {
-                  backgroundColor: colors.bg.primary,
-                  shadowColor: "#000", shadowOpacity: 0.08,
-                  shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 2,
-                },
-              ]}
-              activeOpacity={0.8}
-            >
-              <Ionicons
-                name={t === "schedule"
-                  ? (calTab === t ? "calendar" : "calendar-outline")
-                  : (calTab === t ? "trophy" : "trophy-outline")}
-                size={14}
-                color={calTab === t ? colors.text.primary : colors.text.tertiary}
-              />
-              <Text style={[styles.segmentLabel, { color: calTab === t ? colors.text.primary : colors.text.tertiary }]}>
-                {t === "schedule" ? "My Schedule" : "Tournaments"}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <SegmentedControl
+          options={[
+            { value: "schedule",    label: "My Schedule", icon: "calendar-outline" },
+            { value: "tournaments", label: "Tournaments",  icon: "trophy-outline"   },
+          ]}
+          selected={calTab}
+          onChange={(v) => setCalTab(v as CalTab)}
+        />
       </View>
 
       {/* ── My Schedule tab ── */}
       {calTab === "schedule" && (
-        <ScrollView
-          contentContainerStyle={{ paddingBottom: 49 + insets.bottom + 32, paddingTop: 16 }}
-          showsVerticalScrollIndicator={false}
-        >
+        <View style={{ flex: 1 }}>
+          <ScrollView
+            contentContainerStyle={{ paddingBottom: 49 + insets.bottom + 32 }}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* ── View toggle ── */}
+            <View style={[styles.calSegmentWrap, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Ionicons name="calendar-outline" size={15} color={colors.text.secondary} />
+                <Text style={[styles.calSegmentText, { color: colors.text.secondary }]}>Month view</Text>
+              </View>
+              <Switch
+                value={scheduleView === "month"}
+                onValueChange={(v) => setScheduleView(v ? "month" : "list")}
+                trackColor={{ false: colors.border.default, true: BRAND }}
+                thumbColor="#fff"
+              />
+            </View>
 
-          {/* ── FREE tier: upcoming saved list + locked calendar teaser ── */}
-          {!isPro && (
-            <>
-              {/* Saved upcoming tournaments */}
-              {loadingSaved ? (
-                <View style={styles.centered}><ActivityIndicator color={BRAND} /></View>
-              ) : savedTournaments.length === 0 ? (
-                <View style={[styles.emptyState, { borderColor: colors.border.default }]}>
-                  <Ionicons name="star-outline" size={44} color={colors.text.tertiary} />
-                  <Text style={[styles.emptyStateTitle, { color: colors.text.primary }]}>No saved tournaments</Text>
-                  <Text style={[styles.emptyStateSub, { color: colors.text.tertiary }]}>
-                    Browse the Tournaments tab and tap ⭐ to save events to your schedule.
+            {/* ── Calendar grid (month view) ── */}
+            {scheduleView === "month" && (
+              <>
+                {/* Month navigation */}
+                <View style={[styles.calNav, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.subtle }]}>
+                  <TouchableOpacity onPress={prevMonth} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                    <Ionicons name="chevron-back" size={18} color={colors.text.primary} />
+                  </TouchableOpacity>
+                  <Text style={[styles.calNavTitle, { color: colors.text.primary }]}>
+                    {MONTHS[viewMonth]} {viewYear}
                   </Text>
-                  <TouchableOpacity
-                    onPress={() => setCalTab("tournaments")}
-                    style={[styles.emptyAction, { backgroundColor: BRAND }]}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="trophy-outline" size={14} color="#fff" />
-                    <Text style={styles.emptyActionText}>Browse Tournaments</Text>
+                  <TouchableOpacity onPress={nextMonth} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                    <Ionicons name="chevron-forward" size={18} color={colors.text.primary} />
                   </TouchableOpacity>
                 </View>
-              ) : (
-                <>
-                  {/* Today section */}
-                  {savedTournaments.filter((p) => p.status === todayYMD).length > 0 && (
-                    <View style={styles.section}>
-                      <Text style={[styles.sectionTitle, { color: colors.text.secondary }]}>Today</Text>
-                      {savedTournaments.filter((p) => p.status === todayYMD).map((post) => (
-                        <SavedTournamentCard key={post.id} post={post} colors={colors} onUnsave={() => handleToggleSave(post)} />
-                      ))}
-                    </View>
-                  )}
 
-                  {/* Upcoming section */}
-                  {savedTournaments.filter((p) => (p.status ?? "") > todayYMD).length > 0 && (
-                    <View style={styles.section}>
-                      <Text style={[styles.sectionTitle, { color: colors.text.secondary }]}>Upcoming</Text>
-                      {savedTournaments
-                        .filter((p) => (p.status ?? "") > todayYMD)
-                        .map((post) => (
-                          <SavedTournamentCard key={post.id} post={post} colors={colors} onUnsave={() => handleToggleSave(post)} />
-                        ))}
-                    </View>
-                  )}
-                </>
-              )}
+                {/* Day headers */}
+                <View style={[styles.calDayRow, { backgroundColor: colors.bg.primary }]}>
+                  {["S","M","T","W","T","F","S"].map((d, i) => (
+                    <Text key={i} style={[styles.calDayLabel, { color: colors.text.tertiary }]}>{d}</Text>
+                  ))}
+                </View>
 
-              {/* Locked calendar teaser */}
-              <View style={styles.lockedCalWrap}>
-                <View style={[styles.calCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, opacity: 0.35 }]} pointerEvents="none">
-                  <View style={styles.dayRow}>
-                    {DAYS.map((d) => (
-                      <Text key={d} style={[styles.dayLabel, { color: colors.text.tertiary }]}>{d}</Text>
-                    ))}
-                  </View>
+                {/* Grid */}
+                <View style={[styles.calGrid, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.subtle }]}>
                   {Array.from({ length: cells.length / 7 }, (_, w) => (
-                    <View key={w} style={styles.weekRow}>
-                      {cells.slice(w * 7, w * 7 + 7).map((day, i) => (
-                        <View key={i} style={styles.dayCell}>
-                          {day ? <Text style={[styles.dayNum, { color: colors.text.primary }]}>{day}</Text> : null}
-                        </View>
-                      ))}
+                    <View key={w} style={styles.calWeekRow}>
+                      {cells.slice(w * 7, w * 7 + 7).map((day, di) => {
+                        if (!day) return <View key={di} style={styles.calCell} />;
+                        const ymd = toYMD(viewYear, viewMonth, day);
+                        const isToday = ymd === todayYMD;
+                        const isSelected = ymd === selectedDate;
+                        const hasEvent = eventDates.has(ymd);
+                        return (
+                          <TouchableOpacity key={di} style={styles.calCell} onPress={() => handleDayPress(day)} activeOpacity={0.7}>
+                            <View style={[
+                              styles.calCellInner,
+                              isSelected && { backgroundColor: BRAND },
+                              isToday && !isSelected && { borderWidth: 1.5, borderColor: BRAND },
+                            ]}>
+                              <Text style={[styles.calCellNum, {
+                                color: isSelected ? "#fff" : isToday ? BRAND : colors.text.primary,
+                                fontWeight: isToday || isSelected ? "700" : "400",
+                              }]}>{day}</Text>
+                              {hasEvent && (
+                                <View style={[styles.calDot, { backgroundColor: isSelected ? "#fff" : BRAND }]} />
+                              )}
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
                   ))}
                 </View>
-                <View style={styles.lockedCalOverlay}>
-                  <View style={[styles.lockedCalBadge, { backgroundColor: colors.bg.primary }]}>
-                    <Ionicons name="lock-closed" size={20} color={PURPLE} />
-                    <Text style={[styles.lockedCalTitle, { color: colors.text.primary }]}>Full Calendar</Text>
-                    <Text style={[styles.lockedCalSub, { color: colors.text.tertiary }]}>
-                      Add personal tournaments & navigate months
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => setShowPaywall(true)}
-                      style={[styles.lockedCalBtn, { backgroundColor: PURPLE }]}
-                      activeOpacity={0.85}
-                    >
-                      <Ionicons name="trophy-outline" size={14} color="#fff" />
-                      <Text style={styles.lockedCalBtnText}>Upgrade to Pro</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-            </>
-          )}
 
-          {/* ── PRO / ELITE tier: full calendar + all events ── */}
-          {isPro && (
-            <>
-              {/* Month navigator */}
-              <View style={[styles.monthNav, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                <TouchableOpacity onPress={prevMonth} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-                  <Ionicons name="chevron-back" size={20} color={colors.text.primary} />
-                </TouchableOpacity>
-                <Text style={[styles.monthLabel, { color: colors.text.primary }]}>
-                  {MONTHS[viewMonth]} {viewYear}
-                </Text>
-                <TouchableOpacity onPress={nextMonth} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-                  <Ionicons name="chevron-forward" size={20} color={colors.text.primary} />
-                </TouchableOpacity>
-              </View>
+              </>
+            )}
 
-              {/* Calendar grid */}
-              <View style={[styles.calCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                <View style={styles.dayRow}>
-                  {DAYS.map((d) => (
-                    <Text key={d} style={[styles.dayLabel, { color: colors.text.tertiary }]}>{d}</Text>
-                  ))}
-                </View>
-                {Array.from({ length: cells.length / 7 }, (_, w) => (
-                  <View key={w} style={styles.weekRow}>
-                    {cells.slice(w * 7, w * 7 + 7).map((day, i) => {
-                      if (!day) return <View key={i} style={styles.dayCell} />;
-                      const ymd        = toYMD(viewYear, viewMonth, day);
-                      const isToday    = ymd === todayYMD;
-                      const isSelected = ymd === selectedDate;
-                      const hasPersonal = eventDates.has(ymd);
-                      const hasSaved    = savedEventDates.has(ymd);
-                      return (
-                        <TouchableOpacity
-                          key={i}
-                          style={[styles.dayCell, isSelected && { backgroundColor: BRAND, borderRadius: 8 }]}
-                          onPress={() => handleDayPress(day)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[
-                            styles.dayNum,
-                            { color: isSelected ? "#fff" : isToday ? BRAND : colors.text.primary },
-                            isToday && !isSelected && { fontWeight: "700" },
-                          ]}>
-                            {day}
-                          </Text>
-                          <View style={{ flexDirection: "row", gap: 3 }}>
-                            {hasPersonal && <View style={[styles.dot, { backgroundColor: isSelected ? "#fff" : BRAND }]} />}
-                            {hasSaved    && <View style={[styles.dot, { backgroundColor: isSelected ? "#fff" : "#F59E0B" }]} />}
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                ))}
-              </View>
-
-              {/* Legend */}
-              <View style={[styles.calLegend]}>
-                <View style={styles.calLegendItem}>
-                  <View style={[styles.dot, { backgroundColor: BRAND }]} />
-                  <Text style={[styles.calLegendText, { color: colors.text.tertiary }]}>Personal</Text>
-                </View>
-                <View style={styles.calLegendItem}>
-                  <View style={[styles.dot, { backgroundColor: "#F59E0B" }]} />
-                  <Text style={[styles.calLegendText, { color: colors.text.tertiary }]}>Saved</Text>
-                </View>
-              </View>
-
-              {/* Selected date events */}
-              {selectedDate && (
+            {/* ── Events list ── */}
+            <View style={{ paddingTop: 16 }}>
+              {/* Selected date (month view only) */}
+              {scheduleView === "month" && selectedDate && (
                 <View style={styles.section}>
                   <Text style={[styles.sectionTitle, { color: colors.text.secondary, marginBottom: 10 }]}>
-                    {new Date(selectedDate + "T00:00:00").toLocaleDateString("en-AU", {
-                      weekday: "long", month: "long", day: "numeric",
-                    })}
+                    {new Date(selectedDate + "T00:00:00").toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "short" })}
                   </Text>
                   {selectedEvents.length === 0 && selectedSavedPosts.length === 0 ? (
-                    <Text style={[styles.emptyText, { color: colors.text.tertiary }]}>No tournaments on this day.</Text>
+                    <Text style={[styles.calNoEvents, { color: colors.text.tertiary, marginTop: 0, textAlign: "left" }]}>No events on this day</Text>
                   ) : (
                     <>
                       {selectedEvents.map((e) => (
                         <EventCard key={e.id} event={e} colors={colors}
                           onDelete={() => handleDelete(e.id)}
                           onShare={() => setShareEvent(e)}
+                          onShareStake={() => handleShareStakeDeal(e)}
+                          onSellStakes={() => handleSellStakesPress(e)}
                           onCalendarSync={() => addToDeviceCalendar(e).then((ok) => Alert.alert(ok ? "Added!" : "Error", ok ? "Added to your device calendar." : "Could not add to calendar."))}
                         />
                       ))}
@@ -609,119 +675,220 @@ export default function CalendarScreen() {
                 </View>
               )}
 
-              {/* Upcoming personal */}
-              {allUpcoming.length > 0 && (
+              {/* Today */}
+              {(events.filter((e) => e.date === todayYMD).length > 0 || savedTournaments.filter((p) => p.status === todayYMD).length > 0) && (
                 <View style={styles.section}>
-                  <Text style={[styles.sectionTitle, { color: colors.text.secondary }]}>Upcoming</Text>
-                  {allUpcoming.map((e) => (
+                  <Text style={[styles.sectionTitle, { color: colors.text.secondary, marginBottom: 10 }]}>Today</Text>
+                  {events.filter((e) => e.date === todayYMD).map((e) => (
+                    <EventCard key={e.id} event={e} colors={colors}
+                      onDelete={() => handleDelete(e.id)} onShare={() => setShareEvent(e)}
+                      onShareStake={() => handleShareStakeDeal(e)}
+                      onSellStakes={() => handleSellStakesPress(e)}
+                      onCalendarSync={() => addToDeviceCalendar(e).then((ok) => Alert.alert(ok ? "Added!" : "Error", ok ? "Added to your device calendar." : "Could not add to calendar."))}
+                    />
+                  ))}
+                  {savedTournaments.filter((p) => p.status === todayYMD).map((p) => (
+                    <SavedTournamentCard key={p.id} post={p} colors={colors} onUnsave={() => handleToggleSave(p)} />
+                  ))}
+                </View>
+              )}
+
+              {/* Upcoming */}
+              {allUpcoming.filter((e) => e.date > todayYMD).length > 0 && (
+                <View style={styles.section}>
+                  <Text style={[styles.sectionTitle, { color: colors.text.secondary, marginBottom: 10 }]}>Upcoming</Text>
+                  {allUpcoming.filter((e) => e.date > todayYMD).map((e) => (
                     <EventCard key={e.id} event={e} colors={colors} showDate
-                      onDelete={() => handleDelete(e.id)}
-                      onShare={() => setShareEvent(e)}
+                      onDelete={() => handleDelete(e.id)} onShare={() => setShareEvent(e)}
+                      onShareStake={() => handleShareStakeDeal(e)}
+                      onSellStakes={() => handleSellStakesPress(e)}
                       onCalendarSync={() => addToDeviceCalendar(e).then((ok) => Alert.alert(ok ? "Added!" : "Error", ok ? "Added to your device calendar." : "Could not add to calendar."))}
                     />
                   ))}
                 </View>
               )}
 
-              {/* Upcoming saved community */}
-              {savedTournaments.filter((p) => (p.status ?? "") >= todayYMD).length > 0 && (
+              {/* Saved community */}
+              {savedTournaments.filter((p) => (p.status ?? "") > todayYMD).length > 0 && (
                 <View style={styles.section}>
-                  <Text style={[styles.sectionTitle, { color: colors.text.secondary }]}>Saved Tournaments</Text>
+                  <Text style={[styles.sectionTitle, { color: colors.text.secondary, marginBottom: 10 }]}>Saved Tournaments</Text>
                   {savedTournaments
-                    .filter((p) => (p.status ?? "") >= todayYMD)
+                    .filter((p) => (p.status ?? "") > todayYMD)
                     .map((p) => <SavedTournamentCard key={p.id} post={p} colors={colors} onUnsave={() => handleToggleSave(p)} />)}
                 </View>
               )}
 
-              {/* Past personal */}
+              {/* Past */}
               {!hidePastEvents && pastEvents.length > 0 && (
                 <View style={styles.section}>
-                  <Text style={[styles.sectionTitle, { color: colors.text.secondary }]}>Past</Text>
+                  <Text style={[styles.sectionTitle, { color: colors.text.secondary, marginBottom: 10 }]}>Past</Text>
                   {pastEvents.map((e) => (
                     <EventCard key={e.id} event={e} colors={colors} past showDate
-                      onDelete={() => handleDelete(e.id)}
-                      onShare={() => setShareEvent(e)}
-                      onCalendarSync={() => {}}
+                      onDelete={() => handleDelete(e.id)} onShare={() => setShareEvent(e)}
+                      onShareStake={() => handleShareStakeDeal(e)}
+                      onSellStakes={() => handleSellStakesPress(e)} onCalendarSync={() => {}}
                     />
                   ))}
                 </View>
               )}
 
-              {events.length === 0 && savedTournaments.length === 0 && !selectedDate && (
+              {/* Empty state */}
+              {events.length === 0 && savedTournaments.length === 0 && (
                 <View style={[styles.emptyState, { borderColor: colors.border.default }]}>
                   <Ionicons name="calendar-outline" size={44} color={colors.text.tertiary} />
-                  <Text style={[styles.emptyStateTitle, { color: colors.text.primary }]}>No tournaments scheduled</Text>
+                  <Text style={[styles.emptyStateTitle, { color: colors.text.primary }]}>No tournaments yet</Text>
                   <Text style={[styles.emptyStateSub, { color: colors.text.tertiary }]}>
-                    Tap a date and "Add" to schedule a personal tournament, or browse the Tournaments tab.
+                    Browse the Tournaments tab and tap ⭐ to add events to your schedule.
                   </Text>
+                  <TouchableOpacity
+                    onPress={() => setCalTab("tournaments")}
+                    style={[styles.emptyAction, { backgroundColor: BRAND }]}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="trophy-outline" size={14} color="#fff" />
+                    <Text style={styles.emptyActionText}>Browse Tournaments</Text>
+                  </TouchableOpacity>
                 </View>
               )}
-            </>
-          )}
-        </ScrollView>
+            </View>
+          </ScrollView>
+        </View>
       )}
 
       {/* ── Tournaments tab ── */}
       {calTab === "tournaments" && (
-        <ScrollView
-          contentContainerStyle={{ paddingBottom: 49 + insets.bottom + 32, paddingTop: 16 }}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Elite: Publish button */}
-          {isElite && (
-            <TouchableOpacity
-              onPress={() => setShowPublish(true)}
-              activeOpacity={0.88}
-              style={[styles.publishBtn, { backgroundColor: PURPLE }]}
-            >
-              <Ionicons name="add-circle-outline" size={18} color="#fff" />
-              <Text style={styles.publishBtnText}>Publish a Tournament</Text>
-            </TouchableOpacity>
-          )}
+        <View style={{ flex: 1 }}>
+          {/* Search bar */}
+          <View style={[styles.searchRow, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+            <View style={[styles.searchBox, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
+              <Ionicons name="search-outline" size={16} color={colors.text.tertiary} />
+              <TextInput
+                placeholder="Search tournaments, series, venue…"
+                placeholderTextColor={colors.text.tertiary}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                style={[styles.searchInput, { color: colors.text.primary }]}
+                returnKeyType="search"
+                clearButtonMode="while-editing"
+              />
+            </View>
+          </View>
 
-          {/* Non-Elite: teaser to publish */}
-          {!isElite && (
-            <TouchableOpacity
-              onPress={() => setShowPaywall(true)}
-              activeOpacity={0.85}
-              style={[styles.eliteTeaser, { backgroundColor: PURPLE + "12", borderColor: PURPLE + "30" }]}
-            >
-              <Ionicons name="trophy" size={16} color={PURPLE} />
-              <Text style={[styles.eliteTeaserText, { color: colors.text.secondary }]}>
-                <Text style={{ fontWeight: "700", color: PURPLE }}>Elite organisers</Text> publish tournaments here for the community to discover.
-              </Text>
-              <Ionicons name="chevron-forward" size={14} color={PURPLE} />
-            </TouchableOpacity>
-          )}
+          {/* State filter chips */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.stateChipsRow}
+            style={[styles.stateChipsScroll, { borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary }]}
+            alwaysBounceHorizontal={false}
+          >
+            {["NSW", "VIC", "QLD", "WA", "SA", "ACT", "NT", "TAS"].map((s) => (
+              <TouchableOpacity
+                key={s}
+                onPress={() => setFilterState(s)}
+                activeOpacity={0.75}
+                style={[
+                  styles.stateChip,
+                  filterState === s
+                    ? { backgroundColor: BRAND, borderColor: BRAND }
+                    : { backgroundColor: colors.bg.secondary, borderColor: colors.border.default },
+                ]}
+              >
+                <Text style={[styles.stateChipText, { color: filterState === s ? "#fff" : colors.text.secondary }]}>{s}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
 
-          {loadingTournaments ? (
-            <View style={styles.centered}>
-              <ActivityIndicator size="large" color={BRAND} />
-            </View>
-          ) : communityTournaments.length === 0 ? (
-            <View style={[styles.emptyState, { borderColor: colors.border.default }]}>
-              <Ionicons name="trophy-outline" size={44} color={colors.text.tertiary} />
-              <Text style={[styles.emptyStateTitle, { color: colors.text.primary }]}>No tournaments yet</Text>
-              <Text style={[styles.emptyStateSub, { color: colors.text.tertiary }]}>
-                Elite organisers publish tournaments here. Upgrade to Elite to be the first.
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.section}>
-              <Text style={[styles.sectionTitle, { color: colors.text.secondary, marginBottom: 12 }]}>
-                {communityTournaments.length} tournament{communityTournaments.length !== 1 ? "s" : ""} available
-              </Text>
-              {communityTournaments.map((post) => (
-                <CommunityTournamentCard
-                  key={post.id}
-                  post={post}
-                  colors={colors}
-                  onToggleSave={() => handleToggleSave(post)}
-                />
-              ))}
-            </View>
-          )}
-        </ScrollView>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingBottom: 49 + insets.bottom + 32, paddingTop: 12 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Official tournaments */}
+            {loadingOfficial ? (
+              <View style={styles.centered}>
+                <ActivityIndicator size="large" color={BRAND} />
+              </View>
+            ) : officialTournaments.length === 0 ? (
+              <View style={[styles.emptyState, { borderColor: colors.border.default, marginHorizontal: 16 }]}>
+                <Ionicons name="trophy-outline" size={44} color={colors.text.tertiary} />
+                <Text style={[styles.emptyStateTitle, { color: colors.text.primary }]}>No tournaments found</Text>
+                <Text style={[styles.emptyStateSub, { color: colors.text.tertiary }]}>
+                  {searchQuery.trim() ? "Try a different search term." : `No upcoming tournaments in ${filterState} yet.`}
+                </Text>
+              </View>
+            ) : (
+              <View style={{ gap: 10 }}>
+                <Text style={[styles.sectionLabel, { color: colors.text.tertiary, marginBottom: 4, paddingHorizontal: 16 }]}>
+                  {officialTournaments.length} UPCOMING IN {filterState}
+                </Text>
+
+                {/* Series groups */}
+                {seriesGroups.map((g) => (
+                  <SeriesCard
+                    key={g.name}
+                    group={g}
+                    colors={colors}
+                    onPress={() => setSelectedSeries(g.name)}
+                  />
+                ))}
+
+                {/* Solo / non-series tournaments */}
+                {soloTournaments.length > 0 && seriesGroups.length > 0 && (
+                  <Text style={[styles.sectionLabel, { color: colors.text.tertiary, marginTop: 4, paddingHorizontal: 16 }]}>
+                    INDIVIDUAL EVENTS
+                  </Text>
+                )}
+                {soloTournaments.map((t) => (
+                  <OfficialTournamentCard
+                    key={t.id}
+                    tournament={t}
+                    colors={colors}
+                    onAdded={refresh}
+                  />
+                ))}
+              </View>
+            )}
+
+            {/* My pending submissions */}
+            {isElite && pendingSubmissions.length > 0 && (
+              <View style={[styles.section, { gap: 10, marginTop: 8 }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>MY SUBMISSIONS</Text>
+                  <View style={{ backgroundColor: "#F59E0B18", borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 }}>
+                    <Text style={{ fontSize: 10, fontWeight: "700", color: "#F59E0B" }}>PENDING REVIEW</Text>
+                  </View>
+                </View>
+                {pendingSubmissions.map((t) => (
+                  <PendingSubmissionCard
+                    key={t.id}
+                    tournament={t}
+                    colors={colors}
+                    userId={user?.id ?? ""}
+                    onDeleted={() => setPendingSubmissions((prev) => prev.filter((p) => p.id !== t.id))}
+                  />
+                ))}
+              </View>
+            )}
+
+
+            {/* Non-Elite teaser */}
+            {!isElite && (
+              <TouchableOpacity
+                onPress={() => setShowPaywall(true)}
+                activeOpacity={0.85}
+                style={[styles.eliteTeaser, { backgroundColor: PURPLE + "12", borderColor: PURPLE + "30", marginHorizontal: 16 }]}
+              >
+                <Ionicons name="trophy" size={16} color={PURPLE} />
+                <Text style={[styles.eliteTeaserText, { color: colors.text.secondary }]}>
+                  <Text style={{ fontWeight: "700", color: PURPLE }}>Elite organisers</Text> can publish tournaments to the community.
+                </Text>
+                <Ionicons name="chevron-forward" size={14} color={PURPLE} />
+              </TouchableOpacity>
+            )}
+          </ScrollView>
+        </View>
       )}
 
       {/* ── Calendar Settings — full-screen modal ── */}
@@ -742,7 +909,6 @@ export default function CalendarScreen() {
       <AddTournamentModal
         visible={showAddModal}
         onClose={() => { Keyboard.dismiss(); setShowAddModal(false); }}
-        selectedDate={selectedDate}
         todayYMD={todayYMD}
         form={form}
         setForm={setForm}
@@ -765,6 +931,21 @@ export default function CalendarScreen() {
         />
       )}
 
+      {/* ── Sell Stakes Modal ── */}
+      {stakeEvent && (
+        <SellStakesModal
+          visible={!!stakeEvent}
+          event={stakeEvent}
+          userId={user?.id ?? profile?.id ?? ""}
+          onClose={() => setStakeEvent(null)}
+          onDealCreated={(dealId) => {
+            setEvents((prev) =>
+              prev.map((e) => e.id === stakeEvent.id ? { ...e, stake_deal_id: dealId } : e)
+            );
+          }}
+        />
+      )}
+
       {/* ── Paywall ── */}
       <PaywallModal
         visible={showPaywall}
@@ -777,14 +958,24 @@ export default function CalendarScreen() {
           visible={showPublish}
           onClose={() => setShowPublish(false)}
           userId={user.id}
-          onPublished={(post: SocialPost) => {
-            setCommunityTournaments((prev) => [post, ...prev]);
+          onSubmitted={(t) => {
+            setPendingSubmissions((prev) => [t, ...prev]);
             setShowPublish(false);
           }}
           insets={insets}
           colors={colors}
         />
       )}
+
+      {/* ── Series Detail ── */}
+      <SeriesDetailModal
+        visible={selectedSeries !== null}
+        group={seriesGroups.find((g) => g.name === selectedSeries) ?? null}
+        onClose={() => setSelectedSeries(null)}
+        colors={colors}
+        insets={insets}
+        onAdded={refresh}
+      />
     </View>
   );
 }
@@ -821,42 +1012,8 @@ function CalendarSettingsModal({
 
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 32 }} showsVerticalScrollIndicator={false}>
 
-          {/* ── Section: Sync ── */}
-          <Text style={[stStyles.sectionLabel, { color: colors.text.tertiary }]}>SYNC</Text>
-
-          <TouchableOpacity
-            onPress={isPro ? undefined : onOpenPaywall}
-            activeOpacity={isPro ? 1 : 0.75}
-          >
-            <View style={[stStyles.settingCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-              <View style={[stStyles.settingIconWrap, { backgroundColor: BRAND + "15" }]}>
-                <Ionicons name="sync" size={18} color={BRAND} />
-              </View>
-              <View style={{ flex: 1, gap: 3 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <Text style={[stStyles.settingLabel, { color: colors.text.primary }]}>Sync with Device Calendar</Text>
-                  {!isPro && (
-                    <View style={[stStyles.proBadge, { backgroundColor: PURPLE + "18" }]}>
-                      <Ionicons name="lock-closed" size={10} color={PURPLE} />
-                      <Text style={[stStyles.proBadgeText, { color: PURPLE }]}>PRO</Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={[stStyles.settingSub, { color: colors.text.tertiary }]}>
-                  {isPro
-                    ? "Automatically sync all scheduled tournaments to your phone's calendar"
-                    : "Upgrade to Pro to enable automatic calendar sync"}
-                </Text>
-              </View>
-              {isPro
-                ? <Switch value={false} trackColor={{ false: colors.border.default, true: `${BRAND}55` }} thumbColor={BRAND} />
-                : <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
-              }
-            </View>
-          </TouchableOpacity>
-
           {/* ── Section: Device Calendar ── */}
-          <Text style={[stStyles.sectionLabel, { color: colors.text.tertiary, marginTop: 24 }]}>DEVICE CALENDAR</Text>
+          <Text style={[stStyles.sectionLabel, { color: colors.text.tertiary }]}>DEVICE CALENDAR</Text>
 
           <View style={[stStyles.settingCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
             <View style={[stStyles.settingIconWrap, { backgroundColor: "#22C55E15" }]}>
@@ -866,25 +1023,24 @@ function CalendarSettingsModal({
               <Text style={[stStyles.settingLabel, { color: colors.text.primary }]}>Calendar Access</Text>
               <Text style={[stStyles.settingSub, { color: colors.text.tertiary }]}>
                 {calAccessGranted === true
-                  ? "Connected — Stakemate can read/write your calendar"
+                  ? "Stakemate can read/write your calendar"
                   : calAccessGranted === false
-                    ? "Not granted — tap to request access"
+                    ? "Tap to request access"
                     : "Checking permission…"}
               </Text>
             </View>
-            {calAccessGranted ? (
-              <View style={[stStyles.connectedBadge, { backgroundColor: "#22C55E18" }]}>
-                <Ionicons name="checkmark-circle" size={14} color="#22C55E" />
-                <Text style={[stStyles.connectedText, { color: "#22C55E" }]}>Connected</Text>
-              </View>
-            ) : (
-              <TouchableOpacity
-                onPress={onRequestCalAccess}
-                style={[stStyles.enableBtn, { backgroundColor: BRAND }]}
-              >
-                <Text style={stStyles.enableBtnText}>Enable</Text>
-              </TouchableOpacity>
-            )}
+            <Switch
+              value={calAccessGranted === true}
+              onValueChange={(val) => {
+                if (val) {
+                  onRequestCalAccess();
+                } else {
+                  Alert.alert("Disable Calendar Access", "To revoke access, go to your device Settings → Privacy → Calendars.");
+                }
+              }}
+              trackColor={{ false: colors.border.default, true: "#22C55E55" }}
+              thumbColor={calAccessGranted ? "#22C55E" : colors.text.tertiary}
+            />
           </View>
 
           {/* ── Section: Display ── */}
@@ -937,25 +1093,35 @@ function CalendarSettingsModal({
 // ─── Add Tournament Modal (full-screen stack style) ───────────────────────────
 
 function AddTournamentModal({
-  visible, onClose, selectedDate, todayYMD, form, setForm,
+  visible, onClose, todayYMD, form, setForm,
   formImage, onPickImage, onRemoveImage, onSave, insets, colors,
 }: {
   visible: boolean;
   onClose: () => void;
-  selectedDate: string | null;
   todayYMD: string;
   form: { name: string; venue: string; buyin: string; notes: string };
   setForm: (f: any) => void;
   formImage: string | null;
   onPickImage: () => void;
   onRemoveImage: () => void;
-  onSave: () => void;
+  onSave: (date: string) => void;
   insets: any;
   colors: any;
 }) {
-  const dateLabel = selectedDate
-    ? new Date(selectedDate + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", month: "short", day: "numeric" })
-    : new Date(todayYMD + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", month: "short", day: "numeric" });
+  const todayObj   = new Date(todayYMD + "T00:00:00");
+  const [pickedDate,  setPickedDate]  = useState(todayYMD);
+  const [calYear,     setCalYear]     = useState(todayObj.getFullYear());
+  const [calMonth,    setCalMonth]    = useState(todayObj.getMonth());
+
+  // Reset picker when modal opens
+  useState(() => { if (visible) { setPickedDate(todayYMD); setCalYear(todayObj.getFullYear()); setCalMonth(todayObj.getMonth()); } });
+
+  const firstDay    = new Date(calYear, calMonth, 1).getDay();
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const calCells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+  while (calCells.length % 7 !== 0) calCells.push(null);
+
+  const dateLabel = new Date(pickedDate + "T00:00:00").toLocaleDateString("en-AU", { weekday: "long", month: "long", day: "numeric" });
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -967,11 +1133,10 @@ function AddTournamentModal({
             <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
           </TouchableOpacity>
           <View style={{ alignItems: "center" }}>
-            <Text style={[addStyles.navTitle, { color: colors.text.primary }]}>Add Tournament</Text>
-            <Text style={[addStyles.navSub, { color: colors.text.tertiary }]}>{dateLabel}</Text>
+            <Text style={[addStyles.navTitle, { color: colors.text.primary }]}>Add Custom Tournament</Text>
           </View>
           <TouchableOpacity
-            onPress={onSave}
+            onPress={() => onSave(pickedDate)}
             disabled={!form.name.trim()}
             style={[addStyles.saveHeaderBtn, { opacity: form.name.trim() ? 1 : 0.4 }]}
           >
@@ -986,6 +1151,68 @@ function AddTournamentModal({
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
             >
+              {/* ── Date picker ── */}
+              <View style={[addStyles.calendarSection, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                {/* Selected date label */}
+                <Text style={[addStyles.pickedDateLabel, { color: colors.text.primary }]}>{dateLabel}</Text>
+
+                {/* Month navigator */}
+                <View style={addStyles.calMonthNav}>
+                  <TouchableOpacity
+                    onPress={() => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Ionicons name="chevron-back" size={18} color={colors.text.primary} />
+                  </TouchableOpacity>
+                  <Text style={[addStyles.calMonthLabel, { color: colors.text.primary }]}>
+                    {MONTHS[calMonth]} {calYear}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Ionicons name="chevron-forward" size={18} color={colors.text.primary} />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Day labels */}
+                <View style={addStyles.calDayRow}>
+                  {DAYS.map((d) => (
+                    <Text key={d} style={[addStyles.calDayLabel, { color: colors.text.tertiary }]}>{d}</Text>
+                  ))}
+                </View>
+
+                {/* Calendar grid */}
+                {Array.from({ length: calCells.length / 7 }, (_, w) => (
+                  <View key={w} style={addStyles.calWeekRow}>
+                    {calCells.slice(w * 7, w * 7 + 7).map((day, i) => {
+                      if (!day) return <View key={i} style={addStyles.calDayCell} />;
+                      const ymd = toYMD(calYear, calMonth, day);
+                      const isSelected = ymd === pickedDate;
+                      const isToday    = ymd === todayYMD;
+                      const isPast     = ymd < todayYMD;
+                      return (
+                        <TouchableOpacity
+                          key={i}
+                          style={[addStyles.calDayCell, isSelected && { backgroundColor: BRAND, borderRadius: 8 }]}
+                          onPress={() => setPickedDate(ymd)}
+                          activeOpacity={0.7}
+                          disabled={isPast}
+                        >
+                          <Text style={[
+                            addStyles.calDayNum,
+                            { color: isSelected ? "#fff" : isPast ? colors.text.disabled : isToday ? BRAND : colors.text.primary },
+                            isToday && !isSelected && { fontWeight: "700" },
+                          ]}>
+                            {day}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                ))}
+              </View>
+
               {/* Image picker */}
               <TouchableOpacity
                 onPress={onPickImage}
@@ -1009,10 +1236,14 @@ function AddTournamentModal({
                       <Ionicons name="image-outline" size={28} color={BRAND} />
                     </View>
                     <Text style={[addStyles.imagePickerLabel, { color: colors.text.secondary }]}>Add Photo</Text>
-                    <Text style={[addStyles.imagePickerSub, { color: colors.text.tertiary }]}>Optional</Text>
+                    <Text style={[addStyles.imagePickerSub, { color: colors.text.tertiary }]}>Optional · JPG or PNG</Text>
                   </View>
                 )}
               </TouchableOpacity>
+
+              <Text style={[addStyles.imageHint, { color: colors.text.tertiary }]}>
+                Recommended: 750 × 200 px, landscape, under 2 MB
+              </Text>
 
               {/* Form fields */}
               <View style={{ paddingHorizontal: 16, marginTop: 16, gap: 10 }}>
@@ -1072,7 +1303,7 @@ function AddTournamentModal({
                     multiline
                     returnKeyType="done"
                     onSubmitEditing={Keyboard.dismiss}
-                    blurOnSubmit
+                    submitBehavior="blurAndSubmit"
                   />
                 </View>
               </View>
@@ -1088,7 +1319,7 @@ function AddTournamentModal({
               {/* Save button */}
               <TouchableOpacity
                 style={[addStyles.saveBtn, { backgroundColor: BRAND, opacity: form.name.trim() ? 1 : 0.5 }]}
-                onPress={onSave}
+                onPress={() => onSave(pickedDate)}
                 disabled={!form.name.trim()}
                 activeOpacity={0.88}
               >
@@ -1105,189 +1336,289 @@ function AddTournamentModal({
 
 // ─── Publish Tournament Modal (Elite) ────────────────────────────────────────
 
-type ScannedTournament = {
+const AU_STATES = ["NSW", "VIC", "QLD", "WA", "SA", "ACT", "NT", "TAS"];
+
+type SeriesEntry = {
+  id: string;
   name: string;
   date: string;
-  venue: string | null;
-  buyIn: string | null;
-  series: string | null;
-  description: string | null;
-  selected: boolean;
+  buyIn: string;
+  guarantee: string;
+  time: string;
+  lateReg: string;
+  format: string;
+  dateError: string;
 };
 
+function makeEntry(): SeriesEntry {
+  return { id: Math.random().toString(36).slice(2), name: "", date: "", buyIn: "", guarantee: "", time: "", lateReg: "", format: "", dateError: "" };
+}
+
+function PubField({ icon, children, borderColor, colors }: { icon: string; children: React.ReactNode; borderColor?: string; colors: any }) {
+  return (
+    <View style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: borderColor ?? colors.border.default }]}>
+      <View style={pubStyles.fieldIcon}><Ionicons name={icon as any} size={16} color={borderColor ?? colors.text.tertiary} /></View>
+      {children}
+    </View>
+  );
+}
+
+// ─── Pending Submission Card ──────────────────────────────────────────────────
+
+function PendingSubmissionCard({
+  tournament, colors, userId, onDeleted,
+}: {
+  tournament: OfficialTournament;
+  colors: any;
+  userId: string;
+  onDeleted: () => void;
+}) {
+  const [showSheet, setShowSheet] = useState(false);
+
+  function handleAction(action: () => void) {
+    setShowSheet(false);
+    setTimeout(action, 300);
+  }
+
+  async function handleDelete() {
+    Alert.alert(
+      "Delete Submission",
+      `Remove "${tournament.name}" from pending review? This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete", style: "destructive", onPress: async () => {
+            try {
+              await deleteMySubmission(tournament.id);
+              onDeleted();
+            } catch (e: any) {
+              Alert.alert("Could not delete", e?.message ?? "Please try again.");
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  async function handleShare(visibility: "public" | "friends") {
+    if (!userId) { Alert.alert("Not signed in"); return; }
+    try {
+      const lines = [
+        `🏆 ${tournament.name}`,
+        tournament.series ? `Part of ${tournament.series}` : null,
+        `📍 ${tournament.venue}${tournament.city ? `, ${tournament.city}` : ""}`,
+        `📅 ${new Date(tournament.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "long" })}${tournament.tournament_time ? ` · ${fmt12h(tournament.tournament_time)}` : ""}`,
+        tournament.buy_in ? `💰 Buy-in: $${tournament.buy_in}${tournament.guarantee ? ` · GTD $${tournament.guarantee.toLocaleString()}` : ""}` : null,
+        "Just submitted this to the Stakemate tournament directory! 🃏",
+      ].filter(Boolean).join("\n");
+
+      await createPost({
+        user_id: userId,
+        session_type: "tournament",
+        session_name: tournament.name,
+        venue: tournament.venue,
+        content: lines,
+        visibility,
+      });
+      Alert.alert("Shared!", visibility === "public" ? "Posted to the community." : "Shared with your friends.");
+    } catch (e: any) {
+      Alert.alert("Could not share", e?.message ?? "Please try again.");
+    }
+  }
+
+  return (
+    <>
+      <View style={[styles.officialCard, { backgroundColor: colors.bg.primary, borderColor: "#F59E0B40" }]}>
+        <View style={styles.officialCardTop}>
+          <View style={[styles.seriesLogoPlaceholder, { backgroundColor: "#F59E0B15" }]}>
+            <Ionicons name="time-outline" size={18} color="#F59E0B" />
+          </View>
+          <View style={{ flex: 1 }}>
+            {tournament.series ? <Text style={[styles.officialSeries, { color: BRAND }]}>{tournament.series}</Text> : null}
+            <Text style={[styles.officialName, { color: colors.text.primary }]} numberOfLines={2}>{tournament.name}</Text>
+          </View>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <View style={{ backgroundColor: "#F59E0B15", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4 }}>
+              <Text style={{ fontSize: 11, fontWeight: "700", color: "#F59E0B" }}>Pending</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setShowSheet(true)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={[styles.iconBtn, { backgroundColor: colors.bg.secondary }]}
+            >
+              <Ionicons name="ellipsis-horizontal" size={18} color={colors.text.secondary} />
+            </TouchableOpacity>
+          </View>
+        </View>
+        <View style={[styles.officialDivider, { backgroundColor: colors.border.subtle }]} />
+        <View style={styles.officialDetails}>
+          <View style={styles.officialDetailItem}>
+            <Ionicons name="calendar-outline" size={13} color={colors.text.tertiary} />
+            <Text style={[styles.officialDetailText, { color: colors.text.secondary }]}>
+              {new Date(tournament.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })}
+              {tournament.tournament_time ? `  ·  ${fmt12h(tournament.tournament_time)}` : ""}
+            </Text>
+          </View>
+          <View style={styles.officialDetailItem}>
+            <Ionicons name="location-outline" size={13} color={colors.text.tertiary} />
+            <Text style={[styles.officialDetailText, { color: colors.text.secondary }]} numberOfLines={1}>
+              {tournament.venue}{tournament.city ? `, ${tournament.city}` : ""}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Bottom sheet */}
+      <Modal visible={showSheet} transparent animationType="slide" onRequestClose={() => setShowSheet(false)}>
+        <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setShowSheet(false)} />
+        <View style={[styles.sheetContainer, { backgroundColor: colors.bg.primary }]}>
+          <View style={[styles.sheetHandle, { backgroundColor: colors.border.default }]} />
+          <Text style={[styles.sheetTitle, { color: colors.text.primary }]} numberOfLines={1}>{tournament.name}</Text>
+
+          <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(() => handleShare("public"))}>
+            <View style={[styles.sheetIcon, { backgroundColor: BRAND + "15" }]}>
+              <Ionicons name="share-social-outline" size={18} color={BRAND} />
+            </View>
+            <Text style={[styles.sheetRowText, { color: colors.text.primary }]}>Share to Community</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(() => handleShare("friends"))}>
+            <View style={[styles.sheetIcon, { backgroundColor: "#22C55E15" }]}>
+              <Ionicons name="people-outline" size={18} color="#22C55E" />
+            </View>
+            <Text style={[styles.sheetRowText, { color: colors.text.primary }]}>Share with Friends</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(handleDelete)}>
+            <View style={[styles.sheetIcon, { backgroundColor: "#EF444415" }]}>
+              <Ionicons name="trash-outline" size={18} color="#EF4444" />
+            </View>
+            <Text style={[styles.sheetRowText, { color: "#EF4444" }]}>Delete Submission</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.sheetCancel, { borderColor: colors.border.default }]} onPress={() => setShowSheet(false)}>
+            <Text style={[styles.sheetCancelText, { color: colors.text.secondary }]}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
 function PublishTournamentModal({
-  visible, onClose, userId, onPublished, insets, colors,
+  visible, onClose, userId, onSubmitted, insets, colors,
 }: {
   visible: boolean;
   onClose: () => void;
   userId: string;
-  onPublished: (post: SocialPost) => void;
+  onSubmitted: (t: OfficialTournament) => void;
   insets: any;
   colors: any;
 }) {
-  // manual form
-  const [name,        setName]        = useState("");
-  const [date,        setDate]        = useState("");
-  const [venue,       setVenue]       = useState("");
-  const [buyIn,       setBuyIn]       = useState("");
-  const [series,      setSeries]      = useState("");
-  const [description, setDescription] = useState("");
-  const [posting,     setPosting]     = useState(false);
-  const [dateError,   setDateError]   = useState("");
+  const [mode,      setMode]      = useState<"individual" | "series">("individual");
+  const [posting,   setPosting]   = useState(false);
 
-  // scan flow
-  const [mode,             setMode]             = useState<"manual" | "scan">("manual");
-  const [scanning,         setScanning]         = useState(false);
-  const [scannedList,      setScannedList]      = useState<ScannedTournament[]>([]);
-  const [publishingBulk,   setPublishingBulk]   = useState(false);
-  const [bulkDone,         setBulkDone]         = useState(0);
+  // ── Individual fields ──
+  const [name,      setName]      = useState("");
+  const [date,      setDate]      = useState("");
+  const [venue,     setVenue]     = useState("");
+  const [city,      setCity]      = useState("");
+  const [iState,    setIState]    = useState("NSW");
+  const [buyIn,     setBuyIn]     = useState("");
+  const [guarantee, setGuarantee] = useState("");
+  const [time,      setTime]      = useState("");
+  const [lateReg,   setLateReg]   = useState("");
+  const [format,    setFormat]    = useState("");
+  const [website,   setWebsite]   = useState("");
+  const [dateError, setDateError] = useState("");
+
+  // ── Series fields ──
+  const [seriesName,  setSeriesName]  = useState("");
+  const [seriesVenue, setSeriesVenue] = useState("");
+  const [seriesCity,  setSeriesCity]  = useState("");
+  const [seriesState, setSeriesState] = useState("NSW");
+  const [entries,     setEntries]     = useState<SeriesEntry[]>([makeEntry()]);
+
+  function updateEntry(id: string, patch: Partial<SeriesEntry>) {
+    setEntries((prev) => prev.map((e) => e.id === id ? { ...e, ...patch } : e));
+  }
+  function addEntry() { setEntries((prev) => [...prev, makeEntry()]); }
+  function removeEntry(id: string) {
+    setEntries((prev) => prev.length > 1 ? prev.filter((e) => e.id !== id) : prev);
+  }
 
   function reset() {
-    setName(""); setDate(""); setVenue(""); setBuyIn("");
-    setSeries(""); setDescription(""); setPosting(false); setDateError("");
-    setMode("manual"); setScanning(false); setScannedList([]);
-    setPublishingBulk(false); setBulkDone(0);
+    setMode("individual"); setPosting(false);
+    setName(""); setDate(""); setVenue(""); setCity(""); setIState("NSW");
+    setBuyIn(""); setGuarantee(""); setTime(""); setLateReg(""); setFormat(""); setWebsite(""); setDateError("");
+    setSeriesName(""); setSeriesVenue(""); setSeriesCity(""); setSeriesState("NSW");
+    setEntries([makeEntry()]);
   }
 
   function handleClose() { reset(); onClose(); }
 
   function validateDate(raw: string): string | null {
     const ddmm = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (ddmm) return `${ddmm[3]}-${ddmm[2].padStart(2,"0")}-${ddmm[1].padStart(2,"0")}`;
+    if (ddmm) return `${ddmm[3]}-${ddmm[2].padStart(2, "0")}-${ddmm[1].padStart(2, "0")}`;
     if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
     return null;
   }
 
-  // ── Manual publish ──────────────────────────────────────────────────────────
-  async function handlePublish() {
-    if (!name.trim()) return;
-    const isoDate = validateDate(date.trim());
-    if (!isoDate) { setDateError("Enter date as DD/MM/YYYY"); return; }
-    setDateError("");
+  function parseMoney(s: string) {
+    const n = parseFloat(s.replace(/[^0-9.]/g, ""));
+    return isNaN(n) ? null : n;
+  }
+
+  async function handleSubmit() {
     setPosting(true);
     try {
-      const post = await publishTournament({
-        userId, name: name.trim(), date: isoDate,
-        venue: venue.trim() || null, buyIn: buyIn.trim() || null,
-        series: series.trim() || null, description: description.trim() || null,
-      });
-      reset();
-      onPublished(post);
+      if (mode === "individual") {
+        const isoDate = validateDate(date.trim());
+        if (!isoDate) { setDateError("Enter date as DD/MM/YYYY"); setPosting(false); return; }
+        setDateError("");
+        const t = await submitTournamentToDirectory({
+          userId, name: name.trim(), tournament_date: isoDate,
+          venue: venue.trim(), city: city.trim(), state: iState,
+          buy_in: parseMoney(buyIn), guarantee: parseMoney(guarantee),
+          tournament_time: time.trim() || null, late_reg_end: lateReg.trim() || null,
+          format: format.trim() || null, website_url: website.trim() || null,
+        });
+        reset(); onSubmitted(t);
+        Alert.alert("Submitted for review!", "We'll approve your tournament shortly.");
+      } else {
+        // Validate entries
+        let hasError = false;
+        const validated = entries.map((e) => {
+          const iso = validateDate(e.date.trim());
+          if (!iso || !e.name.trim()) { hasError = true; return { ...e, dateError: iso ? "" : "Enter DD/MM/YYYY" }; }
+          return { ...e, dateError: "" };
+        });
+        setEntries(validated);
+        if (hasError || !seriesName.trim() || !seriesVenue.trim() || !seriesCity.trim()) {
+          setPosting(false); return;
+        }
+        const results = await Promise.all(entries.map((e) => submitTournamentToDirectory({
+          userId, name: e.name.trim(),
+          tournament_date: validateDate(e.date.trim())!,
+          venue: seriesVenue.trim(), city: seriesCity.trim(), state: seriesState,
+          series: seriesName.trim(),
+          buy_in: parseMoney(e.buyIn), guarantee: parseMoney(e.guarantee),
+          tournament_time: e.time.trim() || null, late_reg_end: e.lateReg.trim() || null,
+          format: e.format.trim() || null,
+        })));
+        reset(); onSubmitted(results[0]);
+        Alert.alert("Submitted for review!", `${results.length} tournament${results.length > 1 ? "s" : ""} submitted under "${seriesName.trim()}".`);
+      }
     } catch (e: any) {
-      Alert.alert("Could not publish", e?.message ?? "Please try again.");
+      Alert.alert("Could not submit", e?.message || "Check your connection and try again.");
     } finally { setPosting(false); }
   }
 
-  // ── Scan brochure ───────────────────────────────────────────────────────────
-  async function handleScanBrochure() {
-    Alert.alert("Upload Brochure", "Choose a format to scan", [
-      { text: "Photo / Image", onPress: () => pickImage() },
-      { text: "PDF Document",  onPress: () => pickPDF() },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  }
-
-  async function pickImage() {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert("Permission needed", "Allow photo access to scan a brochure.");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: false,
-      quality: 0.85,
-      base64: true,
-    });
-    if (result.canceled || !result.assets[0]) return;
-    const asset = result.assets[0];
-    if (!asset.base64) { Alert.alert("Error", "Could not read image data."); return; }
-    const ext = (asset.uri.split(".").pop() ?? "jpg").toLowerCase();
-    const mediaType = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
-    await runScan(asset.base64, mediaType);
-  }
-
-  async function pickPDF() {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: "application/pdf",
-        copyToCacheDirectory: true,
-      });
-      if (result.canceled || !result.assets?.[0]) return;
-      const uri = result.assets[0].uri;
-      // Read file as base64
-      const { readAsStringAsync, EncodingType } = await import("expo-file-system");
-      const base64 = await readAsStringAsync(uri, { encoding: EncodingType.Base64 });
-      if (!base64) { Alert.alert("Error", "Could not read PDF data."); return; }
-      await runScan(base64, "application/pdf");
-    } catch (e: any) {
-      Alert.alert("Error", e?.message ?? "Could not open PDF picker.");
-    }
-  }
-
-  async function runScan(base64: string, mediaType: string) {
-    setMode("scan");
-    setScanning(true);
-    setScannedList([]);
-    try {
-      const { BACKEND_URL } = await import("@/constants/config");
-      const res = await fetch(`${BACKEND_URL}/api/scan-brochure`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: base64, mediaType }),
-      });
-      const text = await res.text();
-      let json: any;
-      try { json = JSON.parse(text); } catch {
-        throw new Error("Server returned an unexpected response. Please try again.");
-      }
-      if (!res.ok) throw new Error(json.error ?? "Scan failed");
-      const list: ScannedTournament[] = (json.tournaments ?? []).map((t: any) => ({
-        name:        t.name        ?? "Tournament",
-        date:        t.date        ?? "",
-        venue:       t.venue       ?? null,
-        buyIn:       t.buyIn       ?? null,
-        series:      t.series      ?? null,
-        description: t.description ?? null,
-        selected:    true,
-      }));
-      if (list.length === 0) {
-        Alert.alert("No tournaments found", "Couldn't detect any tournaments. Try a clearer photo or a different page of the PDF.");
-        setMode("manual");
-      } else {
-        setScannedList(list);
-      }
-    } catch (e: any) {
-      Alert.alert("Scan failed", e?.message ?? "Please try again.");
-      setMode("manual");
-    } finally { setScanning(false); }
-  }
-
-  // ── Bulk publish scanned results ────────────────────────────────────────────
-  async function handlePublishAll() {
-    const toPublish = scannedList.filter((t) => t.selected && t.date);
-    if (toPublish.length === 0) { Alert.alert("Nothing selected", "Select at least one tournament."); return; }
-    setPublishingBulk(true);
-    setBulkDone(0);
-    let lastPost: SocialPost | null = null;
-    for (const t of toPublish) {
-      try {
-        lastPost = await publishTournament({
-          userId, name: t.name, date: t.date,
-          venue: t.venue, buyIn: t.buyIn,
-          series: t.series, description: t.description,
-        });
-        setBulkDone((n) => n + 1);
-      } catch { /* skip failed ones silently */ }
-    }
-    setPublishingBulk(false);
-    if (lastPost) onPublished(lastPost);
-    reset();
-    Alert.alert("Published!", `${toPublish.length} tournament${toPublish.length !== 1 ? "s" : ""} added to the community calendar.`);
-  }
-
-  const canPublish = name.trim().length > 0 && date.trim().length > 0 && !posting;
-  const selectedCount = scannedList.filter((t) => t.selected).length;
+  const canSubmit = !posting && (
+    mode === "individual"
+      ? name.trim().length > 0 && date.trim().length > 0 && venue.trim().length > 0 && city.trim().length > 0
+      : seriesName.trim().length > 0 && seriesVenue.trim().length > 0 && seriesCity.trim().length > 0 && entries.every((e) => e.name.trim().length > 0 && e.date.trim().length > 0)
+  );
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
@@ -1299,303 +1630,824 @@ function PublishTournamentModal({
             <Text style={[pubStyles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
           </TouchableOpacity>
           <View style={{ alignItems: "center" }}>
-            <Text style={[pubStyles.navTitle, { color: colors.text.primary }]}>Publish Tournament</Text>
+            <Text style={[pubStyles.navTitle, { color: colors.text.primary }]}>Submit Tournament</Text>
             <View style={[pubStyles.eliteBadge, { backgroundColor: PURPLE + "18" }]}>
               <Ionicons name="trophy" size={10} color={PURPLE} />
               <Text style={[pubStyles.eliteBadgeText, { color: PURPLE }]}>ELITE</Text>
             </View>
           </View>
-          {mode === "manual" ? (
-            <TouchableOpacity
-              onPress={handlePublish}
-              disabled={!canPublish}
-              style={[pubStyles.navSide, { alignItems: "flex-end" }]}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Text style={[pubStyles.navPublish, { color: canPublish ? PURPLE : colors.text.tertiary }]}>
-                {posting ? "Saving…" : "Publish"}
-              </Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              onPress={() => { setMode("manual"); setScannedList([]); }}
-              style={[pubStyles.navSide, { alignItems: "flex-end" }]}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Text style={[pubStyles.navPublish, { color: colors.text.secondary }]}>Manual</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity onPress={handleSubmit} disabled={!canSubmit} style={[pubStyles.navSide, { alignItems: "flex-end" }]} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Text style={[pubStyles.navPublish, { color: canSubmit ? PURPLE : colors.text.tertiary }]}>
+              {posting ? "Saving…" : "Submit"}
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        {/* ── SCAN MODE ── */}
-        {mode === "scan" && (
-          <ScrollView
-            contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 40, gap: 12 }}
-            showsVerticalScrollIndicator={false}
-          >
-            {scanning ? (
-              <View style={pubStyles.scanLoadingWrap}>
-                <ActivityIndicator size="large" color={PURPLE} />
-                <Text style={[pubStyles.scanLoadingTitle, { color: colors.text.primary }]}>Scanning brochure…</Text>
-                <Text style={[pubStyles.scanLoadingSub, { color: colors.text.tertiary }]}>
-                  Claude is reading your image and extracting tournament details
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 40, gap: 10 }}>
+
+              {/* Mode toggle */}
+              <SegmentedControl
+                options={[
+                  { value: "individual", label: "Individual", icon: "trophy-outline" },
+                  { value: "series",     label: "Series",     icon: "layers-outline" },
+                ]}
+                selected={mode}
+                onChange={(v) => setMode(v as "individual" | "series")}
+              />
+
+              {/* Info banner */}
+              <View style={[pubStyles.infoBanner, { backgroundColor: PURPLE + "10", borderColor: PURPLE + "25" }]}>
+                <Ionicons name="time-outline" size={15} color={PURPLE} />
+                <Text style={[pubStyles.infoBannerText, { color: colors.text.secondary }]}>
+                  {mode === "individual"
+                    ? "Your submission will be reviewed before appearing in the official tournament directory."
+                    : "All events will be grouped under the series name and reviewed before appearing in the directory."}
                 </Text>
               </View>
-            ) : (
-              <>
-                {/* Results header */}
-                <View style={pubStyles.scanResultsHeader}>
-                  <View style={[pubStyles.scanResultsBadge, { backgroundColor: PURPLE + "15" }]}>
-                    <Ionicons name="sparkles" size={14} color={PURPLE} />
-                    <Text style={[pubStyles.scanResultsCount, { color: PURPLE }]}>
-                      {scannedList.length} tournament{scannedList.length !== 1 ? "s" : ""} found
-                    </Text>
-                  </View>
-                  <TouchableOpacity onPress={handleScanBrochure} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Text style={[pubStyles.scanAgainText, { color: BRAND }]}>Scan another</Text>
-                  </TouchableOpacity>
-                </View>
 
-                {/* Scanned tournament rows */}
-                {scannedList.map((t, i) => (
-                  <TouchableOpacity
-                    key={i}
-                    onPress={() => setScannedList((prev) =>
-                      prev.map((item, idx) => idx === i ? { ...item, selected: !item.selected } : item)
-                    )}
-                    activeOpacity={0.8}
-                    style={[
-                      pubStyles.scannedRow,
-                      {
-                        backgroundColor: colors.bg.primary,
-                        borderColor: t.selected ? PURPLE : colors.border.default,
-                      },
-                    ]}
-                  >
-                    <View style={[
-                      pubStyles.scannedCheck,
-                      { backgroundColor: t.selected ? PURPLE : colors.bg.secondary, borderColor: t.selected ? PURPLE : colors.border.default },
-                    ]}>
-                      {t.selected && <Ionicons name="checkmark" size={12} color="#fff" />}
+              {/* ─── INDIVIDUAL MODE ─── */}
+              {mode === "individual" && (
+                <>
+                  <Text style={[pubStyles.sectionLabel, { color: colors.text.tertiary }]}>REQUIRED</Text>
+
+                  <PubField icon="trophy-outline" borderColor={PURPLE} colors={colors}>
+                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                      placeholder="Tournament name *" placeholderTextColor={colors.text.tertiary}
+                      value={name} onChangeText={setName} returnKeyType="next" autoFocus />
+                  </PubField>
+
+                  <PubField icon="calendar-outline" borderColor={dateError ? "#EF4444" : undefined} colors={colors}>
+                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                      placeholder="Date (DD/MM/YYYY) *" placeholderTextColor={colors.text.tertiary}
+                      value={date} onChangeText={(t) => { setDate(t); if (dateError) setDateError(""); }}
+                      keyboardType="numbers-and-punctuation" returnKeyType="next" />
+                  </PubField>
+                  {dateError ? <Text style={pubStyles.fieldError}>{dateError}</Text> : null}
+
+                  <PubField icon="business-outline" colors={colors}>
+                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                      placeholder="Venue / Casino *" placeholderTextColor={colors.text.tertiary}
+                      value={venue} onChangeText={setVenue} returnKeyType="next" />
+                  </PubField>
+
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <PubField icon="location-outline" colors={colors}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        placeholder="City *" placeholderTextColor={colors.text.tertiary}
+                        value={city} onChangeText={setCity} returnKeyType="next" />
+                    </PubField>
+                    <View style={[pubStyles.fieldWrap, { width: 90, backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                        placeholder="State" placeholderTextColor={colors.text.tertiary}
+                        value={iState} onChangeText={(t) => setIState(t.toUpperCase().slice(0, 3))}
+                        autoCapitalize="characters" maxLength={3} returnKeyType="next" />
                     </View>
-                    <View style={{ flex: 1, gap: 2 }}>
-                      <Text style={[pubStyles.scannedName, { color: colors.text.primary }]}>{t.name}</Text>
-                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                        {t.date ? (
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
-                            <Ionicons name="calendar-outline" size={11} color={BRAND} />
-                            <Text style={[pubStyles.scannedMeta, { color: BRAND }]}>
-                              {new Date(t.date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}
-                            </Text>
-                          </View>
-                        ) : null}
-                        {t.venue ? (
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
-                            <Ionicons name="location-outline" size={11} color={colors.text.tertiary} />
-                            <Text style={[pubStyles.scannedMeta, { color: colors.text.tertiary }]}>{t.venue}</Text>
-                          </View>
-                        ) : null}
-                        {t.buyIn ? (
-                          <Text style={[pubStyles.scannedMeta, { color: colors.text.tertiary }]}>Buy-in: {t.buyIn}</Text>
-                        ) : null}
+                  </View>
+
+                  <Text style={[pubStyles.sectionLabel, { color: colors.text.tertiary, marginTop: 6 }]}>OPTIONAL</Text>
+
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <PubField icon="cash-outline" colors={colors}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        placeholder="Buy-in ($)" placeholderTextColor={colors.text.tertiary}
+                        value={buyIn} onChangeText={setBuyIn} keyboardType="numeric" returnKeyType="next" />
+                    </PubField>
+                    <PubField icon="trending-up-outline" colors={colors}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        placeholder="GTD ($)" placeholderTextColor={colors.text.tertiary}
+                        value={guarantee} onChangeText={setGuarantee} keyboardType="numeric" returnKeyType="next" />
+                    </PubField>
+                  </View>
+
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <PubField icon="time-outline" colors={colors}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        placeholder="Start (HH:MM)" placeholderTextColor={colors.text.tertiary}
+                        value={time} onChangeText={setTime} keyboardType="numbers-and-punctuation" returnKeyType="next" />
+                    </PubField>
+                    <PubField icon="hourglass-outline" colors={colors}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        placeholder="Late reg (HH:MM)" placeholderTextColor={colors.text.tertiary}
+                        value={lateReg} onChangeText={setLateReg} keyboardType="numbers-and-punctuation" returnKeyType="next" />
+                    </PubField>
+                  </View>
+
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <PubField icon="options-outline" colors={colors}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        placeholder="Format (NLH, PLO…)" placeholderTextColor={colors.text.tertiary}
+                        value={format} onChangeText={setFormat} returnKeyType="next" />
+                    </PubField>
+                    <PubField icon="globe-outline" colors={colors}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        placeholder="Website URL" placeholderTextColor={colors.text.tertiary}
+                        value={website} onChangeText={setWebsite} keyboardType="url" returnKeyType="done" autoCapitalize="none" />
+                    </PubField>
+                  </View>
+                </>
+              )}
+
+              {/* ─── SERIES MODE ─── */}
+              {mode === "series" && (
+                <>
+                  <Text style={[pubStyles.sectionLabel, { color: colors.text.tertiary }]}>SERIES INFO</Text>
+
+                  <PubField icon="layers-outline" borderColor={PURPLE} colors={colors}>
+                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                      placeholder="Series name * (e.g. WSOP Circuit)" placeholderTextColor={colors.text.tertiary}
+                      value={seriesName} onChangeText={setSeriesName} returnKeyType="next" autoFocus />
+                  </PubField>
+
+                  <PubField icon="business-outline" colors={colors}>
+                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                      placeholder="Venue / Casino *" placeholderTextColor={colors.text.tertiary}
+                      value={seriesVenue} onChangeText={setSeriesVenue} returnKeyType="next" />
+                  </PubField>
+
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <PubField icon="location-outline" colors={colors}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        placeholder="City *" placeholderTextColor={colors.text.tertiary}
+                        value={seriesCity} onChangeText={setSeriesCity} returnKeyType="next" />
+                    </PubField>
+                    <View style={[pubStyles.fieldWrap, { width: 90, backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                        placeholder="State" placeholderTextColor={colors.text.tertiary}
+                        value={seriesState} onChangeText={(t) => setSeriesState(t.toUpperCase().slice(0, 3))}
+                        autoCapitalize="characters" maxLength={3} returnKeyType="next" />
+                    </View>
+                  </View>
+
+                  {/* Tournament entries */}
+                  <Text style={[pubStyles.sectionLabel, { color: colors.text.tertiary, marginTop: 6 }]}>
+                    EVENTS ({entries.length})
+                  </Text>
+
+                  {entries.map((entry, idx) => (
+                    <View key={entry.id} style={[pubStyles.entryCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                        <Text style={{ fontSize: 13, fontWeight: "700", color: PURPLE }}>Event {idx + 1}</Text>
+                        {entries.length > 1 && (
+                          <TouchableOpacity onPress={() => removeEntry(entry.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                            <Ionicons name="close-circle-outline" size={18} color={colors.text.tertiary} />
+                          </TouchableOpacity>
+                        )}
                       </View>
-                      {t.description ? (
-                        <Text style={[pubStyles.scannedDesc, { color: colors.text.tertiary }]} numberOfLines={2}>{t.description}</Text>
-                      ) : null}
+
+                      <PubField icon="trophy-outline" borderColor={PURPLE} colors={colors}>
+                        <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                          placeholder="Tournament name *" placeholderTextColor={colors.text.tertiary}
+                          value={entry.name} onChangeText={(t) => updateEntry(entry.id, { name: t })} returnKeyType="next" />
+                      </PubField>
+
+                      <View style={{ height: 8 }} />
+
+                      <PubField icon="calendar-outline" borderColor={entry.dateError ? "#EF4444" : undefined} colors={colors}>
+                        <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                          placeholder="Date (DD/MM/YYYY) *" placeholderTextColor={colors.text.tertiary}
+                          value={entry.date} onChangeText={(t) => updateEntry(entry.id, { date: t, dateError: "" })}
+                          keyboardType="numbers-and-punctuation" returnKeyType="next" />
+                      </PubField>
+                      {entry.dateError ? <Text style={[pubStyles.fieldError, { marginTop: 2 }]}>{entry.dateError}</Text> : null}
+
+                      <View style={{ height: 8 }} />
+
+                      <View style={{ flexDirection: "row", gap: 8 }}>
+                        <PubField icon="cash-outline" colors={colors}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                            placeholder="Buy-in ($)" placeholderTextColor={colors.text.tertiary}
+                            value={entry.buyIn} onChangeText={(t) => updateEntry(entry.id, { buyIn: t })} keyboardType="numeric" returnKeyType="next" />
+                        </PubField>
+                        <PubField icon="trending-up-outline" colors={colors}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                            placeholder="GTD ($)" placeholderTextColor={colors.text.tertiary}
+                            value={entry.guarantee} onChangeText={(t) => updateEntry(entry.id, { guarantee: t })} keyboardType="numeric" returnKeyType="next" />
+                        </PubField>
+                      </View>
+
+                      <View style={{ height: 8 }} />
+
+                      <View style={{ flexDirection: "row", gap: 8 }}>
+                        <PubField icon="time-outline" colors={colors}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                            placeholder="Start (HH:MM)" placeholderTextColor={colors.text.tertiary}
+                            value={entry.time} onChangeText={(t) => updateEntry(entry.id, { time: t })} keyboardType="numbers-and-punctuation" returnKeyType="next" />
+                        </PubField>
+                        <PubField icon="hourglass-outline" colors={colors}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                            placeholder="Late reg (HH:MM)" placeholderTextColor={colors.text.tertiary}
+                            value={entry.lateReg} onChangeText={(t) => updateEntry(entry.id, { lateReg: t })} keyboardType="numbers-and-punctuation" returnKeyType="next" />
+                        </PubField>
+                      </View>
+
+                      <View style={{ height: 8 }} />
+
+                      <PubField icon="options-outline" colors={colors}>
+                        <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                          placeholder="Format (NLH, PLO…)" placeholderTextColor={colors.text.tertiary}
+                          value={entry.format} onChangeText={(t) => updateEntry(entry.id, { format: t })} returnKeyType="done" />
+                      </PubField>
                     </View>
+                  ))}
+
+                  {/* Add event button */}
+                  <TouchableOpacity
+                    onPress={addEntry}
+                    style={[pubStyles.addEntryBtn, { borderColor: PURPLE + "60", backgroundColor: PURPLE + "0A" }]}
+                    activeOpacity={0.75}
+                  >
+                    <Ionicons name="add-circle-outline" size={18} color={PURPLE} />
+                    <Text style={{ fontSize: 14, fontWeight: "600", color: PURPLE }}>Add Another Event</Text>
                   </TouchableOpacity>
-                ))}
+                </>
+              )}
 
-                {/* Publish all */}
-                <TouchableOpacity
-                  style={[pubStyles.publishBtn, { backgroundColor: PURPLE, opacity: selectedCount > 0 && !publishingBulk ? 1 : 0.45 }]}
-                  onPress={handlePublishAll}
-                  disabled={selectedCount === 0 || publishingBulk}
-                  activeOpacity={0.88}
-                >
-                  <Ionicons name="earth-outline" size={18} color="#fff" />
-                  <Text style={pubStyles.publishBtnText}>
-                    {publishingBulk
-                      ? `Publishing ${bulkDone}/${selectedCount}…`
-                      : `Publish ${selectedCount} Tournament${selectedCount !== 1 ? "s" : ""}`}
-                  </Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </ScrollView>
-        )}
-
-        {/* ── MANUAL MODE ── */}
-        {mode === "manual" && (
-          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-              <ScrollView
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 40, gap: 10 }}
+              {/* Submit button */}
+              <TouchableOpacity
+                style={[pubStyles.publishBtn, { backgroundColor: PURPLE, opacity: canSubmit ? 1 : 0.45 }]}
+                onPress={handleSubmit} disabled={!canSubmit} activeOpacity={0.88}
               >
-                {/* Scan brochure CTA */}
-                <TouchableOpacity
-                  onPress={handleScanBrochure}
-                  activeOpacity={0.88}
-                  style={[pubStyles.scanCta, { backgroundColor: PURPLE + "12", borderColor: PURPLE + "30" }]}
-                >
-                  <View style={[pubStyles.scanCtaIcon, { backgroundColor: PURPLE + "20" }]}>
-                    <Ionicons name="sparkles" size={20} color={PURPLE} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[pubStyles.scanCtaTitle, { color: colors.text.primary }]}>Scan a Brochure</Text>
-                    <Text style={[pubStyles.scanCtaSub, { color: colors.text.tertiary }]}>
-                      Upload a tournament schedule image — AI extracts all dates automatically
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={16} color={PURPLE} />
-                </TouchableOpacity>
+                <Ionicons name="paper-plane-outline" size={18} color="#fff" />
+                <Text style={pubStyles.publishBtnText}>
+                  {posting ? "Submitting…" : mode === "series" ? `Submit ${entries.length} Event${entries.length > 1 ? "s" : ""}` : "Submit for Review"}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
 
-                <View style={pubStyles.dividerRow}>
-                  <View style={[pubStyles.dividerLine, { backgroundColor: colors.border.default }]} />
-                  <Text style={[pubStyles.dividerText, { color: colors.text.tertiary }]}>or add manually</Text>
-                  <View style={[pubStyles.dividerLine, { backgroundColor: colors.border.default }]} />
-                </View>
+// ─── Series Card + Detail Modal ───────────────────────────────────────────────
 
-                {/* Info banner */}
-                <View style={[pubStyles.infoBanner, { backgroundColor: PURPLE + "10", borderColor: PURPLE + "25" }]}>
-                  <Ionicons name="earth-outline" size={15} color={PURPLE} />
-                  <Text style={[pubStyles.infoBannerText, { color: colors.text.secondary }]}>
-                    This tournament will be visible to all Stakemate users in the community calendar.
-                  </Text>
-                </View>
+const STAR_COLOR = "#F59E0B";
 
-                <Text style={[pubStyles.sectionLabel, { color: colors.text.tertiary }]}>REQUIRED</Text>
+type SeriesGroup = {
+  name: string;
+  imageUrl: string | null;
+  dateFrom: string;
+  dateTo: string;
+  tournaments: OfficialTournament[];
+};
 
-                <View style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                  <View style={pubStyles.fieldIcon}>
-                    <Ionicons name="trophy-outline" size={16} color={PURPLE} />
-                  </View>
-                  <TextInput
-                    style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                    placeholder="Tournament name *"
-                    placeholderTextColor={colors.text.tertiary}
-                    value={name}
-                    onChangeText={setName}
-                    returnKeyType="next"
-                  />
-                </View>
+function fmtDateShort(dateStr: string) {
+  return new Date(dateStr + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" });
+}
 
-                <View style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: dateError ? "#EF4444" : colors.border.default }]}>
-                  <View style={pubStyles.fieldIcon}>
-                    <Ionicons name="calendar-outline" size={16} color={dateError ? "#EF4444" : colors.text.tertiary} />
-                  </View>
-                  <TextInput
-                    style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                    placeholder="Date (DD/MM/YYYY) *"
-                    placeholderTextColor={colors.text.tertiary}
-                    value={date}
-                    onChangeText={(t) => { setDate(t); if (dateError) setDateError(""); }}
-                    keyboardType="numbers-and-punctuation"
-                    returnKeyType="next"
-                  />
-                </View>
-                {dateError ? <Text style={pubStyles.fieldError}>{dateError}</Text> : null}
+function SeriesCard({ group, colors, onPress }: { group: SeriesGroup; colors: any; onPress: () => void }) {
+  const dateRange = group.dateFrom === group.dateTo
+    ? fmtDateShort(group.dateFrom)
+    : `${fmtDateShort(group.dateFrom)} – ${fmtDateShort(group.dateTo)}`;
 
-                <Text style={[pubStyles.sectionLabel, { color: colors.text.tertiary, marginTop: 6 }]}>OPTIONAL</Text>
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.75}
+      style={[styles.officialCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}
+    >
+      {/* Full-width banner */}
+      {group.imageUrl ? (
+        <Image source={{ uri: group.imageUrl }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+      ) : (
+        <View style={{ width: "100%", height: 60, backgroundColor: BRAND + "12", alignItems: "center", justifyContent: "center" }}>
+          <Ionicons name="trophy" size={26} color={BRAND} />
+        </View>
+      )}
 
-                <View style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                  <View style={pubStyles.fieldIcon}>
-                    <Ionicons name="location-outline" size={16} color={colors.text.tertiary} />
-                  </View>
-                  <TextInput
-                    style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                    placeholder="Venue / Casino"
-                    placeholderTextColor={colors.text.tertiary}
-                    value={venue}
-                    onChangeText={setVenue}
-                    returnKeyType="next"
-                  />
-                </View>
+      {/* Info row */}
+      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 12, gap: 10 }}>
+        <View style={{ flex: 1, gap: 3 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <View style={[styles.officialPill, { backgroundColor: BRAND + "12", paddingHorizontal: 6, paddingVertical: 2 }]}>
+              <Text style={[styles.officialPillText, { color: BRAND, fontSize: 10 }]}>SERIES</Text>
+            </View>
+          </View>
+          <Text style={[styles.officialName, { color: colors.text.primary }]} numberOfLines={1}>{group.name}</Text>
+          <Text style={[styles.officialDetailText, { color: colors.text.tertiary }]}>
+            {group.tournaments.length} events · {dateRange}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.text.tertiary} />
+      </View>
+    </TouchableOpacity>
+  );
+}
 
-                <View style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                  <View style={pubStyles.fieldIcon}>
-                    <Ionicons name="cash-outline" size={16} color={colors.text.tertiary} />
-                  </View>
-                  <TextInput
-                    style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                    placeholder="Buy-in (e.g. $550)"
-                    placeholderTextColor={colors.text.tertiary}
-                    value={buyIn}
-                    onChangeText={setBuyIn}
-                    returnKeyType="next"
-                  />
-                </View>
+function SeriesDetailModal({
+  group, visible, onClose, colors, insets, onAdded,
+}: {
+  group: SeriesGroup | null;
+  visible: boolean;
+  onClose: () => void;
+  colors: any;
+  insets: any;
+  onAdded: () => void;
+}) {
+  if (!group) return null;
+  const dateRange = group.dateFrom === group.dateTo
+    ? fmtDateShort(group.dateFrom)
+    : `${fmtDateShort(group.dateFrom)} – ${fmtDateShort(group.dateTo)}`;
 
-                <View style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                  <View style={pubStyles.fieldIcon}>
-                    <Ionicons name="layers-outline" size={16} color={colors.text.tertiary} />
-                  </View>
-                  <TextInput
-                    style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                    placeholder="Series name (e.g. WSOP Circuit)"
-                    placeholderTextColor={colors.text.tertiary}
-                    value={series}
-                    onChangeText={setSeries}
-                    returnKeyType="next"
-                  />
-                </View>
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+        {/* Header */}
+        <View style={[styles.header, { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default, paddingTop: 16 }]}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
+          </TouchableOpacity>
+          <View style={{ flex: 1, alignItems: "center", gap: 2 }}>
+            <Text style={{ fontSize: 16, fontWeight: "700", color: colors.text.primary }} numberOfLines={1}>{group.name}</Text>
+            <Text style={[styles.officialDetailText, { color: colors.text.tertiary }]}>{group.tournaments.length} events · {dateRange}</Text>
+          </View>
+          <View style={{ width: 36 }} />
+        </View>
 
-                <View style={[pubStyles.fieldWrap, pubStyles.fieldWrapMulti, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                  <View style={[pubStyles.fieldIcon, { paddingTop: 14 }]}>
-                    <Ionicons name="document-text-outline" size={16} color={colors.text.tertiary} />
-                  </View>
-                  <TextInput
-                    style={[pubStyles.fieldInput, pubStyles.fieldInputMulti, { color: colors.text.primary }]}
-                    placeholder="Description, structure, guarantee…"
-                    placeholderTextColor={colors.text.tertiary}
-                    value={description}
-                    onChangeText={setDescription}
-                    multiline
-                    returnKeyType="done"
-                  />
-                </View>
+        {/* Full-width series banner */}
+        {group.imageUrl ? (
+          <Image
+            source={{ uri: group.imageUrl }}
+            style={{ width: "100%", height: 120 }}
+            resizeMode="cover"
+          />
+        ) : null}
 
-                <TouchableOpacity
-                  style={[pubStyles.publishBtn, { backgroundColor: PURPLE, opacity: canPublish ? 1 : 0.45 }]}
-                  onPress={handlePublish}
-                  disabled={!canPublish}
-                  activeOpacity={0.88}
-                >
-                  <Ionicons name="earth-outline" size={18} color="#fff" />
-                  <Text style={pubStyles.publishBtnText}>
-                    {posting ? "Publishing…" : "Publish to Community"}
-                  </Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </TouchableWithoutFeedback>
-          </KeyboardAvoidingView>
+        <ScrollView
+          contentContainerStyle={{ paddingTop: 12, paddingBottom: insets.bottom + 32, gap: 10 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {group.tournaments.map((t) => (
+            <OfficialTournamentCard
+              key={t.id}
+              tournament={t}
+              colors={colors}
+              onAdded={onAdded}
+              hideBanner
+            />
+          ))}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+function OfficialTournamentCard({
+  tournament, colors, onAdded, hideBanner = false,
+}: {
+  tournament: OfficialTournament;
+  colors: any;
+  onAdded: () => void;
+  hideBanner?: boolean;
+}) {
+  const [starred, setStarred] = useState(false);
+
+  const dateLabel = tournament.tournament_date
+    ? new Date(tournament.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })
+    : null;
+  const timeLabel = tournament.tournament_time ? fmt12h(tournament.tournament_time) : null;
+  const lateReg   = tournament.late_reg_end ? `Late reg until ${fmt12h(tournament.late_reg_end)}` : null;
+
+  function handleStar() {
+    if (starred) return;
+    addTournamentEvent({
+      name:      tournament.name,
+      date:      tournament.tournament_date,
+      venue:     [tournament.venue, tournament.city].filter(Boolean).join(", "),
+      buyin:     tournament.buy_in != null ? `$${tournament.buy_in.toLocaleString()}` : "",
+      notes:     [
+        tournament.format,
+        tournament.guarantee != null ? `GTD $${tournament.guarantee.toLocaleString()}` : null,
+        timeLabel ? `Starts ${timeLabel}` : null,
+      ].filter(Boolean).join(" · "),
+      image_url: tournament.series_image_url ?? "",
+      source:    "directory",
+    });
+    setStarred(true);
+    onAdded();
+  }
+
+  const hasBanner = !!tournament.series_image_url && !hideBanner;
+
+  return (
+    <View style={[styles.officialCard, { backgroundColor: colors.bg.primary, borderColor: starred ? STAR_COLOR + "60" : colors.border.default }]}>
+      {/* Full-width banner image */}
+      {hasBanner && (
+        <Image source={{ uri: tournament.series_image_url! }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+      )}
+
+      {/* Name row */}
+      <View style={[styles.officialCardTop, !hasBanner && { paddingTop: 14 }]}>
+        {!hasBanner && (
+          <View style={[styles.seriesLogoPlaceholder, { backgroundColor: BRAND + "18" }]}>
+            <Ionicons name="trophy" size={18} color={BRAND} />
+          </View>
+        )}
+        <View style={{ flex: 1 }}>
+          {tournament.series ? (
+            <Text style={[styles.officialSeries, { color: BRAND }]}>{tournament.series}</Text>
+          ) : null}
+          <Text style={[styles.officialName, { color: colors.text.primary }]} numberOfLines={2}>{tournament.name}</Text>
+        </View>
+        <TouchableOpacity
+          onPress={handleStar}
+          style={[styles.officialStarBtn, starred && { backgroundColor: STAR_COLOR + "18" }]}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name={starred ? "star" : "star-outline"} size={22} color={starred ? STAR_COLOR : colors.text.tertiary} />
+        </TouchableOpacity>
+      </View>
+
+      <View style={[styles.officialDivider, { backgroundColor: colors.border.subtle }]} />
+
+      {/* Date + venue */}
+      <View style={styles.officialDetails}>
+        {dateLabel ? (
+          <View style={styles.officialDetailItem}>
+            <Ionicons name="calendar-outline" size={13} color={colors.text.tertiary} />
+            <Text style={[styles.officialDetailText, { color: colors.text.secondary }]}>
+              {dateLabel}{timeLabel ? `  ·  ${timeLabel}` : ""}
+            </Text>
+          </View>
+        ) : null}
+        <View style={styles.officialDetailItem}>
+          <Ionicons name="location-outline" size={13} color={colors.text.tertiary} />
+          <Text style={[styles.officialDetailText, { color: colors.text.secondary }]} numberOfLines={1}>
+            {tournament.venue}{tournament.city ? `, ${tournament.city}` : ""}
+          </Text>
+        </View>
+      </View>
+
+      {/* Pills */}
+      <View style={styles.officialPillsRow}>
+        {tournament.buy_in != null && (
+          <View style={[styles.officialPill, { backgroundColor: colors.bg.secondary }]}>
+            <Text style={[styles.officialPillText, { color: colors.text.primary }]}>${tournament.buy_in.toLocaleString()} buy-in</Text>
+          </View>
+        )}
+        {tournament.guarantee != null && (
+          <View style={[styles.officialPill, { backgroundColor: "#22C55E18" }]}>
+            <Text style={[styles.officialPillText, { color: "#16A34A" }]}>${tournament.guarantee.toLocaleString()} GTD</Text>
+          </View>
+        )}
+        {tournament.format ? (
+          <View style={[styles.officialPill, { backgroundColor: colors.bg.secondary }]}>
+            <Text style={[styles.officialPillText, { color: colors.text.secondary }]}>{tournament.format}</Text>
+          </View>
+        ) : null}
+        {lateReg ? (
+          <View style={[styles.officialPill, { backgroundColor: "#F9731618" }]}>
+            <Text style={[styles.officialPillText, { color: "#EA580C" }]}>{lateReg}</Text>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function parseStakeDealContent(content: string | null): { pct: string; remaining: string; price: string | null; markup: string | null; buyin: string | null } | null {
+  if (!content || !content.startsWith("🃏 Selling action")) return null;
+  const pctMatch      = content.match(/(\d+)% total/);
+  const remainMatch   = content.match(/(\d+)% remaining/);
+  const priceMatch    = content.match(/\$[\d.]+ per %/);
+  const markupMatch   = content.match(/\(([\d.]+)× markup\)/);
+  const buyinMatch    = content.match(/Buy-in: ([^\n]+)/);
+  if (!pctMatch) return null;
+  return {
+    pct:     pctMatch[1],
+    remaining: remainMatch?.[1] ?? pctMatch[1],
+    price:   priceMatch?.[0] ?? null,
+    markup:  markupMatch?.[1] ?? null,
+    buyin:   buyinMatch?.[1] ?? null,
+  };
+}
+
+function BuyStakesFromFeedModal({
+  visible, onClose, authorId, authorName, tournamentName,
+  remainingPct, pricePerPct, buyerId, colors,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  authorId: string;
+  authorName: string;
+  tournamentName: string;
+  remainingPct: number;
+  pricePerPct: string | null;
+  buyerId: string;
+  colors: any;
+}) {
+  const [dealId,   setDealId]   = useState<string | null>(null);
+  const [percent,  setPercent]  = useState("");
+  const [message,  setMessage]  = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const [fetching, setFetching] = useState(true);
+  const [error,    setError]    = useState<string | null>(null);
+
+  // Fetch the live deal when modal opens
+  useEffect(() => {
+    if (!visible) return;
+    setFetching(true);
+    setError(null);
+    setDealId(null);
+    getOpenDealByAuthorAndTournament(authorId, tournamentName)
+      .then((deal) => {
+        if (deal) setDealId(deal.id);
+        else setError("This stake deal is no longer available.");
+      })
+      .catch(() => setError("Failed to load deal."))
+      .finally(() => setFetching(false));
+  }, [visible, authorId, tournamentName]);
+
+  async function handleBuy() {
+    const pct = parseFloat(percent);
+    if (!dealId)           { setError("Deal not found."); return; }
+    if (isNaN(pct) || pct <= 0) { setError("Enter a valid percentage."); return; }
+    if (pct > remainingPct)     { setError(`Only ${remainingPct}% remaining.`); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      await claimStake(dealId, buyerId, pct, message || undefined);
+      Alert.alert("Claim Submitted", `You claimed ${pct}% of ${authorName}'s action. They'll confirm shortly.`);
+      onClose();
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to claim stake.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const estimatedCost = (() => {
+    if (!pricePerPct) return null;
+    // pricePerPct is a formatted string like "$5.00 per %" — extract the number
+    const match = pricePerPct.match(/[\d.]+/);
+    if (!match) return null;
+    const pct = parseFloat(percent);
+    if (isNaN(pct)) return null;
+    return (parseFloat(match[0]) * pct).toFixed(2);
+  })();
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity style={styles.bsOverlay} activeOpacity={1} onPress={onClose} />
+      <View style={[styles.bsSheet, { backgroundColor: colors.bg.primary }]}>
+        {/* Handle */}
+        <View style={[styles.bsHandle, { backgroundColor: colors.border.default }]} />
+
+        <Text style={[styles.bsTitle, { color: colors.text.primary }]}>Buy Stakes</Text>
+        <Text style={{ fontSize: 13, color: colors.text.secondary, marginBottom: 16 }}>
+          {authorName} · {tournamentName}
+        </Text>
+
+        {fetching ? (
+          <ActivityIndicator color={BRAND} />
+        ) : error && !dealId ? (
+          <Text style={{ color: "#EF4444", textAlign: "center", marginVertical: 16 }}>{error}</Text>
+        ) : (
+          <>
+            <Text style={{ fontSize: 12, color: colors.text.tertiary, marginBottom: 4 }}>
+              Available: {remainingPct}%{pricePerPct ? `  ·  ${pricePerPct}` : ""}
+            </Text>
+
+            <View style={[styles.bsInputWrap, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary }]}>
+              <TextInput
+                style={[styles.bsInput, { color: colors.text.primary }]}
+                placeholder="% to claim (e.g. 5)"
+                placeholderTextColor={colors.text.tertiary}
+                keyboardType="decimal-pad"
+                value={percent}
+                onChangeText={setPercent}
+              />
+              <Text style={{ color: colors.text.tertiary, fontSize: 14 }}>%</Text>
+            </View>
+
+            {estimatedCost && (
+              <Text style={{ fontSize: 12, color: colors.text.secondary, marginBottom: 8 }}>
+                Estimated cost: ${estimatedCost}
+              </Text>
+            )}
+
+            <View style={[styles.bsInputWrap, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary, marginTop: 4 }]}>
+              <TextInput
+                style={[styles.bsInput, { color: colors.text.primary }]}
+                placeholder="Message to seller (optional)"
+                placeholderTextColor={colors.text.tertiary}
+                value={message}
+                onChangeText={setMessage}
+                multiline
+              />
+            </View>
+
+            {error && (
+              <Text style={{ color: "#EF4444", fontSize: 12, marginBottom: 4 }}>{error}</Text>
+            )}
+
+            <TouchableOpacity
+              style={[styles.bsBuyBtn, { backgroundColor: loading ? BRAND + "80" : BRAND }]}
+              onPress={handleBuy}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              {loading
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <Text style={{ fontSize: 15, fontWeight: "700", color: "#fff" }}>Submit Claim</Text>
+              }
+            </TouchableOpacity>
+          </>
         )}
       </View>
     </Modal>
   );
 }
 
-// ─── Community Tournament Card ────────────────────────────────────────────────
-
 function CommunityTournamentCard({
-  post, colors, onToggleSave,
+  post, colors, onToggleSave, currentUserId,
 }: {
   post: SocialPost;
   colors: any;
   onToggleSave: () => void;
+  currentUserId?: string;
 }) {
-  const authorName = post.profile.display_name || post.profile.username || "Player";
-  const dateLabel = post.status
+  const authorName  = post.profile.display_name || post.profile.username || "Player";
+  const isOwnPost   = !!currentUserId && currentUserId === post.profile.id;
+  const [following, setFollowing] = useState<boolean | null>(null);
+  const [buyModal,  setBuyModal]  = useState(false);
+
+  // Check follow state once on mount
+  useEffect(() => {
+    if (!currentUserId || isOwnPost) return;
+    import("@/lib/social").then(({ getFollowingIds }) =>
+      getFollowingIds(currentUserId).then((ids) =>
+        setFollowing(ids.includes(post.profile.id))
+      ).catch(() => setFollowing(false))
+    );
+  }, [currentUserId, post.profile.id, isOwnPost]);
+
+  async function handleFollow() {
+    if (!currentUserId || isOwnPost) return;
+    if (following) {
+      setFollowing(false);
+      await unfollowPlayer(currentUserId, post.profile.id).catch(() => setFollowing(true));
+    } else {
+      setFollowing(true);
+      await followPlayer(currentUserId, post.profile.id).catch(() => setFollowing(false));
+    }
+  }
+
+  const dateLabel  = post.status
     ? new Date(post.status + "T00:00:00").toLocaleDateString("en-AU", { month: "short", day: "numeric" })
     : null;
-  return (
-    <View style={[styles.communityCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-      <View style={[styles.communityBadge, { backgroundColor: "#7C3AED15" }]}>
-        <Ionicons name="trophy" size={18} color="#7C3AED" />
+  const stakeDeal  = parseStakeDealContent(post.content ?? null);
+
+  // ── Shared author header ──
+  const AuthorRow = (
+    <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8, gap: 9 }}>
+      {post.profile.avatar_url ? (
+        <Image source={{ uri: post.profile.avatar_url }} style={{ width: 34, height: 34, borderRadius: 17 }} resizeMode="cover" />
+      ) : (
+        <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: BRAND + "18", alignItems: "center", justifyContent: "center" }}>
+          <Ionicons name="person" size={16} color={BRAND} />
+        </View>
+      )}
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text.primary }}>{authorName}</Text>
+        <Text style={{ fontSize: 11, color: colors.text.tertiary }}>{timeAgo(post.created_at)}</Text>
       </View>
-      <View style={{ flex: 1, gap: 3 }}>
+      {!isOwnPost && (
+        <TouchableOpacity
+          onPress={handleFollow}
+          style={{
+            paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20,
+            backgroundColor: following ? colors.bg.secondary : BRAND,
+            borderWidth: following ? 1 : 0, borderColor: colors.border.default,
+          }}
+          activeOpacity={0.75}
+        >
+          <Text style={{ fontSize: 12, fontWeight: "700", color: following ? colors.text.secondary : "#fff" }}>
+            {following === null ? "Follow" : following ? "Following" : "Follow"}
+          </Text>
+        </TouchableOpacity>
+      )}
+      <TouchableOpacity
+        onPress={onToggleSave}
+        style={[styles.starBtn, post.saved_by_me && { backgroundColor: "#F59E0B20" }]}
+        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+      >
+        <Ionicons name={post.saved_by_me ? "star" : "star-outline"} size={17} color={post.saved_by_me ? "#F59E0B" : colors.text.tertiary} />
+      </TouchableOpacity>
+    </View>
+  );
+
+  /* ── Stake deal post ── */
+  if (stakeDeal) {
+    const sold    = parseInt(stakeDeal.pct) - parseInt(stakeDeal.remaining);
+    const soldPct = Math.round((sold / parseInt(stakeDeal.pct)) * 100);
+    const canBuy  = !isOwnPost && !!currentUserId && parseInt(stakeDeal.remaining) > 0;
+    return (
+      <>
+        <View style={[styles.communityCard, { backgroundColor: colors.bg.primary, borderColor: "#7C3AED30", flexDirection: "column", padding: 0, overflow: "hidden" }]}>
+          {/* Author header */}
+          {AuthorRow}
+          <View style={[styles.officialDivider, { backgroundColor: colors.border.subtle, marginHorizontal: 12 }]} />
+
+          <View style={{ padding: 12, gap: 10 }}>
+            {/* Type label */}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Ionicons name="people" size={13} color="#7C3AED" />
+              <Text style={{ fontSize: 12, fontWeight: "700", color: "#7C3AED" }}>Selling Tournament Action</Text>
+            </View>
+
+            {/* Tournament name */}
+            <Text style={[styles.communityName, { color: colors.text.primary }]}>{post.session_name || "Tournament"}</Text>
+
+            {/* Pills */}
+            <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+              <View style={[styles.officialPill, { backgroundColor: "#7C3AED12" }]}>
+                <Text style={[styles.officialPillText, { color: "#7C3AED" }]}>Selling {stakeDeal.pct}%</Text>
+              </View>
+              <View style={[styles.officialPill, { backgroundColor: parseInt(stakeDeal.remaining) > 0 ? "#22C55E12" : "#EF444412" }]}>
+                <Text style={[styles.officialPillText, { color: parseInt(stakeDeal.remaining) > 0 ? "#16A34A" : "#DC2626" }]}>
+                  {parseInt(stakeDeal.remaining) > 0 ? `${stakeDeal.remaining}% remaining` : "Sold out"}
+                </Text>
+              </View>
+              {stakeDeal.markup && parseFloat(stakeDeal.markup) !== 1 && (
+                <View style={[styles.officialPill, { backgroundColor: "#F9731612" }]}>
+                  <Text style={[styles.officialPillText, { color: "#EA580C" }]}>{stakeDeal.markup}× markup</Text>
+                </View>
+              )}
+              {stakeDeal.buyin && (
+                <View style={[styles.officialPill, { backgroundColor: colors.bg.secondary }]}>
+                  <Text style={[styles.officialPillText, { color: colors.text.secondary }]}>Buy-in: {stakeDeal.buyin}</Text>
+                </View>
+              )}
+              {stakeDeal.price && (
+                <View style={[styles.officialPill, { backgroundColor: colors.bg.secondary }]}>
+                  <Text style={[styles.officialPillText, { color: colors.text.secondary }]}>{stakeDeal.price}</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Progress bar */}
+            <View>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+                <Text style={{ fontSize: 11, color: colors.text.tertiary }}>{sold}% claimed</Text>
+                <Text style={{ fontSize: 11, color: colors.text.tertiary }}>{stakeDeal.remaining}% available</Text>
+              </View>
+              <View style={{ height: 6, borderRadius: 3, backgroundColor: colors.bg.secondary, overflow: "hidden" }}>
+                <View style={{ width: `${Math.min(soldPct, 100)}%`, height: "100%", backgroundColor: "#7C3AED", borderRadius: 3 }} />
+              </View>
+            </View>
+
+            {/* Venue + Buy button */}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              {post.venue ? (
+                <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Ionicons name="location-outline" size={11} color={colors.text.tertiary} />
+                  <Text style={[styles.communityMeta, { color: colors.text.tertiary, flex: 1 }]} numberOfLines={1}>{post.venue}</Text>
+                </View>
+              ) : <View style={{ flex: 1 }} />}
+              {canBuy && (
+                <TouchableOpacity
+                  onPress={() => setBuyModal(true)}
+                  style={{ backgroundColor: "#7C3AED", paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#fff" }}>Buy Stakes</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+
+        {buyModal && currentUserId && (
+          <BuyStakesFromFeedModal
+            visible={buyModal}
+            onClose={() => setBuyModal(false)}
+            authorId={post.profile.id}
+            authorName={authorName}
+            tournamentName={post.session_name ?? ""}
+            remainingPct={parseInt(stakeDeal.remaining)}
+            pricePerPct={stakeDeal.price}
+            buyerId={currentUserId}
+            colors={colors}
+          />
+        )}
+      </>
+    );
+  }
+
+  /* ── Regular tournament post ── */
+  return (
+    <View style={[styles.communityCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, flexDirection: "column", padding: 0, overflow: "hidden" }]}>
+      {post.image_url ? (
+        <Image source={{ uri: post.image_url }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+      ) : null}
+      {AuthorRow}
+      <View style={[styles.officialDivider, { backgroundColor: colors.border.subtle, marginHorizontal: 12 }]} />
+      <View style={{ padding: 12, paddingTop: 10, gap: 4 }}>
         <Text style={[styles.communityName, { color: colors.text.primary }]}>
           {post.session_name || "Tournament"}
         </Text>
@@ -1614,24 +2466,8 @@ function CommunityTournamentCard({
         {post.amount_label ? (
           <Text style={[styles.communityMeta, { color: colors.text.tertiary }]}>Buy-in: {post.amount_label}</Text>
         ) : null}
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
-          <Ionicons name="person-outline" size={11} color={colors.text.tertiary} />
-          <Text style={[styles.communityMeta, { color: colors.text.tertiary }]}>
-            By {authorName} · {timeAgo(post.created_at)}
-          </Text>
-        </View>
-      </View>
-      <View style={{ gap: 8, alignItems: "center" }}>
-        {/* Star/save button */}
-        <TouchableOpacity
-          onPress={onToggleSave}
-          style={[styles.starBtn, post.saved_by_me && { backgroundColor: "#F59E0B20" }]}
-          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-        >
-          <Ionicons name={post.saved_by_me ? "star" : "star-outline"} size={18} color={post.saved_by_me ? "#F59E0B" : colors.text.tertiary} />
-        </TouchableOpacity>
         {post.save_count > 0 && (
-          <Text style={[styles.communityMeta, { color: colors.text.tertiary, fontSize: 10 }]}>{post.save_count}</Text>
+          <Text style={[styles.communityMeta, { color: colors.text.tertiary, marginTop: 2 }]}>{post.save_count} saved</Text>
         )}
       </View>
     </View>
@@ -1648,44 +2484,49 @@ function SavedTournamentCard({ post, colors, onUnsave }: { post: SocialPost; col
       })
     : null;
   return (
-    <View style={[styles.communityCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-      <View style={[styles.communityBadge, { backgroundColor: PURPLE + "15" }]}>
-        <Ionicons name="trophy" size={18} color={PURPLE} />
+    <View style={[styles.communityCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, flexDirection: "column", padding: 0, overflow: "hidden" }]}>
+      {post.image_url ? (
+        <Image source={{ uri: post.image_url }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+      ) : null}
+      <View style={{ flexDirection: "row", alignItems: "flex-start", padding: 12, gap: 10 }}>
+        <View style={[styles.communityBadge, { backgroundColor: PURPLE + "15" }]}>
+          <Ionicons name="trophy" size={18} color={PURPLE} />
+        </View>
+        <View style={{ flex: 1, gap: 3 }}>
+          <Text style={[styles.communityName, { color: colors.text.primary }]}>
+            {post.session_name || "Tournament"}
+          </Text>
+          {dateLabel ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Ionicons name="calendar-outline" size={11} color={BRAND} />
+              <Text style={[styles.communityMeta, { color: BRAND, fontWeight: "600" }]}>{dateLabel}</Text>
+            </View>
+          ) : null}
+          {post.venue ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Ionicons name="location-outline" size={11} color={colors.text.tertiary} />
+              <Text style={[styles.communityMeta, { color: colors.text.tertiary }]}>{post.venue}</Text>
+            </View>
+          ) : null}
+          {post.amount_label ? (
+            <Text style={[styles.communityMeta, { color: colors.text.tertiary }]}>Buy-in: {post.amount_label}</Text>
+          ) : null}
+          <Text style={[styles.communityMeta, { color: colors.text.tertiary, marginTop: 2 }]}>
+            By {authorName}
+          </Text>
+        </View>
+        {onUnsave && (
+          <TouchableOpacity
+            onPress={() => Alert.alert("Remove from schedule?", "This tournament will be removed from your schedule.", [
+              { text: "Cancel", style: "cancel" },
+              { text: "Remove", style: "destructive", onPress: onUnsave },
+            ])}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="trash-outline" size={18} color={colors.text.tertiary} />
+          </TouchableOpacity>
+        )}
       </View>
-      <View style={{ flex: 1, gap: 3 }}>
-        <Text style={[styles.communityName, { color: colors.text.primary }]}>
-          {post.session_name || "Tournament"}
-        </Text>
-        {dateLabel ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-            <Ionicons name="calendar-outline" size={11} color={BRAND} />
-            <Text style={[styles.communityMeta, { color: BRAND, fontWeight: "600" }]}>{dateLabel}</Text>
-          </View>
-        ) : null}
-        {post.venue ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-            <Ionicons name="location-outline" size={11} color={colors.text.tertiary} />
-            <Text style={[styles.communityMeta, { color: colors.text.tertiary }]}>{post.venue}</Text>
-          </View>
-        ) : null}
-        {post.amount_label ? (
-          <Text style={[styles.communityMeta, { color: colors.text.tertiary }]}>Buy-in: {post.amount_label}</Text>
-        ) : null}
-        <Text style={[styles.communityMeta, { color: colors.text.tertiary, marginTop: 2 }]}>
-          By {authorName}
-        </Text>
-      </View>
-      {onUnsave && (
-        <TouchableOpacity
-          onPress={() => Alert.alert("Remove from schedule?", "This tournament will be removed from your schedule.", [
-            { text: "Cancel", style: "cancel" },
-            { text: "Remove", style: "destructive", onPress: onUnsave },
-          ])}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name="trash-outline" size={18} color={colors.text.tertiary} />
-        </TouchableOpacity>
-      )}
     </View>
   );
 }
@@ -1693,60 +2534,169 @@ function SavedTournamentCard({ post, colors, onUnsave }: { post: SocialPost; col
 // ─── Event Card ───────────────────────────────────────────────────────────────
 
 function EventCard({
-  event, colors, onDelete, onShare, onCalendarSync, showDate, past,
+  event, colors, onDelete, onShare, onShareStake, onCalendarSync, onSellStakes, showDate, past,
 }: {
   event: TournamentEvent;
   colors: any;
   onDelete: () => void;
   onShare: () => void;
+  onShareStake: () => void;
   onCalendarSync: () => void;
+  onSellStakes: () => void;
   showDate?: boolean;
   past?: boolean;
 }) {
+  const [showSheet, setShowSheet] = useState(false);
+  const hasImage      = !!event.image_url;
+  const hasActiveDeal = !!event.stake_deal_id;
+
+  function handleAction(action: () => void) {
+    setShowSheet(false);
+    setTimeout(action, 300);
+  }
+
   return (
-    <View style={[
-      styles.eventCard,
-      { backgroundColor: colors.bg.primary, borderColor: colors.border.default },
-      past && { opacity: 0.55 },
-    ]}>
-      <View style={[styles.eventDot, { backgroundColor: past ? colors.text.tertiary : BRAND }]} />
-      <View style={{ flex: 1 }}>
-        {showDate && (
-          <Text style={[styles.eventDate, { color: colors.text.tertiary }]}>
-            {new Date(event.date + "T00:00:00").toLocaleDateString("en-AU", {
-              weekday: "short", month: "short", day: "numeric",
-            })}
-          </Text>
+    <>
+      <View style={[
+        styles.eventCard,
+        { backgroundColor: colors.bg.primary, borderColor: colors.border.default, flexDirection: "column", padding: 0, overflow: "hidden" },
+        past && { opacity: 0.55 },
+      ]}>
+        {hasImage && (
+          <Image source={{ uri: event.image_url }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
         )}
-        <Text style={[styles.eventName, { color: colors.text.primary }]}>{event.name}</Text>
-        {!!event.venue && (
-          <Text style={[styles.eventMeta, { color: colors.text.tertiary }]}>
-            <Ionicons name="location-outline" size={12} color={colors.text.tertiary} /> {event.venue}
-          </Text>
-        )}
-        {!!event.buyin && (
-          <Text style={[styles.eventMeta, { color: colors.text.tertiary }]}>Buy-in: {event.buyin}</Text>
-        )}
-        {!!event.notes && (
-          <Text style={[styles.eventMeta, { color: colors.text.tertiary }]}>{event.notes}</Text>
-        )}
+        <View style={{ flexDirection: "row", alignItems: "flex-start", padding: 14, gap: 10 }}>
+          <View style={[styles.eventDot, { backgroundColor: past ? colors.text.tertiary : BRAND, marginTop: 6 }]} />
+
+          {/* Main content */}
+          <View style={{ flex: 1, gap: 3 }}>
+            {showDate && (
+              <Text style={[styles.eventDate, { color: colors.text.tertiary }]}>
+                {new Date(event.date + "T00:00:00").toLocaleDateString("en-AU", {
+                  weekday: "short", month: "short", day: "numeric",
+                })}
+              </Text>
+            )}
+            <Text style={[styles.eventName, { color: colors.text.primary }]}>{event.name}</Text>
+            {!!event.venue && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <Ionicons name="location-outline" size={12} color={colors.text.tertiary} />
+                <Text style={[styles.eventMeta, { color: colors.text.tertiary, flex: 1 }]} numberOfLines={1}>{event.venue}</Text>
+              </View>
+            )}
+            {!!event.buyin && (
+              <Text style={[styles.eventMeta, { color: colors.text.tertiary }]}>Buy-in: {event.buyin}</Text>
+            )}
+            {!!event.notes && (
+              <Text style={[styles.eventMeta, { color: colors.text.tertiary }]}>{reformat24hInText(event.notes)}</Text>
+            )}
+          </View>
+
+          {/* Right side: Sell Stakes chip + 3-dots */}
+          <View style={{ alignItems: "flex-end", gap: 8 }}>
+            {!past && (
+              <TouchableOpacity
+                onPress={onSellStakes}
+                style={{
+                  flexDirection: "row", alignItems: "center", gap: 4,
+                  paddingHorizontal: 9, paddingVertical: 5,
+                  borderRadius: 20, borderWidth: 1,
+                  backgroundColor: hasActiveDeal ? "#7C3AED14" : "transparent",
+                  borderColor: hasActiveDeal ? "#7C3AED" : "#7C3AED50",
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name={hasActiveDeal ? "trending-up-outline" : "people-outline"} size={12} color="#7C3AED" />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#7C3AED" }}>
+                  {hasActiveDeal ? "Manage Stakes" : "Sell Stakes"}
+                </Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              onPress={() => setShowSheet(true)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={[styles.iconBtn, { backgroundColor: colors.bg.secondary }]}
+            >
+              <Ionicons name="ellipsis-horizontal" size={18} color={colors.text.secondary} />
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
-      <View style={{ gap: 10, alignItems: "center" }}>
-        {!past && (
-          <TouchableOpacity onPress={onShare} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="share-social-outline" size={18} color={BRAND} />
+
+      {/* Bottom sheet */}
+      <Modal visible={showSheet} transparent animationType="slide" onRequestClose={() => setShowSheet(false)}>
+        <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setShowSheet(false)} />
+        <View style={[styles.sheetContainer, { backgroundColor: colors.bg.primary }]}>
+          <View style={[styles.sheetHandle, { backgroundColor: colors.border.default }]} />
+          <Text style={[styles.sheetTitle, { color: colors.text.primary }]} numberOfLines={1}>{event.name}</Text>
+
+          {!past && (
+            <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(onShare)}>
+              <View style={[styles.sheetIcon, { backgroundColor: BRAND + "15" }]}>
+                <Ionicons name="share-social-outline" size={18} color={BRAND} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.sheetRowText, { color: colors.text.primary }]}>Share Tournament</Text>
+                <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 1 }}>Post to the community feed</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {!past && hasActiveDeal && (
+            <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(onShareStake)}>
+              <View style={[styles.sheetIcon, { backgroundColor: "#7C3AED15" }]}>
+                <Ionicons name="people-outline" size={18} color="#7C3AED" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.sheetRowText, { color: colors.text.primary }]}>Advertise Stake Deal</Text>
+                <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 1 }}>Let the community know you're selling action</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {!past && (
+            <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(onCalendarSync)}>
+              <View style={[styles.sheetIcon, { backgroundColor: "#22C55E15" }]}>
+                <Ionicons name="calendar-outline" size={18} color="#22C55E" />
+              </View>
+              <Text style={[styles.sheetRowText, { color: colors.text.primary }]}>Add to Device Calendar</Text>
+            </TouchableOpacity>
+          )}
+
+          {event.source === "directory" ? (
+            <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(onDelete)}>
+              <View style={[styles.sheetIcon, { backgroundColor: "#EF444415" }]}>
+                <Ionicons name="star-outline" size={18} color="#EF4444" />
+              </View>
+              <Text style={[styles.sheetRowText, { color: "#EF4444" }]}>Remove from Schedule</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.sheetRow} onPress={() => {
+              setShowSheet(false);
+              setTimeout(() => {
+                Alert.alert(
+                  "Delete Tournament",
+                  `Are you sure you want to delete "${event.name}"? This cannot be undone.`,
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    { text: "Delete", style: "destructive", onPress: onDelete },
+                  ]
+                );
+              }, 300);
+            }}>
+              <View style={[styles.sheetIcon, { backgroundColor: "#EF444415" }]}>
+                <Ionicons name="trash-outline" size={18} color="#EF4444" />
+              </View>
+              <Text style={[styles.sheetRowText, { color: "#EF4444" }]}>Delete Tournament</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity style={[styles.sheetCancel, { borderColor: colors.border.default }]} onPress={() => setShowSheet(false)}>
+            <Text style={[styles.sheetCancelText, { color: colors.text.secondary }]}>Cancel</Text>
           </TouchableOpacity>
-        )}
-        {!past && (
-          <TouchableOpacity onPress={onCalendarSync} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="calendar-outline" size={18} color={colors.text.secondary} />
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity onPress={onDelete} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name="trash-outline" size={18} color={colors.text.tertiary} />
-        </TouchableOpacity>
-      </View>
-    </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -1833,7 +2783,6 @@ function ShareTournamentModal({
                 multiline
                 maxLength={300}
                 returnKeyType="done"
-                blurOnSubmit
               />
 
               <View style={[styles.toggleRow, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary }]}>
@@ -1898,6 +2847,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
   },
   addHeaderBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  addCustomBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderRadius: 20, borderWidth: 1,
+  },
+  addCustomBtnText: { fontSize: 12, fontWeight: "600" },
 
   segmented: {
     flexDirection: "row", borderRadius: 12, padding: 3, gap: 2,
@@ -2060,6 +3015,26 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
 
+  // BuyStakesFromFeedModal
+  bsOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)" },
+  bsSheet: {
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 20, paddingBottom: 36, gap: 0,
+  },
+  bsHandle: { width: 36, height: 4, borderRadius: 2, alignSelf: "center", marginBottom: 16 },
+  bsTitle:  { fontSize: 18, fontWeight: "700", marginBottom: 4 },
+  bsInputWrap: {
+    flexDirection: "row", alignItems: "center",
+    borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
+    marginBottom: 8,
+  },
+  bsInput: { flex: 1, fontSize: 15, padding: 0 },
+  bsBuyBtn: {
+    borderRadius: 12, paddingVertical: 14,
+    alignItems: "center", justifyContent: "center",
+    marginTop: 8,
+  },
+
   calLegend: {
     flexDirection: "row", gap: 16,
     marginHorizontal: 16, marginBottom: 14,
@@ -2100,6 +3075,125 @@ const styles = StyleSheet.create({
     borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12,
   },
   eliteTeaserText: { flex: 1, fontSize: 12, lineHeight: 18 },
+
+  // Event card bottom sheet
+  sheetOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
+  sheetContainer: {
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingHorizontal: 16, paddingBottom: 32, paddingTop: 12,
+  },
+  sheetHandle: {
+    width: 36, height: 4, borderRadius: 2,
+    alignSelf: "center", marginBottom: 16,
+  },
+  sheetTitle: { fontSize: 15, fontWeight: "700", marginBottom: 16, paddingHorizontal: 4 },
+  sheetRow: {
+    flexDirection: "row", alignItems: "center", gap: 14,
+    paddingVertical: 14, borderRadius: 12,
+  },
+  sheetIcon: {
+    width: 38, height: 38, borderRadius: 10,
+    alignItems: "center", justifyContent: "center",
+  },
+  sheetRowText: { fontSize: 15, fontWeight: "500" },
+  sheetCancel: {
+    marginTop: 8, paddingVertical: 14, borderRadius: 14,
+    alignItems: "center", borderWidth: 1,
+  },
+  sheetCancelText: { fontSize: 15, fontWeight: "600" },
+
+  // Official tournaments tab
+  searchRow: {
+    paddingHorizontal: 16, paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  searchBox: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    borderRadius: 12, borderWidth: 1,
+    paddingHorizontal: 12, paddingVertical: 9,
+  },
+  searchInput: { flex: 1, fontSize: 14 },
+  stateChipsScroll: { borderBottomWidth: StyleSheet.hairlineWidth, flexGrow: 0, flexShrink: 0, height: 46 },
+  stateChipsRow: { paddingHorizontal: 16, paddingVertical: 7, alignItems: "center", gap: 8, flexDirection: "row" },
+  stateChip: {
+    paddingHorizontal: 14, paddingVertical: 6,
+    borderRadius: 20, borderWidth: 1,
+  },
+  stateChipText: { fontSize: 13, fontWeight: "600" },
+  sectionLabel: { fontSize: 11, fontWeight: "700", letterSpacing: 0.6 },
+
+  // Schedule view toggle pill
+  calViewToggle: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 5, alignSelf: "center",
+    marginVertical: 10, paddingHorizontal: 14, paddingVertical: 6,
+    borderRadius: 20, borderWidth: 1,
+  },
+  calViewToggleText: { fontSize: 12, fontWeight: "600" },
+
+  // View toggle row
+  calSegmentWrap: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  calSegmentText: { fontSize: 14, fontWeight: "500" },
+
+  // Calendar grid
+  calNav: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 20, paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  calNavTitle: { fontSize: 15, fontWeight: "700" },
+  calDayRow: { flexDirection: "row", paddingHorizontal: 4, paddingVertical: 4 },
+  calDayLabel: { flex: 1, textAlign: "center", fontSize: 10, fontWeight: "600" },
+  calGrid: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 4, paddingBottom: 4 },
+  calWeekRow: { flexDirection: "row" },
+  calCell: { flex: 1, aspectRatio: 1, alignItems: "center", justifyContent: "center" },
+  calCellInner: {
+    width: 26, height: 26, borderRadius: 13,
+    alignItems: "center", justifyContent: "center",
+  },
+  calCellNum: { fontSize: 12 },
+  calDot: { width: 3, height: 3, borderRadius: 1.5, marginTop: 1 },
+  calNoEvents: { textAlign: "center", marginTop: 24, fontSize: 13 },
+
+  seriesCard: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    borderRadius: 14, borderWidth: 1,
+    marginHorizontal: 16, padding: 14,
+  },
+  seriesCardLogo: { width: 56, height: 56, borderRadius: 12 },
+
+  officialCard: {
+    borderRadius: 14, borderWidth: 1,
+    marginHorizontal: 16, overflow: "hidden",
+  },
+  officialCardTop: {
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 14, paddingTop: 14, paddingBottom: 10, gap: 10,
+  },
+  seriesLogo: { width: 44, height: 44, borderRadius: 10 },
+  seriesLogoPlaceholder: {
+    width: 44, height: 44, borderRadius: 10,
+    alignItems: "center", justifyContent: "center",
+  },
+  officialSeries: { fontSize: 11, fontWeight: "700", marginBottom: 2, textTransform: "uppercase" as const, letterSpacing: 0.4 },
+  officialName: { fontSize: 15, fontWeight: "700", lineHeight: 20 },
+  officialStarBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: "center", justifyContent: "center",
+  },
+  officialDivider: { height: StyleSheet.hairlineWidth, marginHorizontal: 14 },
+  officialDetails: { paddingHorizontal: 14, paddingVertical: 10, gap: 6 },
+  officialDetailItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+  officialDetailText: { fontSize: 13, flex: 1 },
+  officialPillsRow: { flexDirection: "row", gap: 6, flexWrap: "wrap", paddingHorizontal: 14, paddingBottom: 12 },
+  officialPill: {
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+  },
+  officialPillText: { fontSize: 11, fontWeight: "600" },
 });
 
 // Settings modal styles
@@ -2194,6 +3288,7 @@ const addStyles = StyleSheet.create({
   },
   imagePickerLabel: { fontSize: 14, fontWeight: "600" },
   imagePickerSub: { fontSize: 12 },
+  imageHint: { fontSize: 11, textAlign: "center", marginTop: 6, marginHorizontal: 16 },
   fieldWrap: {
     flexDirection: "row", alignItems: "center",
     borderRadius: 12, borderWidth: 1, overflow: "hidden",
@@ -2218,6 +3313,22 @@ const addStyles = StyleSheet.create({
     borderRadius: 14, paddingVertical: 16,
   },
   saveBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+
+  // Inline calendar picker
+  calendarSection: {
+    marginHorizontal: 16, marginTop: 16, marginBottom: 8,
+    borderRadius: 14, borderWidth: 1, padding: 14,
+  },
+  pickedDateLabel: { fontSize: 15, fontWeight: "700", textAlign: "center", marginBottom: 12 },
+  calMonthNav: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10,
+  },
+  calMonthLabel: { fontSize: 14, fontWeight: "700" },
+  calDayRow:  { flexDirection: "row", marginBottom: 4 },
+  calDayLabel: { flex: 1, textAlign: "center", fontSize: 11, fontWeight: "600" },
+  calWeekRow: { flexDirection: "row" },
+  calDayCell: { flex: 1, aspectRatio: 1, alignItems: "center", justifyContent: "center" },
+  calDayNum:  { fontSize: 13 },
 });
 
 // Publish tournament modal styles
@@ -2258,58 +3369,16 @@ const pubStyles = StyleSheet.create({
   },
   fieldInputMulti: { height: 100, textAlignVertical: "top" },
   fieldError: { fontSize: 12, color: "#EF4444", marginTop: -6, marginLeft: 4 },
+  entryCard: {
+    borderRadius: 14, borderWidth: 1, padding: 14, marginBottom: 2,
+  },
+  addEntryBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, borderRadius: 12, borderWidth: 1, paddingVertical: 14,
+  },
   publishBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center",
     gap: 8, borderRadius: 14, paddingVertical: 16, marginTop: 8,
   },
   publishBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-
-  // Scan CTA (manual mode)
-  scanCta: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    borderRadius: 14, borderWidth: 1, padding: 14,
-  },
-  scanCtaIcon: {
-    width: 44, height: 44, borderRadius: 12,
-    alignItems: "center", justifyContent: "center",
-  },
-  scanCtaTitle: { fontSize: 14, fontWeight: "700", marginBottom: 2 },
-  scanCtaSub: { fontSize: 12, lineHeight: 17 },
-
-  // Divider between scan CTA and manual form
-  dividerRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth },
-  dividerText: { fontSize: 12, fontWeight: "500" },
-
-  // Scan loading state
-  scanLoadingWrap: {
-    paddingVertical: 60, alignItems: "center", gap: 14,
-  },
-  scanLoadingTitle: { fontSize: 17, fontWeight: "700" },
-  scanLoadingSub: { fontSize: 13, textAlign: "center", lineHeight: 19, maxWidth: 260 },
-
-  // Scan results
-  scanResultsHeader: {
-    flexDirection: "row", alignItems: "center",
-    justifyContent: "space-between", marginBottom: 4,
-  },
-  scanResultsBadge: {
-    flexDirection: "row", alignItems: "center", gap: 5,
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,
-  },
-  scanResultsCount: { fontSize: 13, fontWeight: "700" },
-  scanAgainText: { fontSize: 13, fontWeight: "600" },
-
-  // Scanned tournament row
-  scannedRow: {
-    flexDirection: "row", alignItems: "flex-start", gap: 12,
-    borderRadius: 12, borderWidth: 1.5, padding: 14,
-  },
-  scannedCheck: {
-    width: 22, height: 22, borderRadius: 11, borderWidth: 1.5,
-    alignItems: "center", justifyContent: "center", marginTop: 1,
-  },
-  scannedName: { fontSize: 14, fontWeight: "700", marginBottom: 4 },
-  scannedMeta: { fontSize: 11, fontWeight: "500" },
-  scannedDesc: { fontSize: 11, lineHeight: 16, marginTop: 2 },
 });

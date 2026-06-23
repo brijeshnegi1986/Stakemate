@@ -1,6 +1,6 @@
 import * as SQLite from "expo-sqlite";
 
-const db = SQLite.openDatabaseSync("poker.db");
+export const db = SQLite.openDatabaseSync("poker.db");
 
 export const initDB = () => {
   db.execSync(`
@@ -64,6 +64,9 @@ export const initDB = () => {
       created_at INTEGER NOT NULL
     );
   `);
+  try { db.execSync(`ALTER TABLE tournament_events ADD COLUMN image_url TEXT DEFAULT ''`); } catch {}
+  try { db.execSync(`ALTER TABLE tournament_events ADD COLUMN stake_deal_id TEXT DEFAULT ''`); } catch {}
+  try { db.execSync(`ALTER TABLE tournament_events ADD COLUMN source TEXT DEFAULT 'custom'`); } catch {}
 
   // Settings key-value store
   db.execSync(`
@@ -149,7 +152,7 @@ export const addTournament = (t: {
   date: string;
 }) => {
   const profit = t.payout - t.buyIn;
-  db.runSync(
+  const r = db.runSync(
     `INSERT INTO sessions
        (type, buyIn, cashOut, payout, profit, duration, venue, state,
         tournamentName, entries, position, notes, date, status)
@@ -157,6 +160,7 @@ export const addTournament = (t: {
     [t.buyIn, t.payout, t.payout, profit, t.duration,
      t.venue, t.state, t.tournamentName, t.entries, t.position, t.notes, t.date]
   );
+  return r.lastInsertRowId;
 };
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
@@ -472,14 +476,17 @@ export type TournamentEvent = {
   venue: string;
   buyin: string;
   notes: string;
+  image_url?: string;
+  stake_deal_id?: string;
+  source?: "custom" | "directory";
   created_at: number;
 };
 
 export const addTournamentEvent = (event: Omit<TournamentEvent, "id" | "created_at">): number => {
   const result = db.runSync(
-    `INSERT INTO tournament_events (name, date, venue, buyin, notes, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [event.name, event.date, event.venue, event.buyin, event.notes, Date.now()]
+    `INSERT INTO tournament_events (name, date, venue, buyin, notes, image_url, source, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [event.name, event.date, event.venue, event.buyin, event.notes, event.image_url ?? "", event.source ?? "custom", Date.now()]
   );
   return result.lastInsertRowId;
 };
@@ -489,6 +496,10 @@ export const getTournamentEvents = (): TournamentEvent[] =>
 
 export const deleteTournamentEvent = (id: number): void => {
   db.runSync(`DELETE FROM tournament_events WHERE id = ?`, [id]);
+};
+
+export const setTournamentStakeDeal = (id: number, dealId: string): void => {
+  db.runSync(`UPDATE tournament_events SET stake_deal_id = ? WHERE id = ?`, [dealId, id]);
 };
 
 // Auto-initialize on import so getSetting is always safe to call

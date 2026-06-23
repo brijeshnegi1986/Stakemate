@@ -1,3 +1,4 @@
+import { SellStakesModal } from "@/components/SellStakesModal";
 import { useAuth } from "@/context/AuthContext";
 import {
   addComment,
@@ -7,24 +8,34 @@ import {
   fetchComments,
   fetchFollowingFeed,
   fetchPublicFeed,
+  followPlayer,
   getFollowingIds,
   SocialComment,
   SocialPost,
   SocialProfile,
   timeAgo,
   toggleReaction,
+  unfollowPlayer,
 } from "@/lib/social";
+import {
+  dealStatusColor,
+  dealStatusLabel,
+  fetchPublicStakeDeals,
+  isPublishedStatus,
+  StakeDeal,
+} from "@/lib/stakes";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Animated,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -38,10 +49,12 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const BRAND = "#155DFC";
+const BRAND  = "#155DFC";
+const PURPLE = "#7C3AED";
+const GREEN  = "#22C55E";
 const REACTION_EMOJIS = ["🔥", "💰", "🎉", "👏", "😅", "🤑"];
 
-type Tab = "public" | "following";
+type Tab = "public" | "following" | "stakes";
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
@@ -125,7 +138,11 @@ function ComposeModal({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={resetAndClose}>
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg.primary }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: colors.bg.primary }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 56 : 0}
+      >
 
         {/* ── Nav header ── */}
         <View style={[styles.composeNav, { paddingTop: 16, borderBottomColor: colors.border.default }]}>
@@ -195,7 +212,7 @@ function ComposeModal({
         </ScrollView>
 
         {/* ── Footer toolbar ── */}
-        <View style={[styles.composeToolbar, { borderTopColor: colors.border.default, paddingBottom: insets.bottom + 8 }]}>
+        <View style={[styles.composeToolbar, { borderTopColor: colors.border.default, paddingBottom: Math.max(insets.bottom, 8) }]}>
           <View style={{ flexDirection: "row", gap: 4 }}>
             <TouchableOpacity onPress={handlePickImage} style={[styles.composeToolBtn, { backgroundColor: colors.bg.secondary }]} activeOpacity={0.7}>
               <Ionicons name="image-outline" size={20} color={colors.text.secondary} />
@@ -277,16 +294,26 @@ function CommentsModal({
     ]);
   };
 
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    if (!visible) { setKbHeight(0); return; }
+    const show = Keyboard.addListener("keyboardWillShow", (e) => setKbHeight(e.endCoordinates.height));
+    const hide  = Keyboard.addListener("keyboardWillHide", () => setKbHeight(0));
+    return () => { show.remove(); hide.remove(); };
+  }, [visible]);
+
   const displayName = profile?.display_name || profile?.username || "You";
   const postAuthorName = post?.profile.display_name || post?.profile.username || "Player";
   const postHandle = post?.profile.username ? `@${post.profile.username}` : null;
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={[styles.commentsPage, { backgroundColor: colors.bg.primary }]}>
+      <View
+        style={[styles.commentsPage, { backgroundColor: colors.bg.primary, paddingBottom: kbHeight }]}
+      >
 
         {/* ── Navigation header ── */}
-        <View style={[styles.commentsNavHeader, { paddingTop: insets.top + 10, borderBottomColor: colors.border.default }]}>
+        <View style={[styles.commentsNavHeader, { paddingTop: 14, borderBottomColor: colors.border.default }]}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.commentsBackBtn}>
             <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
           </TouchableOpacity>
@@ -336,6 +363,7 @@ function CommentsModal({
           <FlatList
             data={comments}
             keyExtractor={(c) => c.id}
+            style={{ flex: 1 }}
             contentContainerStyle={{ padding: 16, gap: 16 }}
             keyboardShouldPersistTaps="handled"
             renderItem={({ item: c }) => {
@@ -363,32 +391,30 @@ function CommentsModal({
         )}
 
         {/* ── Comment input bar ── */}
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <View style={[styles.commentsInputBar, { borderTopColor: colors.border.default, paddingBottom: insets.bottom + 10, backgroundColor: colors.bg.primary }]}>
-            <Avatar uri={profile?.avatar_url} size={36} name={displayName} />
-            <TextInput
-              ref={inputRef}
-              value={input}
-              onChangeText={setInput}
-              placeholder="Write a comment"
-              placeholderTextColor={colors.text.disabled}
-              style={[styles.commentsTextInput, { color: colors.text.primary, backgroundColor: colors.bg.secondary }]}
-              returnKeyType="send"
-              onSubmitEditing={handleSend}
-              blurOnSubmit={false}
-            />
-            <TouchableOpacity
-              onPress={handleSend}
-              disabled={!input.trim() || sending}
-              style={[styles.commentsSendBtn, { opacity: !input.trim() || sending ? 0.55 : 1 }]}
-            >
-              {sending
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <Text style={styles.commentsSendBtnText}>Comment</Text>
-              }
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
+        <View style={[styles.commentsInputBar, { borderTopColor: colors.border.default, paddingBottom: kbHeight > 0 ? 8 : Math.max(insets.bottom, 8), backgroundColor: colors.bg.primary }]}>
+          <Avatar uri={profile?.avatar_url} size={36} name={displayName} />
+          <TextInput
+            ref={inputRef}
+            value={input}
+            onChangeText={setInput}
+            placeholder="Write a comment"
+            placeholderTextColor={colors.text.disabled}
+            style={[styles.commentsTextInput, { color: colors.text.primary, backgroundColor: colors.bg.secondary }]}
+            returnKeyType="send"
+            onSubmitEditing={handleSend}
+            blurOnSubmit={false}
+          />
+          <TouchableOpacity
+            onPress={handleSend}
+            disabled={!input.trim() || sending}
+            style={[styles.commentsSendBtn, { opacity: !input.trim() || sending ? 0.55 : 1 }]}
+          >
+            {sending
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Text style={styles.commentsSendBtnText}>Comment</Text>
+            }
+          </TouchableOpacity>
+        </View>
       </View>
     </Modal>
   );
@@ -397,13 +423,16 @@ function CommentsModal({
 // ─── Post card ────────────────────────────────────────────────────────────────
 
 function PostCard({
-  post, currentUserId, onReact, onDelete, onComment,
+  post, currentUserId, isFollowing, onReact, onDelete, onComment, onFollow, onPressProfile,
 }: {
   post: SocialPost;
   currentUserId: string;
+  isFollowing: boolean;
   onReact: (postId: string, emoji: string, reacted: boolean) => void;
   onDelete: (postId: string) => void;
   onComment: (post: SocialPost) => void;
+  onFollow: (userId: string, currently: boolean) => void;
+  onPressProfile: (userId: string) => void;
 }) {
   const { colors } = usePokerTheme();
   const isTournament = post.session_type === "tournament";
@@ -418,22 +447,42 @@ function PostCard({
   function options() {
     Alert.alert("Options", undefined, isOwn
       ? [{ text: "Delete Post", style: "destructive", onPress: () => onDelete(post.id) }, { text: "Cancel", style: "cancel" }]
-      : [{ text: "Report", onPress: () => Alert.alert("Reported", "Thanks for your report.") }, { text: "Cancel", style: "cancel" }]
+      : [{ text: "View Profile", onPress: () => onPressProfile(post.user_id) }, { text: "Report", onPress: () => Alert.alert("Reported", "Thanks for your report.") }, { text: "Cancel", style: "cancel" }]
     );
   }
 
   return (
     <View style={[styles.postCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-      {/* Author row */}
+      {/* Author row — avatar + name are tappable */}
       <View style={styles.postAuthor}>
-        <Avatar uri={post.profile.avatar_url} size={38} name={displayName} />
-        <View style={{ flex: 1 }}>
+        <TouchableOpacity onPress={() => onPressProfile(post.user_id)} activeOpacity={0.7}>
+          <Avatar uri={post.profile.avatar_url} size={38} name={displayName} />
+        </TouchableOpacity>
+        <TouchableOpacity style={{ flex: 1 }} onPress={() => onPressProfile(post.user_id)} activeOpacity={0.7}>
           <Text style={[styles.postAuthorName, { color: colors.text.primary }]}>{displayName}</Text>
           <Text style={[styles.postAuthorSub, { color: colors.text.tertiary }]}>
             {handle ? `${handle} · ` : ""}{timeAgo(post.created_at)}
           </Text>
-        </View>
-        <TouchableOpacity onPress={options} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        </TouchableOpacity>
+        {/* Inline follow pill — only shown if not own post */}
+        {!isOwn && (
+          <TouchableOpacity
+            onPress={() => onFollow(post.user_id, isFollowing)}
+            style={[
+              styles.inlineFollowBtn,
+              isFollowing
+                ? { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }
+                : { backgroundColor: BRAND, borderColor: BRAND },
+            ]}
+            activeOpacity={0.8}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <Text style={[styles.inlineFollowText, { color: isFollowing ? colors.text.secondary : "#fff" }]}>
+              {isFollowing ? "Following" : "+ Follow"}
+            </Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity onPress={options} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ marginLeft: 4 }}>
           <Ionicons name="ellipsis-horizontal" size={18} color={colors.text.tertiary} />
         </TouchableOpacity>
       </View>
@@ -526,6 +575,172 @@ function PostCard({
   );
 }
 
+// ─── Stake deal card ──────────────────────────────────────────────────────────
+
+function StakeDealCard({
+  deal,
+  currentUserId,
+  followingIds,
+  onBuy,
+  onFollow,
+  onPressProfile,
+}: {
+  deal: StakeDeal;
+  currentUserId: string;
+  followingIds: Set<string>;
+  onBuy: (deal: StakeDeal) => void;
+  onFollow: (userId: string, currently: boolean) => void;
+  onPressProfile: (userId: string) => void;
+}) {
+  const { colors } = usePokerTheme();
+  const available    = deal.total_action_selling - deal.action_claimed;
+  const pctSold      = deal.total_action_selling > 0 ? deal.action_claimed / deal.total_action_selling : 0;
+  const statusColor  = dealStatusColor(deal.status);
+  const isOwner      = deal.user_id === currentUserId;
+  const seller       = deal.seller_profile;
+  const sellerName   = seller?.display_name || seller?.username || "Player";
+  const isFollowingSeller = followingIds.has(deal.user_id);
+
+  const daysUntil = deal.tournament_date
+    ? Math.ceil((new Date(deal.tournament_date + "T00:00:00").getTime() - Date.now()) / 86400000)
+    : null;
+
+  return (
+    <View style={[sDealStyles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+
+      {/* Seller strip */}
+      {seller && (
+        <View style={[sDealStyles.sellerStrip, { borderBottomColor: colors.border.subtle, backgroundColor: colors.bg.secondary }]}>
+          <TouchableOpacity
+            style={sDealStyles.sellerLeft}
+            onPress={() => onPressProfile(deal.user_id)}
+            activeOpacity={0.7}
+          >
+            <Avatar uri={seller.avatar_url} size={30} name={sellerName} />
+            <View>
+              <Text style={[sDealStyles.sellerName, { color: colors.text.primary }]}>{sellerName}</Text>
+              {seller.username ? (
+                <Text style={[sDealStyles.sellerHandle, { color: colors.text.tertiary }]}>@{seller.username}</Text>
+              ) : null}
+            </View>
+          </TouchableOpacity>
+          {!isOwner && (
+            <TouchableOpacity
+              onPress={() => onFollow(deal.user_id, isFollowingSeller)}
+              style={[
+                sDealStyles.sellerFollowBtn,
+                isFollowingSeller
+                  ? { backgroundColor: colors.bg.primary, borderColor: colors.border.default }
+                  : { backgroundColor: BRAND, borderColor: BRAND },
+              ]}
+              activeOpacity={0.8}
+            >
+              <Text style={[sDealStyles.sellerFollowText, { color: isFollowingSeller ? colors.text.secondary : "#fff" }]}>
+                {isFollowingSeller ? "Following" : "+ Follow"}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      {/* Header row */}
+      <View style={sDealStyles.header}>
+        <View style={[sDealStyles.iconWrap, { backgroundColor: PURPLE + "15" }]}>
+          <Ionicons name="trophy-outline" size={18} color={PURPLE} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[sDealStyles.tourneyName, { color: colors.text.primary }]} numberOfLines={1}>
+            {deal.tournament_name}
+          </Text>
+          <Text style={[sDealStyles.meta, { color: colors.text.tertiary }]} numberOfLines={1}>
+            {[
+              deal.venue || null,
+              deal.tournament_date ? new Date(deal.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" }) : null,
+            ].filter(Boolean).join(" · ")}
+          </Text>
+        </View>
+        <View style={[sDealStyles.statusPill, { backgroundColor: statusColor + "18" }]}>
+          <Text style={[sDealStyles.statusText, { color: statusColor }]}>{dealStatusLabel(deal.status)}</Text>
+        </View>
+      </View>
+
+      {/* Stats strip */}
+      <View style={[sDealStyles.statsRow, { borderColor: colors.border.subtle }]}>
+        {[
+          { label: "Buy-in",    value: deal.buy_in ? `$${deal.buy_in}` : "—" },
+          { label: "Selling",   value: `${deal.total_action_selling}%` },
+          { label: "Price/1%",  value: deal.price_per_percent ? `$${deal.price_per_percent}` : "—" },
+          { label: "Markup",    value: deal.markup !== 1 ? `${deal.markup}×` : "Face" },
+        ].map((s, i, arr) => (
+          <View key={s.label} style={[sDealStyles.statCell, i < arr.length - 1 && { borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border.subtle }]}>
+            <Text style={[sDealStyles.statValue, { color: colors.text.primary }]}>{s.value}</Text>
+            <Text style={[sDealStyles.statLabel, { color: colors.text.tertiary }]}>{s.label}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* Progress bar */}
+      <View style={sDealStyles.progressSection}>
+        <View style={sDealStyles.progressTrack}>
+          <View style={[sDealStyles.progressFill, { width: `${Math.round(pctSold * 100)}%`, backgroundColor: PURPLE }]} />
+        </View>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
+          <Text style={[sDealStyles.progressLabel, { color: colors.text.tertiary }]}>{Math.round(pctSold * 100)}% sold</Text>
+          <Text style={[sDealStyles.progressLabel, { color: colors.text.tertiary }]}>{available.toFixed(1)}% left</Text>
+        </View>
+      </View>
+
+      {/* Footer */}
+      <View style={[sDealStyles.footer, { borderTopColor: colors.border.subtle }]}>
+        {daysUntil !== null && (
+          <Text style={[sDealStyles.urgency, { color: daysUntil <= 2 ? "#EF4444" : colors.text.tertiary }]}>
+            {daysUntil <= 0 ? "Today" : daysUntil === 1 ? "Tomorrow" : `${daysUntil}d away`}
+          </Text>
+        )}
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          onPress={() => onBuy(deal)}
+          style={[sDealStyles.ctaBtn, { backgroundColor: isOwner ? PURPLE : GREEN }]}
+          activeOpacity={0.85}
+        >
+          <Ionicons name={isOwner ? "settings-outline" : "cash-outline"} size={14} color="#fff" />
+          <Text style={sDealStyles.ctaBtnText}>{isOwner ? "Manage" : "Buy Stake"}</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+const sDealStyles = StyleSheet.create({
+  card:         { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
+
+  sellerStrip:     { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, gap: 8 },
+  sellerLeft:      { flex: 1, flexDirection: "row", alignItems: "center", gap: 8 },
+  sellerName:      { fontSize: 13, fontWeight: "700" },
+  sellerHandle:    { fontSize: 11, marginTop: 1 },
+  sellerFollowBtn: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, borderWidth: 1 },
+  sellerFollowText:{ fontSize: 12, fontWeight: "700" },
+
+  header:       { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, paddingBottom: 10 },
+  iconWrap:     { width: 36, height: 36, borderRadius: 9, alignItems: "center", justifyContent: "center" },
+  tourneyName:  { fontSize: 14, fontWeight: "700" },
+  meta:         { fontSize: 12, marginTop: 1 },
+  statusPill:   { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
+  statusText:   { fontSize: 11, fontWeight: "700" },
+  statsRow:     { flexDirection: "row", borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth },
+  statCell:     { flex: 1, paddingVertical: 10, alignItems: "center", gap: 1 },
+  statValue:    { fontSize: 13, fontWeight: "700" },
+  statLabel:    { fontSize: 10 },
+  progressSection: { paddingHorizontal: 14, paddingVertical: 10 },
+  progressTrack:   { height: 6, borderRadius: 3, backgroundColor: "#E5E7EB", overflow: "hidden" },
+  progressFill:    { height: "100%", borderRadius: 3 },
+  progressLabel:   { fontSize: 11 },
+  footer:       { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingBottom: 12, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, gap: 8 },
+  urgency:      { fontSize: 12, fontWeight: "600" },
+  ctaBtn:       { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
+  ctaBtnText:   { color: "#fff", fontSize: 13, fontWeight: "700" },
+});
+
 // ─── Player card ──────────────────────────────────────────────────────────────
 
 function PlayerCard({ player, following, onToggleFollow }: { player: SocialProfile; following: boolean; onToggleFollow: (id: string, currently: boolean) => void }) {
@@ -586,6 +801,12 @@ export default function SocialScreen() {
   const [followingIds, setFollowingIds]   = useState<Set<string>>(new Set());
   const [composeVisible, setComposeVisible] = useState(false);
   const [commentsPost, setCommentsPost]   = useState<SocialPost | null>(null);
+
+  // ── Stakes tab ───────────────────────────────────────────────────────────
+  const [stakeDeals,        setStakeDeals]        = useState<StakeDeal[]>([]);
+  const [loadingStakes,     setLoadingStakes]     = useState(false);
+  const [refreshingStakes,  setRefreshingStakes]  = useState(false);
+  const [buyModalDeal,      setBuyModalDeal]      = useState<StakeDeal | null>(null);
 
   // ── Animated header ──────────────────────────────────────────────────────
   const headerTranslateY = useRef(new Animated.Value(0)).current;
@@ -660,6 +881,20 @@ export default function SocialScreen() {
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
+  const loadStakes = useCallback(async (silent = false) => {
+    if (!silent) setLoadingStakes(true);
+    try {
+      const deals = await fetchPublicStakeDeals(30);
+      setStakeDeals(deals);
+    } catch { /* ignore */ } finally {
+      setLoadingStakes(false);
+      setRefreshingStakes(false);
+    }
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    if (tab === "stakes") loadStakes();
+  }, [tab, loadStakes]));
 
   const handleReact = async (postId: string, emoji: string, reacted: boolean) => {
     if (!userId) return;
@@ -687,6 +922,33 @@ export default function SocialScreen() {
     try {
       await Share.share({ message: "Join me on Stakemate — the best poker bankroll tracker! https://stakemate.app" });
     } catch { /* cancelled */ }
+  };
+
+  const handlePressProfile = (profileUserId: string) => {
+    router.push({ pathname: "/user-profile", params: { userId: profileUserId } });
+  };
+
+  const handleFollow = async (targetId: string, currently: boolean) => {
+    if (!userId) return;
+    // Optimistic update
+    setFollowingIds((prev) => {
+      const next = new Set(prev);
+      if (currently) next.delete(targetId);
+      else next.add(targetId);
+      return next;
+    });
+    try {
+      if (currently) await unfollowPlayer(userId, targetId);
+      else await followPlayer(userId, targetId);
+    } catch {
+      // rollback
+      setFollowingIds((prev) => {
+        const next = new Set(prev);
+        if (currently) next.add(targetId);
+        else next.delete(targetId);
+        return next;
+      });
+    }
   };
 
 
@@ -722,10 +984,14 @@ export default function SocialScreen() {
 
           {/* Underline tabs */}
           <View style={styles.tabBar}>
-            {([ ["public", "globe", "Public"], ["following", "people", "Following"] ] as const).map(([key, icon, label]) => (
+            {([
+              ["public",    "globe",   "Public"],
+              ["following", "people",  "Following"],
+              ["stakes",    "trending-up", "Stakes"],
+            ] as const).map(([key, icon, label]) => (
               <TouchableOpacity
                 key={key}
-                onPress={() => setTab(key)}
+                onPress={() => setTab(key as Tab)}
                 style={[styles.tabItem, tab === key && styles.tabItemActive]}
                 activeOpacity={0.8}
               >
@@ -745,51 +1011,102 @@ export default function SocialScreen() {
       {/* ── Scrollable content — margin shrinks to 0 when header hides, grows back when header returns ── */}
       <Animated.View style={{ flex: 1, marginTop: contentMarginTop }}>
 
-        {/* Public / Following feed */}
-        <FlatList
-          key={tab}
-          data={posts}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <PostCard
-              post={item}
-              currentUserId={userId}
-              onReact={handleReact}
-              onDelete={handleDelete}
-              onComment={setCommentsPost}
-            />
-          )}
-          onRefresh={() => { setRefreshing(true); loadData(true); }}
-          refreshing={refreshing}
-          onScroll={handleScroll}
-          scrollEventThrottle={16}
-          contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 120 }}
-          ListEmptyComponent={
-            loading ? (
-              <View style={styles.centered}><ActivityIndicator size="large" color={BRAND} /></View>
-            ) : tab === "following" ? (
-              <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
-                <Ionicons name="people-outline" size={44} color={colors.text.tertiary} />
-                <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No posts from people you follow</Text>
-                <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>Follow players to see their sessions here.</Text>
-                <TouchableOpacity onPress={() => setTab("public")} style={[styles.emptyAction, { backgroundColor: BRAND }]}>
-                  <Text style={styles.emptyActionText}>Explore Public Posts</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
-                <Ionicons name="newspaper-outline" size={44} color={colors.text.tertiary} />
-                <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>Nothing here yet</Text>
-                <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>Be the first to post or share a session.</Text>
-                <TouchableOpacity onPress={() => setComposeVisible(true)} style={[styles.emptyAction, { backgroundColor: BRAND }]}>
-                  <Ionicons name="create-outline" size={14} color="#fff" />
-                  <Text style={styles.emptyActionText}>Create Post</Text>
-                </TouchableOpacity>
-              </View>
-            )
-          }
-        />
+        {tab === "stakes" ? (
+          /* ── Stakes marketplace feed ── */
+          <FlatList
+            key="stakes"
+            data={stakeDeals}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <StakeDealCard
+                deal={item}
+                currentUserId={userId}
+                followingIds={followingIds}
+                onBuy={setBuyModalDeal}
+                onFollow={handleFollow}
+                onPressProfile={handlePressProfile}
+              />
+            )}
+            onRefresh={() => { setRefreshingStakes(true); loadStakes(true); }}
+            refreshing={refreshingStakes}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 120 }}
+            ListEmptyComponent={
+              loadingStakes ? (
+                <View style={styles.centered}><ActivityIndicator size="large" color={BRAND} /></View>
+              ) : (
+                <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
+                  <Ionicons name="trending-up-outline" size={44} color={colors.text.tertiary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No active stake deals</Text>
+                  <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>
+                    Players selling action will appear here. Add a tournament to your schedule to sell stakes.
+                  </Text>
+                </View>
+              )
+            }
+          />
+        ) : (
+          /* ── Public / Following post feed ── */
+          <FlatList
+            key={tab}
+            data={posts}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <PostCard
+                post={item}
+                currentUserId={userId}
+                isFollowing={followingIds.has(item.user_id)}
+                onReact={handleReact}
+                onDelete={handleDelete}
+                onComment={setCommentsPost}
+                onFollow={handleFollow}
+                onPressProfile={handlePressProfile}
+              />
+            )}
+            onRefresh={() => { setRefreshing(true); loadData(true); }}
+            refreshing={refreshing}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 120 }}
+            ListEmptyComponent={
+              loading ? (
+                <View style={styles.centered}><ActivityIndicator size="large" color={BRAND} /></View>
+              ) : tab === "following" ? (
+                <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
+                  <Ionicons name="people-outline" size={44} color={colors.text.tertiary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No posts from people you follow</Text>
+                  <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>Follow players to see their sessions here.</Text>
+                  <TouchableOpacity onPress={() => setTab("public")} style={[styles.emptyAction, { backgroundColor: BRAND }]}>
+                    <Text style={styles.emptyActionText}>Explore Public Posts</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
+                  <Ionicons name="newspaper-outline" size={44} color={colors.text.tertiary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>Nothing here yet</Text>
+                  <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>Be the first to post or share a session.</Text>
+                  <TouchableOpacity onPress={() => setComposeVisible(true)} style={[styles.emptyAction, { backgroundColor: BRAND }]}>
+                    <Ionicons name="create-outline" size={14} color="#fff" />
+                    <Text style={styles.emptyActionText}>Create Post</Text>
+                  </TouchableOpacity>
+                </View>
+              )
+            }
+          />
+        )}
       </Animated.View>
+
+      {/* ── Buyer modal (from stakes tab) ── */}
+      {buyModalDeal && (
+        <SellStakesModal
+          visible={!!buyModalDeal}
+          dealId={buyModalDeal.id}
+          userId={userId}
+          onClose={() => setBuyModalDeal(null)}
+          onDealCreated={() => { setBuyModalDeal(null); loadStakes(true); }}
+        />
+      )}
 
       {/* ── Modals ── */}
       <ComposeModal
@@ -853,7 +1170,9 @@ const styles = StyleSheet.create({
 
   // Post card
   postCard: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
-  postAuthor: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, paddingBottom: 10 },
+  postAuthor: { flexDirection: "row", alignItems: "center", gap: 8, padding: 14, paddingBottom: 10 },
+  inlineFollowBtn:  { paddingHorizontal: 11, paddingVertical: 5, borderRadius: 20, borderWidth: 1 },
+  inlineFollowText: { fontSize: 12, fontWeight: "700" },
   postAuthorName: { fontSize: 14, fontWeight: "700" },
   postAuthorSub: { fontSize: 12, marginTop: 1 },
   postContent: { fontSize: 15, lineHeight: 22, paddingHorizontal: 14, paddingBottom: 10 },

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Stakemate",
     "slug": "stakemate",
-    "version": "1.0.2",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "pokerroll",
@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "deploymentTarget": "16.4",
       "bundleIdentifier": "com.stakemate.pokerroll",
-      "buildNumber": "19",
+      "buildNumber": "34",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }

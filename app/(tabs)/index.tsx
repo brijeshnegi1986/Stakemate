@@ -1,12 +1,12 @@
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { NoteEditorModal } from "@/app/(tabs)/notes";
+import { getMyStakeClaims, getMyStakeDeals, MyStakeClaim, StakeDeal } from "@/lib/stakes";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Modal,
+  Animated,
   ScrollView,
   StyleSheet,
   Text,
@@ -16,11 +16,11 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getActiveSession,
-  getNoteHistory,
   getSessions,
   getSetting,
-  NoteEntry,
+  getTournamentEvents,
   Session,
+  TournamentEvent,
 } from "../../db/database";
 
 const BRAND = "#155DFC";
@@ -53,18 +53,36 @@ function fmtDate(dateStr: string): string {
   });
 }
 
+function getGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning,";
+  if (h < 17) return "Good afternoon,";
+  return "Good evening,";
+}
+
+function fmtTourneyDateLabel(dateStr: string): string {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const d = new Date(dateStr + "T00:00:00");
+  if (d.getTime() === today.getTime()) return "Today";
+  if (d.getTime() === tomorrow.getTime()) return "Tomorrow";
+  return d.toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" });
+}
+
 export default function HomeScreen() {
   const { colors } = usePokerTheme();
-  const { profile } = useAuth();
+  const { profile, refreshProfile } = useAuth();
   const insets = useSafeAreaInsets();
 
   const [sessions, setSessions]           = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
-  const [notes, setNotes]                 = useState<NoteEntry[]>([]);
   const [balanceHidden, setBalanceHidden] = useState(false);
   const [currency, setCurrency]           = useState("AUD");
-  const [showAddSheet, setShowAddSheet]   = useState(false);
-  const [noteEditorVisible, setNoteEditorVisible] = useState(false);
+  const [myDeals,  setMyDeals]            = useState<StakeDeal[]>([]);
+  const [myClaims, setMyClaims]           = useState<MyStakeClaim[]>([]);
+  const [upcomingTourneys, setUpcomingTourneys] = useState<TournamentEvent[]>([]);
 
   const meta = CURRENCY_META[currency] ?? CURRENCY_META.AUD;
 
@@ -73,8 +91,20 @@ export default function HomeScreen() {
       setSessions(getSessions() || []);
       setCurrency(getSetting("currency") ?? "AUD");
       setActiveSession(getActiveSession());
-      setNotes(getNoteHistory());
-    }, [])
+      refreshProfile();
+      const todayYMD = new Date().toISOString().split("T")[0];
+      const allEvents = getTournamentEvents();
+      setUpcomingTourneys(allEvents.filter((e) => e.date >= todayYMD).slice(0, 2));
+      const uid = profile?.id;
+      if (uid) {
+        const localEventIds = new Set(getTournamentEvents().map((e) => e.id));
+        getMyStakeDeals(uid).then((deals) => {
+          // filter out deals whose local tournament was deleted
+          setMyDeals(deals.filter((d) => !d.local_tournament_id || localEventIds.has(d.local_tournament_id)));
+        }).catch(() => {});
+        getMyStakeClaims(uid).then(setMyClaims).catch(() => {});
+      }
+    }, [profile?.id])
   );
 
   const totalProfit = useMemo(
@@ -94,7 +124,23 @@ export default function HomeScreen() {
 
   const greetingName = profile?.display_name || profile?.username || profile?.email?.split("@")[0] || null;
   const recentSessions = sessions.slice(0, 5);
-  const recentNotes    = notes.slice(0, 3);
+
+  const activeDeals  = myDeals.filter((d) => ["open", "active", "paused", "filled", "sold_out", "draft"].includes(d.status));
+  const activeClaims = myClaims.filter((c) => c.status !== "rejected" && c.deal?.status !== "cancelled");
+  const hasStakes    = activeDeals.length > 0 || activeClaims.length > 0;
+
+  // Blinking dot for live banner
+  const dotOpacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(dotOpacity, { toValue: 0.2, duration: 700, useNativeDriver: true }),
+        Animated.timing(dotOpacity, { toValue: 1,   duration: 700, useNativeDriver: true }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, []);
 
   const profitIsPositive = totalProfit >= 0;
 
@@ -114,7 +160,7 @@ export default function HomeScreen() {
               tintColor="rgba(255,255,255,0.9)"
             />
             <View>
-              <Text style={styles.topBarGreet}>Good session,</Text>
+              <Text style={styles.topBarGreet}>{getGreeting()}</Text>
               <Text style={styles.topBarName} numberOfLines={1}>
                 {greetingName || "Player"}
               </Text>
@@ -126,7 +172,7 @@ export default function HomeScreen() {
             </TouchableOpacity>
             <TouchableOpacity onPress={() => router.navigate("/(tabs)/profile")} activeOpacity={0.8}>
               {profile?.avatar_url ? (
-                <Image source={{ uri: profile.avatar_url }} style={styles.avatar} contentFit="cover" />
+                <Image source={{ uri: profile.avatar_url }} style={styles.avatar} contentFit="cover" cachePolicy="none" />
               ) : (
                 <View style={styles.avatarPlaceholder}>
                   <Ionicons name="person" size={18} color="#9CA3AF" />
@@ -193,28 +239,28 @@ export default function HomeScreen() {
         <View style={styles.quickActions}>
           <TouchableOpacity
             onPress={() => router.push("/live")}
-            style={[styles.qaBtn, { backgroundColor: BRAND }]}
+            style={[styles.qaBtn, { backgroundColor: "#22C55E" }]}
             activeOpacity={0.85}
           >
             <View style={styles.qaBtnIcon}>
               <Ionicons name="radio-button-on" size={14} color="#fff" />
             </View>
             <View>
-              <Text style={styles.qaBtnTitle}>Start Session</Text>
-              <Text style={styles.qaBtnSub}>Track live</Text>
+              <Text style={styles.qaBtnTitle}>Start Live</Text>
+              <Text style={styles.qaBtnSub}>Track real time</Text>
             </View>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => router.push("/add")}
-            style={[styles.qaBtn, { backgroundColor: colors.bg.primary, borderWidth: 1, borderColor: colors.border.default }]}
+            onPress={() => router.push("/add-session")}
+            style={[styles.qaBtn, { backgroundColor: BRAND }]}
             activeOpacity={0.85}
           >
-            <View style={[styles.qaBtnIcon, { backgroundColor: `${BRAND}18` }]}>
-              <Ionicons name="add" size={14} color={BRAND} />
+            <View style={styles.qaBtnIcon}>
+              <Ionicons name="add" size={14} color="#fff" />
             </View>
             <View>
-              <Text style={[styles.qaBtnTitle, { color: colors.text.primary }]}>Add Result</Text>
-              <Text style={[styles.qaBtnSub, { color: colors.text.tertiary }]}>Log completed</Text>
+              <Text style={styles.qaBtnTitle}>Add Result</Text>
+              <Text style={styles.qaBtnSub}>Log completed</Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -226,7 +272,7 @@ export default function HomeScreen() {
             style={styles.liveBanner}
             activeOpacity={0.85}
           >
-            <View style={styles.liveDot} />
+            <Animated.View style={[styles.liveDot, { opacity: dotOpacity }]} />
             <View style={{ flex: 1 }}>
               <Text style={styles.liveBannerTitle}>
                 {activeSession.type === "tournament"
@@ -237,31 +283,196 @@ export default function HomeScreen() {
                 {meta.symbol}{activeSession.buyIn} buy-in · Tap to resume
               </Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color="#fff" style={{ opacity: 0.7 }} />
+            <Ionicons name="chevron-forward" size={18} color="#22C55E" style={{ opacity: 0.8 }} />
           </TouchableOpacity>
         )}
 
         <View style={styles.body}>
+
+          {/* ── Next Up tournaments ── */}
+          {upcomingTourneys.length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+                  <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: "#8B5CF615", alignItems: "center", justifyContent: "center" }}>
+                    <Ionicons name="trophy-outline" size={13} color="#8B5CF6" />
+                  </View>
+                  <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Next Up</Text>
+                </View>
+                <TouchableOpacity onPress={() => router.navigate("/(tabs)/calendar")}>
+                  <Text style={[styles.seeAll, { color: BRAND }]}>Schedule</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={{ gap: 8 }}>
+                {upcomingTourneys.map((t) => {
+                  const label = fmtTourneyDateLabel(t.date);
+                  const isToday = label === "Today";
+                  const labelColor = isToday ? "#22C55E" : colors.text.tertiary;
+                  const labelBg = isToday ? "#22C55E15" : colors.bg.secondary;
+                  return (
+                    <TouchableOpacity
+                      key={t.id}
+                      onPress={() => router.navigate("/(tabs)/calendar")}
+                      activeOpacity={0.75}
+                      style={[styles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: isToday ? "#22C55E30" : colors.border.default, padding: 0, overflow: "hidden" }]}
+                    >
+                      {t.image_url ? (
+                        <Image
+                          source={{ uri: t.image_url }}
+                          style={{ width: "100%", height: 120 }}
+                          contentFit="cover"
+                        />
+                      ) : null}
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12 }}>
+                        <View style={{ flex: 1, gap: 2 }}>
+                          <Text style={[styles.stakeCardName, { color: colors.text.primary }]} numberOfLines={1}>
+                            {t.name}
+                          </Text>
+                          {t.venue ? (
+                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]} numberOfLines={1}>
+                              {t.venue}
+                            </Text>
+                          ) : null}
+                          {t.buyin ? (
+                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]}>
+                              {t.buyin}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <View style={[styles.stakeStatusPill, { backgroundColor: labelBg }]}>
+                          <Text style={[styles.stakeStatusText, { color: labelColor }]}>{label}</Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          {/* ── Stakes section ── */}
+          {hasStakes && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+                  <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: "#7C3AED15", alignItems: "center", justifyContent: "center" }}>
+                    <Ionicons name="people-outline" size={13} color="#7C3AED" />
+                  </View>
+                  <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Active Staking</Text>
+                </View>
+                <TouchableOpacity onPress={() => router.navigate("/(tabs)/calendar")}>
+                  <Text style={[styles.seeAll, { color: BRAND }]}>Schedule</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Selling */}
+              {activeDeals.length > 0 && (
+                <View style={{ gap: 8 }}>
+                  <Text style={[styles.stakesSubLabel, { color: colors.text.tertiary }]}>SELLING</Text>
+                  {activeDeals.map((deal) => {
+                    const claimedPct  = deal.action_claimed ?? 0;
+                    const totalPct    = deal.total_action_selling;
+                    const progress    = totalPct > 0 ? claimedPct / totalPct : 0;
+                    const isFilled    = deal.status === "filled" || deal.status === "sold_out";
+                    const isDraft     = deal.status === "draft";
+                    const chipColor   = isDraft ? "#6B7280" : isFilled ? "#22C55E" : deal.status === "paused" ? "#F97316" : "#7C3AED";
+                    const chipLabel   = isDraft ? "Draft" : isFilled ? "Filled" : deal.status === "paused" ? "Paused" : deal.status === "closed" ? "Closed" : "Active";
+                    return (
+                      <TouchableOpacity
+                        key={deal.id}
+                        onPress={() => router.navigate("/(tabs)/calendar")}
+                        activeOpacity={0.75}
+                        style={[styles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: "#7C3AED30" }]}
+                      >
+                        <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+                          <View style={[styles.stakeCardIcon, { backgroundColor: "#7C3AED15" }]}>
+                            <Ionicons name="trending-up-outline" size={15} color="#7C3AED" />
+                          </View>
+                          <View style={{ flex: 1, gap: 2 }}>
+                            <Text style={[styles.stakeCardName, { color: colors.text.primary }]} numberOfLines={1}>
+                              {deal.tournament_name}
+                            </Text>
+                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]}>
+                              Selling {totalPct}%
+                              {deal.price_per_percent ? ` · $${deal.price_per_percent}/% ` : ""}
+                              {deal.tournament_date ? ` · ${new Date(deal.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" })}` : ""}
+                            </Text>
+                            {/* Progress bar */}
+                            <View style={[styles.progressTrack, { backgroundColor: colors.border.subtle }]}>
+                              <View style={[styles.progressFill, { width: `${Math.round(progress * 100)}%`, backgroundColor: chipColor }]} />
+                            </View>
+                            <Text style={[styles.stakeCardProgress, { color: chipColor }]}>
+                              {claimedPct.toFixed(0)}% of {totalPct}% claimed
+                            </Text>
+                          </View>
+                          <View style={[styles.stakeStatusPill, { backgroundColor: chipColor + "18" }]}>
+                            <Text style={[styles.stakeStatusText, { color: chipColor }]}>{chipLabel}</Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* Buying */}
+              {activeClaims.length > 0 && (
+                <View style={{ gap: 8, marginTop: activeDeals.length > 0 ? 12 : 0 }}>
+                  <Text style={[styles.stakesSubLabel, { color: colors.text.tertiary }]}>BUYING</Text>
+                  {activeClaims.map((claim) => {
+                    const statusColor =
+                      claim.status === "confirmed" ? "#22C55E" :
+                      claim.status === "pending"   ? "#F97316" : "#8B9AB1";
+                    return (
+                      <TouchableOpacity
+                        key={claim.id}
+                        onPress={() => router.navigate("/(tabs)/social")}
+                        activeOpacity={0.75}
+                        style={[styles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: `${statusColor}30` }]}
+                      >
+                        <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+                          <View style={[styles.stakeCardIcon, { backgroundColor: `${statusColor}15` }]}>
+                            <Ionicons name="hand-left-outline" size={15} color={statusColor} />
+                          </View>
+                          <View style={{ flex: 1, gap: 2 }}>
+                            <Text style={[styles.stakeCardName, { color: colors.text.primary }]} numberOfLines={1}>
+                              {claim.deal?.tournament_name ?? "Tournament"}
+                            </Text>
+                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]}>
+                              {claim.percent_claimed}% piece
+                              {claim.amount_paid != null ? ` · $${claim.amount_paid.toFixed(2)} paid` : ""}
+                              {claim.deal?.tournament_date ? ` · ${new Date(claim.deal.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" })}` : ""}
+                            </Text>
+                          </View>
+                          <View style={[styles.stakeStatusPill, { backgroundColor: `${statusColor}15` }]}>
+                            <Text style={[styles.stakeStatusText, { color: statusColor }]}>
+                              {claim.status === "confirmed" ? "Confirmed" : "Pending"}
+                            </Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          )}
+
           {/* ── Recent Sessions ── */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Recent Sessions</Text>
-              {sessions.length > 5 && (
-                <TouchableOpacity onPress={() => router.navigate("/(tabs)/history")}>
-                  <Text style={[styles.seeAll, { color: BRAND }]}>See all</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity onPress={() => router.navigate("/(tabs)/history")}>
+                <Text style={[styles.seeAll, { color: BRAND }]}>See all</Text>
+              </TouchableOpacity>
             </View>
 
             {recentSessions.length === 0 ? (
-              <TouchableOpacity
-                onPress={() => setShowAddSheet(true)}
-                style={[styles.emptyCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="add-circle-outline" size={36} color={colors.text.tertiary} />
-                <Text style={[styles.emptyText, { color: colors.text.tertiary }]}>No sessions yet. Tap to add your first.</Text>
-              </TouchableOpacity>
+              <View style={[styles.emptyCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                <Ionicons name="bar-chart-outline" size={36} color={colors.text.tertiary} />
+                <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No sessions yet</Text>
+                <Text style={[styles.emptyText, { color: colors.text.tertiary }]}>Use the buttons above to start or log a session.</Text>
+              </View>
             ) : (
               <View style={[styles.listCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
                 {recentSessions.map((item, i) => {
@@ -303,121 +514,8 @@ export default function HomeScreen() {
               </View>
             )}
           </View>
-
-          {/* ── Hand Notes ── */}
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Hand Notes</Text>
-              <TouchableOpacity onPress={() => setNoteEditorVisible(true)}>
-                <Text style={[styles.seeAll, { color: BRAND }]}>+ Add</Text>
-              </TouchableOpacity>
-            </View>
-
-            {recentNotes.length === 0 ? (
-              <TouchableOpacity
-                onPress={() => setNoteEditorVisible(true)}
-                style={[styles.emptyCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="create-outline" size={36} color={colors.text.tertiary} />
-                <Text style={[styles.emptyText, { color: colors.text.tertiary }]}>Log hands to review your play and spot leaks.</Text>
-                <View style={[styles.addNoteBtn, { backgroundColor: BRAND }]}>
-                  <Text style={styles.addNoteBtnText}>Log a Hand</Text>
-                </View>
-              </TouchableOpacity>
-            ) : (
-              <View style={[styles.listCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                {recentNotes.map((note, i) => {
-                  const isEnhanced = !!note.enhanced_notes && note.enhanced_notes !== note.raw_notes;
-                  const isReviewed = !!note.hand_analysis;
-                  return (
-                    <TouchableOpacity
-                      key={note.id}
-                      onPress={() => router.navigate("/(tabs)/notes")}
-                      activeOpacity={0.7}
-                      style={[styles.noteRow, i < recentNotes.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle }]}
-                    >
-                      <View style={[styles.noteIconWrap, { backgroundColor: isReviewed ? "#7c3aed14" : `${BRAND}14` }]}>
-                        <Ionicons
-                          name={isReviewed ? "card-outline" : "document-text-outline"}
-                          size={16}
-                          color={isReviewed ? "#7c3aed" : BRAND}
-                        />
-                      </View>
-                      <View style={{ flex: 1, gap: 3 }}>
-                        <Text style={[styles.noteTitle, { color: colors.text.primary }]} numberOfLines={1}>
-                          {note.title || note.raw_notes?.slice(0, 40) || "Hand note"}
-                        </Text>
-                        {(isEnhanced || isReviewed) && (
-                          <View style={{ flexDirection: "row", gap: 5 }}>
-                            {isReviewed && (
-                              <View style={styles.noteBadge}>
-                                <Ionicons name="sparkles" size={9} color="#7c3aed" />
-                                <Text style={[styles.noteBadgeText, { color: "#7c3aed" }]}>AI Reviewed</Text>
-                              </View>
-                            )}
-                            {isEnhanced && !isReviewed && (
-                              <View style={[styles.noteBadge, { backgroundColor: "#155DFC14" }]}>
-                                <Ionicons name="color-wand-outline" size={9} color={BRAND} />
-                                <Text style={[styles.noteBadgeText, { color: BRAND }]}>AI Enhanced</Text>
-                              </View>
-                            )}
-                          </View>
-                        )}
-                      </View>
-                      <Ionicons name="chevron-forward" size={15} color={colors.text.tertiary} />
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-          </View>
         </View>
       </ScrollView>
-
-      {/* ── Note Editor ── */}
-      <NoteEditorModal
-        key={noteEditorVisible ? "open" : "closed"}
-        visible={noteEditorVisible}
-        initial={null}
-        sessions={sessions}
-        onClose={() => setNoteEditorVisible(false)}
-        onSaved={() => setNotes(getNoteHistory())}
-        colors={colors}
-      />
-
-      {/* ── Add Session Sheet ── */}
-      <Modal visible={showAddSheet} transparent animationType="slide" onRequestClose={() => setShowAddSheet(false)}>
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setShowAddSheet(false)} />
-        <View style={[styles.sheet, { backgroundColor: colors.bg.primary, paddingBottom: insets.bottom + 16 }]}>
-          <View style={[styles.sheetHandle, { backgroundColor: colors.border.default }]} />
-          <Text style={[styles.sheetTitle, { color: colors.text.primary }]}>New Session</Text>
-          <TouchableOpacity
-            onPress={() => { setShowAddSheet(false); setTimeout(() => router.push("/live"), 150); }}
-            activeOpacity={0.85}
-            style={[styles.sheetBtn, { backgroundColor: "#22C55E" }]}
-          >
-            <View style={styles.sheetBtnIcon}><Ionicons name="timer-outline" size={22} color="#fff" /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.sheetBtnTitle}>Start Live Session</Text>
-              <Text style={styles.sheetBtnSub}>Track your session in real time</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.7)" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => { setShowAddSheet(false); setTimeout(() => router.push("/add"), 150); }}
-            activeOpacity={0.85}
-            style={[styles.sheetBtn, { backgroundColor: BRAND }]}
-          >
-            <View style={styles.sheetBtnIcon}><Ionicons name="checkmark-done-outline" size={22} color="#fff" /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.sheetBtnTitle}>Add Completed Session</Text>
-              <Text style={styles.sheetBtnSub}>Log a session you already played</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.7)" />
-          </TouchableOpacity>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -598,26 +696,28 @@ const styles = StyleSheet.create({
     gap: 12,
     marginHorizontal: 16,
     marginTop: 12,
-    backgroundColor: "#16A34A",
+    backgroundColor: "#F0FDF4",
     borderRadius: 14,
     padding: 14,
+    borderWidth: 1.5,
+    borderColor: "#22C55E",
   },
   liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#fff",
-    opacity: 0.9,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: "#22C55E",
   },
   liveBannerTitle: {
-    color: "#fff",
+    color: "#15803D",
     fontSize: 14,
     fontWeight: "700",
   },
   liveBannerSub: {
-    color: "rgba(255,255,255,0.75)",
+    color: "#16A34A",
     fontSize: 12,
     marginTop: 2,
+    opacity: 0.8,
   },
 
   // Body
@@ -654,12 +754,39 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     padding: 28,
     alignItems: "center",
-    gap: 10,
+    gap: 8,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    marginTop: 4,
   },
   emptyText: {
-    fontSize: 14,
+    fontSize: 13,
     textAlign: "center",
-    lineHeight: 20,
+    lineHeight: 19,
+    marginBottom: 4,
+  },
+  emptyActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 8,
+    width: "100%",
+  },
+  emptyBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+  },
+  emptyBtnText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
   },
 
   // Session rows
@@ -691,89 +818,55 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
 
-  // Note rows
-  noteRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    padding: 14,
+  // Stakes section
+  stakesSubLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.6,
   },
-  noteIconWrap: {
+  stakeCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 12,
+  },
+  stakeCardIcon: {
     width: 32,
     height: 32,
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
   },
-  noteTitle: {
+  stakeCardName: {
     fontSize: 14,
-    fontWeight: "500",
-  },
-  noteBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    backgroundColor: "#7c3aed14",
-    borderRadius: 999,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    alignSelf: "flex-start",
-  },
-  noteBadgeText: {
-    fontSize: 10,
     fontWeight: "700",
   },
-  addNoteBtn: {
-    paddingHorizontal: 18,
-    paddingVertical: 9,
-    borderRadius: 20,
-    marginTop: 4,
+  stakeCardMeta: {
+    fontSize: 12,
   },
-  addNoteBtnText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-
-  // Bottom sheet
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-  },
-  sheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-  },
-  sheetHandle: {
-    width: 40,
+  progressTrack: {
     height: 4,
     borderRadius: 2,
-    alignSelf: "center",
-    marginBottom: 20,
+    marginTop: 6,
+    overflow: "hidden",
   },
-  sheetTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    marginBottom: 16,
+  progressFill: {
+    height: 4,
+    borderRadius: 2,
   },
-  sheetBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+  stakeCardProgress: {
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 3,
   },
-  sheetBtnIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
+  stakeStatusPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+    alignSelf: "flex-start",
+    marginTop: 2,
   },
-  sheetBtnTitle: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  sheetBtnSub:   { color: "rgba(255,255,255,0.75)", fontSize: 12, marginTop: 2 },
+  stakeStatusText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
 });

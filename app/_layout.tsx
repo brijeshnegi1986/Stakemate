@@ -41,7 +41,26 @@ function RootLayoutContent() {
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="welcome" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="live" options={{ headerShown: false }} />
+          <Stack.Screen name="live" options={{ presentation: "modal", headerShown: false }} />
+          <Stack.Screen
+            name="add-session"
+            options={{
+              presentation: "modal",
+              title: "Add Completed Session",
+              headerStyle: { backgroundColor: themeColors.bg.primary },
+              headerTintColor: themeColors.text.primary,
+              headerTitleStyle: { fontWeight: "700", fontSize: 17 },
+              headerLeft: () => (
+                <TouchableOpacity
+                  onPress={() => router.back()}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  style={{ paddingRight: 12 }}
+                >
+                  <Ionicons name="chevron-down" size={22} color={themeColors.text.primary} />
+                </TouchableOpacity>
+              ),
+            }}
+          />
           <Stack.Screen
             name="session-detail"
             options={{
@@ -91,8 +110,28 @@ function RootLayoutContent() {
             options={{ presentation: "modal", headerShown: false }}
           />
           <Stack.Screen
+            name="explore"
+            options={{
+              presentation: "modal",
+              title: "Explore Stakemate",
+              headerStyle: { backgroundColor: themeColors.bg.primary },
+              headerTintColor: themeColors.text.primary,
+              headerTitleStyle: { fontWeight: "700", fontSize: 17 },
+              headerLeft: () => (
+                <TouchableOpacity
+                  onPress={() => router.back()}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  style={{ paddingRight: 12 }}
+                >
+                  <Ionicons name="chevron-down" size={22} color={themeColors.text.primary} />
+                </TouchableOpacity>
+              ),
+            }}
+          />
+          <Stack.Screen
             name="settings"
             options={{
+              presentation: "modal",
               title: "Settings",
               headerStyle: { backgroundColor: themeColors.bg.primary },
               headerTintColor: themeColors.text.primary,
@@ -103,10 +142,7 @@ function RootLayoutContent() {
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
                 >
-                  <Ionicons name="arrow-back" size={20} color={themeColors.text.primary} />
-                  <Text style={{ marginLeft: 8, color: themeColors.text.primary, fontWeight: "600", fontSize: 16 }}>
-                    Back
-                  </Text>
+                  <Ionicons name="chevron-down" size={22} color={themeColors.text.primary} />
                 </TouchableOpacity>
               ),
             }}
@@ -114,6 +150,7 @@ function RootLayoutContent() {
           <Stack.Screen
             name="privacy-policy"
             options={{
+              presentation: "modal",
               title: "Privacy Policy",
               headerStyle: { backgroundColor: themeColors.bg.primary },
               headerTintColor: themeColors.text.primary,
@@ -122,12 +159,9 @@ function RootLayoutContent() {
                 <TouchableOpacity
                   onPress={() => router.back()}
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
+                  style={{ paddingRight: 12 }}
                 >
-                  <Ionicons name="arrow-back" size={20} color={themeColors.text.primary} />
-                  <Text style={{ marginLeft: 8, color: themeColors.text.primary, fontWeight: "600", fontSize: 16 }}>
-                    Back
-                  </Text>
+                  <Ionicons name="chevron-down" size={22} color={themeColors.text.primary} />
                 </TouchableOpacity>
               ),
             }}
@@ -135,6 +169,7 @@ function RootLayoutContent() {
           <Stack.Screen
             name="terms"
             options={{
+              presentation: "modal",
               title: "Terms of Service",
               headerStyle: { backgroundColor: themeColors.bg.primary },
               headerTintColor: themeColors.text.primary,
@@ -143,14 +178,18 @@ function RootLayoutContent() {
                 <TouchableOpacity
                   onPress={() => router.back()}
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
+                  style={{ paddingRight: 12 }}
                 >
-                  <Ionicons name="arrow-back" size={20} color={themeColors.text.primary} />
-                  <Text style={{ marginLeft: 8, color: themeColors.text.primary, fontWeight: "600", fontSize: 16 }}>
-                    Back
-                  </Text>
+                  <Ionicons name="chevron-down" size={22} color={themeColors.text.primary} />
                 </TouchableOpacity>
               ),
+            }}
+          />
+          <Stack.Screen
+            name="user-profile"
+            options={{
+              headerShown: false,
+              animation: "slide_from_right",
             }}
           />
           <Stack.Screen
