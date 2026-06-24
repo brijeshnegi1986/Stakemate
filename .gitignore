@@ -42,3 +42,9 @@ app-example
 /ios/Pods
 /ios/build
 /android
+
+# Claude Code
+.claude/worktrees/
+
+# IPA build artifacts
+*.ipa
