@@ -18,7 +18,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -49,6 +49,128 @@ function Avatar({ uri, size, name }: { uri?: string | null; size: number; name?:
         ? <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2 }} contentFit="cover" />
         : <Text style={{ color: BRAND, fontSize: size * 0.38, fontWeight: "800" }}>{initials}</Text>
       }
+    </View>
+  );
+}
+
+// ─── Post row ─────────────────────────────────────────────────────────────────
+
+function PostRow({ post, colors }: { post: SocialPost; colors: any }) {
+  const name = post.profile.display_name || post.profile.username || "Player";
+  const profit = post.amount ?? 0;
+  const profitColor = profit >= 0 ? "#22C55E" : "#EF4444";
+  const isSessionPost = post.session_name != null || post.amount != null;
+
+  return (
+    <View style={[pStyles.postCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+      <View style={pStyles.postAuthorRow}>
+        <Avatar uri={post.profile.avatar_url} size={34} name={name} />
+        <View style={{ flex: 1 }}>
+          <Text style={[pStyles.postName, { color: colors.text.primary }]}>{name}</Text>
+          <Text style={[pStyles.postTime, { color: colors.text.tertiary }]}>{timeAgo(post.created_at)}</Text>
+        </View>
+      </View>
+
+      {isSessionPost ? (
+        <View style={[pStyles.sessionBlock, { backgroundColor: colors.bg.secondary, borderColor: colors.border.subtle }]}>
+          <View style={[pStyles.sessionIcon, { backgroundColor: post.session_type === "tournament" ? "#8B5CF6" : "#F97316" }]}>
+            <Ionicons name={post.session_type === "tournament" ? "trophy-outline" : "cash-outline"} size={14} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[pStyles.sessionName, { color: colors.text.primary }]} numberOfLines={1}>
+              {post.session_name || (post.session_type === "tournament" ? "Tournament" : "Cash Game")}
+            </Text>
+            {post.venue ? (
+              <Text style={[pStyles.sessionVenue, { color: colors.text.tertiary }]} numberOfLines={1}>{post.venue}</Text>
+            ) : null}
+          </View>
+          {post.amount != null ? (
+            <Text style={[pStyles.profitText, { color: profitColor }]}>
+              {`${profit >= 0 ? "+" : "-"}$${Math.abs(profit).toLocaleString("en-AU")}`}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      {post.content ? (
+        <Text style={[pStyles.postContent, { color: colors.text.primary }]}>{post.content}</Text>
+      ) : null}
+
+      {post.reactions.length > 0 || post.comment_count > 0 ? (
+        <View style={[pStyles.reactRow, { borderTopColor: colors.border.subtle }]}>
+          {post.reactions.map((r) => (
+            <View key={r.emoji} style={[pStyles.reactChip, { backgroundColor: colors.bg.secondary }]}>
+              <Text style={{ fontSize: 12 }}>{r.emoji}</Text>
+              <Text style={[pStyles.reactCount, { color: colors.text.secondary }]}>{r.count}</Text>
+            </View>
+          ))}
+          {post.comment_count > 0 ? (
+            <Text style={[pStyles.commentCount, { color: colors.text.tertiary, marginLeft: "auto" }]}>
+              {post.comment_count} {post.comment_count === 1 ? "comment" : "comments"}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// ─── Stake row ────────────────────────────────────────────────────────────────
+
+function StakeRow({ deal, colors }: { deal: StakeDeal; colors: any }) {
+  const available   = deal.total_action_selling - deal.action_claimed;
+  const pctSold     = deal.total_action_selling > 0 ? deal.action_claimed / deal.total_action_selling : 0;
+  const statusColor = dealStatusColor(deal.status);
+
+  return (
+    <View style={[pStyles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+      <View style={pStyles.stakeHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={[pStyles.stakeName, { color: colors.text.primary }]} numberOfLines={1}>
+            {deal.tournament_name}
+          </Text>
+          <Text style={[pStyles.stakeMeta, { color: colors.text.tertiary }]}>
+            {[
+              deal.venue,
+              deal.tournament_date
+                ? new Date(deal.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" })
+                : null,
+            ].filter(Boolean).join(" · ")}
+          </Text>
+        </View>
+        <View style={[pStyles.statusPill, { backgroundColor: statusColor + "18" }]}>
+          <Text style={[pStyles.statusText, { color: statusColor }]}>{dealStatusLabel(deal.status)}</Text>
+        </View>
+      </View>
+
+      <View style={[pStyles.stakeStats, { borderColor: colors.border.subtle }]}>
+        {[
+          { label: "Selling",  value: `${deal.total_action_selling}%` },
+          { label: "Price/1%", value: deal.price_per_percent ? `$${deal.price_per_percent}` : "—" },
+          { label: "Markup",   value: deal.markup !== 1 ? `${deal.markup}×` : "Face" },
+        ].map((s, i, arr) => (
+          <View
+            key={s.label}
+            style={[
+              pStyles.stakeStatCell,
+              i < arr.length - 1 && { borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border.subtle },
+            ]}
+          >
+            <Text style={[pStyles.stakeStatValue, { color: colors.text.primary }]}>{s.value}</Text>
+            <Text style={[pStyles.stakeStatLabel, { color: colors.text.tertiary }]}>{s.label}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={pStyles.progressSection}>
+        <View style={[pStyles.progressTrack, { backgroundColor: colors.border.subtle }]}>
+          <View style={[pStyles.progressFill, { width: `${Math.round(pctSold * 100)}%`, backgroundColor: PURPLE }]} />
+        </View>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
+          <Text style={[pStyles.progressLabel, { color: colors.text.tertiary }]}>{Math.round(pctSold * 100)}% sold</Text>
+          <Text style={[pStyles.progressLabel, { color: colors.text.tertiary }]}>{available.toFixed(1)}% left</Text>
+        </View>
+      </View>
     </View>
   );
 }
@@ -138,7 +260,6 @@ export default function UserProfileScreen() {
       if (next) await followPlayer(currentUserId, targetUserId);
       else await unfollowPlayer(currentUserId, targetUserId);
     } catch {
-      // rollback on network failure
       setIsFollowing(!next);
       setProfileData((prev) =>
         prev ? { ...prev, follower_count: prev.follower_count + (next ? -1 : 1) } : prev
@@ -177,7 +298,7 @@ export default function UserProfileScreen() {
   if (!profileData) {
     return (
       <View style={[pStyles.fill, { backgroundColor: colors.bg.primary }]}>
-        <View style={[pStyles.navBar, { paddingTop: insets.top + 10, borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary }]}>
+        <View style={[pStyles.navBar, { paddingTop: insets.top + 10, borderBottomColor: colors.border.default }]}>
           <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
           </TouchableOpacity>
@@ -194,11 +315,11 @@ export default function UserProfileScreen() {
   const displayName = profileData.display_name || profileData.username || "Player";
   const handle      = profileData.username ? `@${profileData.username}` : null;
 
-  // ── Shared header rendered inside each FlatList ───────────────────────────
+  // ── Header (stable JSX — not an inline component function) ───────────────
 
-  const ProfileHeader = () => (
+  const listHeader = (
     <View>
-      {/* Avatar + identity */}
+      {/* Profile block */}
       <View style={[pStyles.profileBlock, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
         <View style={pStyles.avatarRow}>
           <Avatar uri={profileData.avatar_url} size={88} name={displayName} />
@@ -214,12 +335,10 @@ export default function UserProfileScreen() {
           </View>
         </View>
 
-        {/* Bio */}
         {profileData.bio ? (
           <Text style={[pStyles.bio, { color: colors.text.secondary }]}>{profileData.bio}</Text>
         ) : null}
 
-        {/* Stats strip */}
         <View style={[pStyles.statsStrip, { borderColor: colors.border.subtle }]}>
           {[
             { value: profileData.follower_count,  label: "Followers" },
@@ -240,7 +359,6 @@ export default function UserProfileScreen() {
           ))}
         </View>
 
-        {/* Hendon Mob link */}
         {profileData.hendon_mob_url ? (
           <View style={{ paddingHorizontal: 16, paddingBottom: 4 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -250,7 +368,6 @@ export default function UserProfileScreen() {
           </View>
         ) : null}
 
-        {/* Action buttons — hidden on own profile */}
         {!isOwnProfile && (
           <View style={pStyles.actions}>
             <TouchableOpacity
@@ -293,7 +410,7 @@ export default function UserProfileScreen() {
         )}
       </View>
 
-      {/* Content tabs */}
+      {/* Tab bar */}
       <View style={[pStyles.tabRow, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
         {(["posts", "stakes"] as const).map((t) => (
           <TouchableOpacity
@@ -303,7 +420,9 @@ export default function UserProfileScreen() {
             activeOpacity={0.7}
           >
             <Ionicons
-              name={t === "posts" ? (tab === t ? "newspaper" : "newspaper-outline") : (tab === t ? "trending-up" : "trending-up-outline")}
+              name={t === "posts"
+                ? (tab === t ? "newspaper" : "newspaper-outline")
+                : (tab === t ? "trending-up" : "trending-up-outline")}
               size={15}
               color={tab === t ? BRAND : colors.text.tertiary}
             />
@@ -316,194 +435,55 @@ export default function UserProfileScreen() {
     </View>
   );
 
-  // ── Nav bar (fixed above FlatList) ────────────────────────────────────────
+  const listData: (SocialPost | StakeDeal)[] = tab === "posts" ? posts : stakes;
 
-  const NavBar = () => (
-    <View style={[pStyles.navBar, { paddingTop: insets.top + 10, backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
-      <TouchableOpacity
-        onPress={() => router.back()}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        style={{ paddingRight: 8 }}
-      >
-        <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
-      </TouchableOpacity>
-      <Text style={[pStyles.navTitle, { color: colors.text.primary }]} numberOfLines={1}>
-        {displayName}
-      </Text>
-      <TouchableOpacity onPress={handleShare} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-        <Ionicons name="share-outline" size={20} color={colors.text.secondary} />
-      </TouchableOpacity>
+  const emptyComponent = loadingContent ? (
+    <View style={pStyles.emptyState}><ActivityIndicator color={BRAND} /></View>
+  ) : tab === "posts" ? (
+    <View style={pStyles.emptyState}>
+      <Ionicons name="newspaper-outline" size={40} color={colors.text.tertiary} />
+      <Text style={[pStyles.emptyText, { color: colors.text.tertiary }]}>No posts yet</Text>
+    </View>
+  ) : (
+    <View style={pStyles.emptyState}>
+      <Ionicons name="trending-up-outline" size={40} color={colors.text.tertiary} />
+      <Text style={[pStyles.emptyText, { color: colors.text.tertiary }]}>No active stakes</Text>
     </View>
   );
 
-  // ── Posts tab ─────────────────────────────────────────────────────────────
-
-  if (tab === "posts") {
-    return (
-      <View style={[pStyles.fill, { backgroundColor: colors.bg.secondary }]}>
-        <NavBar />
-        <FlatList
-          data={posts}
-          keyExtractor={(p) => p.id}
-          ListHeaderComponent={<ProfileHeader />}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BRAND} />}
-          contentContainerStyle={{ gap: 0, paddingBottom: 48 }}
-          ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border.subtle }} />}
-          renderItem={({ item: p }) => {
-            const pName = p.profile.display_name || p.profile.username || "Player";
-            const profit = p.amount ?? 0;
-            const profitColor = profit >= 0 ? "#22C55E" : "#EF4444";
-            const isSessionPost = p.session_name != null || p.amount != null;
-
-            return (
-              <View style={[pStyles.postCard, { backgroundColor: colors.bg.primary }]}>
-                {/* Author row */}
-                <View style={pStyles.postAuthorRow}>
-                  <Avatar uri={p.profile.avatar_url} size={34} name={pName} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={[pStyles.postName, { color: colors.text.primary }]}>{pName}</Text>
-                    <Text style={[pStyles.postTime, { color: colors.text.tertiary }]}>{timeAgo(p.created_at)}</Text>
-                  </View>
-                </View>
-
-                {/* Session block */}
-                {isSessionPost ? (
-                  <View style={[pStyles.sessionBlock, { backgroundColor: colors.bg.secondary, borderColor: colors.border.subtle }]}>
-                    <View style={[pStyles.sessionIcon, { backgroundColor: p.session_type === "tournament" ? "#8B5CF6" : "#F97316" }]}>
-                      <Ionicons name={p.session_type === "tournament" ? "trophy-outline" : "cash-outline"} size={14} color="#fff" />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[pStyles.sessionName, { color: colors.text.primary }]} numberOfLines={1}>
-                        {p.session_name || (p.session_type === "tournament" ? "Tournament" : "Cash Game")}
-                      </Text>
-                      {p.venue ? (
-                        <Text style={[pStyles.sessionVenue, { color: colors.text.tertiary }]} numberOfLines={1}>{p.venue}</Text>
-                      ) : null}
-                    </View>
-                    <Text style={[pStyles.profitText, { color: profitColor }]}>
-                      {`${profit >= 0 ? "+" : "-"}$${Math.abs(profit).toLocaleString("en-AU")}`}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {/* Text content */}
-                {p.content ? (
-                  <Text style={[pStyles.postContent, { color: colors.text.primary }]}>{p.content}</Text>
-                ) : null}
-
-                {/* Reaction strip */}
-                {p.reactions.length > 0 || p.comment_count > 0 ? (
-                  <View style={[pStyles.reactRow, { borderTopColor: colors.border.subtle }]}>
-                    {p.reactions.map((r) => (
-                      <View key={r.emoji} style={[pStyles.reactChip, { backgroundColor: colors.bg.secondary }]}>
-                        <Text style={{ fontSize: 12 }}>{r.emoji}</Text>
-                        <Text style={[pStyles.reactCount, { color: colors.text.secondary }]}>{r.count}</Text>
-                      </View>
-                    ))}
-                    {p.comment_count > 0 ? (
-                      <Text style={[pStyles.commentCount, { color: colors.text.tertiary, marginLeft: "auto" }]}>
-                        {p.comment_count} {p.comment_count === 1 ? "comment" : "comments"}
-                      </Text>
-                    ) : null}
-                  </View>
-                ) : null}
-              </View>
-            );
-          }}
-          ListEmptyComponent={
-            loadingContent ? (
-              <View style={pStyles.emptyState}><ActivityIndicator color={BRAND} /></View>
-            ) : (
-              <View style={pStyles.emptyState}>
-                <Ionicons name="newspaper-outline" size={40} color={colors.text.tertiary} />
-                <Text style={[pStyles.emptyText, { color: colors.text.tertiary }]}>No posts yet</Text>
-              </View>
-            )
-          }
-        />
-      </View>
-    );
-  }
-
-  // ── Stakes tab ────────────────────────────────────────────────────────────
-
   return (
     <View style={[pStyles.fill, { backgroundColor: colors.bg.secondary }]}>
-      <NavBar />
+      {/* Nav bar — stable, rendered once */}
+      <View style={[pStyles.navBar, { paddingTop: insets.top + 10, backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={{ paddingRight: 8 }}
+        >
+          <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
+        </TouchableOpacity>
+        <Text style={[pStyles.navTitle, { color: colors.text.primary }]} numberOfLines={1}>
+          {displayName}
+        </Text>
+        <TouchableOpacity onPress={handleShare} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="share-outline" size={20} color={colors.text.secondary} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Single FlatList — key changes on tab switch to scroll back to top */}
       <FlatList
-        data={stakes}
-        keyExtractor={(s) => s.id}
-        ListHeaderComponent={<ProfileHeader />}
+        key={tab}
+        data={listData}
+        keyExtractor={(item) => (item as any).id}
+        ListHeaderComponent={listHeader}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={BRAND} />}
-        contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: 48 }}
-        renderItem={({ item: deal }) => {
-          const available  = deal.total_action_selling - deal.action_claimed;
-          const pctSold    = deal.total_action_selling > 0 ? deal.action_claimed / deal.total_action_selling : 0;
-          const statusColor = dealStatusColor(deal.status);
-
-          return (
-            <View style={[pStyles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-              {/* Header */}
-              <View style={pStyles.stakeHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[pStyles.stakeName, { color: colors.text.primary }]} numberOfLines={1}>
-                    {deal.tournament_name}
-                  </Text>
-                  <Text style={[pStyles.stakeMeta, { color: colors.text.tertiary }]}>
-                    {[deal.venue, deal.tournament_date
-                      ? new Date(deal.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" })
-                      : null
-                    ].filter(Boolean).join(" · ")}
-                  </Text>
-                </View>
-                <View style={[pStyles.statusPill, { backgroundColor: statusColor + "18" }]}>
-                  <Text style={[pStyles.statusText, { color: statusColor }]}>{dealStatusLabel(deal.status)}</Text>
-                </View>
-              </View>
-
-              {/* Stats */}
-              <View style={[pStyles.stakeStats, { borderColor: colors.border.subtle }]}>
-                {[
-                  { label: "Selling",  value: `${deal.total_action_selling}%` },
-                  { label: "Price/1%", value: deal.price_per_percent ? `$${deal.price_per_percent}` : "—" },
-                  { label: "Markup",   value: deal.markup !== 1 ? `${deal.markup}×` : "Face" },
-                ].map((s, i, arr) => (
-                  <View
-                    key={s.label}
-                    style={[
-                      pStyles.stakeStatCell,
-                      i < arr.length - 1 && { borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border.subtle },
-                    ]}
-                  >
-                    <Text style={[pStyles.stakeStatValue, { color: colors.text.primary }]}>{s.value}</Text>
-                    <Text style={[pStyles.stakeStatLabel, { color: colors.text.tertiary }]}>{s.label}</Text>
-                  </View>
-                ))}
-              </View>
-
-              {/* Progress */}
-              <View style={pStyles.progressSection}>
-                <View style={[pStyles.progressTrack, { backgroundColor: colors.border.subtle }]}>
-                  <View style={[pStyles.progressFill, { width: `${Math.round(pctSold * 100)}%`, backgroundColor: PURPLE }]} />
-                </View>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
-                  <Text style={[pStyles.progressLabel, { color: colors.text.tertiary }]}>{Math.round(pctSold * 100)}% sold</Text>
-                  <Text style={[pStyles.progressLabel, { color: colors.text.tertiary }]}>{available.toFixed(1)}% left</Text>
-                </View>
-              </View>
-            </View>
-          );
-        }}
-        ListEmptyComponent={
-          loadingContent ? (
-            <View style={pStyles.emptyState}><ActivityIndicator color={BRAND} /></View>
-          ) : (
-            <View style={pStyles.emptyState}>
-              <Ionicons name="trending-up-outline" size={40} color={colors.text.tertiary} />
-              <Text style={[pStyles.emptyText, { color: colors.text.tertiary }]}>No active stakes</Text>
-            </View>
-          )
+        contentContainerStyle={pStyles.listContent}
+        renderItem={({ item }) =>
+          tab === "posts"
+            ? <PostRow post={item as SocialPost} colors={colors} />
+            : <StakeRow deal={item as StakeDeal} colors={colors} />
         }
+        ListEmptyComponent={emptyComponent}
       />
     </View>
   );
@@ -524,8 +504,10 @@ const pStyles = StyleSheet.create({
   },
   navTitle: { flex: 1, fontSize: 17, fontWeight: "700", textAlign: "center", marginHorizontal: 8 },
 
+  listContent: { paddingHorizontal: 16, paddingTop: 12, gap: 10, paddingBottom: 48 },
+
   // Profile block
-  profileBlock: { paddingBottom: 4, borderBottomWidth: StyleSheet.hairlineWidth },
+  profileBlock: { marginHorizontal: -16, marginTop: -12, paddingBottom: 4, borderBottomWidth: StyleSheet.hairlineWidth },
   avatarRow:    { flexDirection: "row", alignItems: "flex-start", gap: 16, padding: 20, paddingBottom: 12 },
   displayName:  { fontSize: 20, fontWeight: "800", letterSpacing: -0.3 },
   handle:       { fontSize: 14, fontWeight: "500" },
@@ -555,10 +537,12 @@ const pStyles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
 
-  // Tab row
+  // Tab bar
   tabRow: {
     flexDirection: "row",
     borderBottomWidth: StyleSheet.hairlineWidth,
+    marginHorizontal: -16,
+    marginBottom: 0,
   },
   tabItem: {
     flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
@@ -566,9 +550,12 @@ const pStyles = StyleSheet.create({
   },
   tabLabel: { fontSize: 14, fontWeight: "700" },
 
-  // Post card (inside profile list)
-  postCard:      { backgroundColor: "transparent", paddingHorizontal: 16, paddingVertical: 14 },
-  postAuthorRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
+  // Post card
+  postCard: {
+    borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden",
+    paddingHorizontal: 14, paddingVertical: 14,
+  },
+  postAuthorRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
   postName:      { fontSize: 13, fontWeight: "700" },
   postTime:      { fontSize: 12, marginTop: 1 },
   postContent:   { fontSize: 15, lineHeight: 22, marginBottom: 8 },
@@ -592,14 +579,14 @@ const pStyles = StyleSheet.create({
   commentCount: { fontSize: 12 },
 
   // Stake card
-  stakeCard:     { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
-  stakeHeader:   { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, paddingBottom: 10 },
-  stakeName:     { fontSize: 14, fontWeight: "700" },
-  stakeMeta:     { fontSize: 12, marginTop: 1 },
-  statusPill:    { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
-  statusText:    { fontSize: 11, fontWeight: "700" },
-  stakeStats:    { flexDirection: "row", borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth },
-  stakeStatCell: { flex: 1, paddingVertical: 9, alignItems: "center", gap: 1 },
+  stakeCard:      { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
+  stakeHeader:    { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, paddingBottom: 10 },
+  stakeName:      { fontSize: 14, fontWeight: "700" },
+  stakeMeta:      { fontSize: 12, marginTop: 1 },
+  statusPill:     { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
+  statusText:     { fontSize: 11, fontWeight: "700" },
+  stakeStats:     { flexDirection: "row", borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth },
+  stakeStatCell:  { flex: 1, paddingVertical: 9, alignItems: "center", gap: 1 },
   stakeStatValue: { fontSize: 13, fontWeight: "700" },
   stakeStatLabel: { fontSize: 10 },
   progressSection: { paddingHorizontal: 14, paddingVertical: 10 },

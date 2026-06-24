@@ -1,6 +1,8 @@
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { VenueSelector } from "@/components/VenueSelector";
+import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -8,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -21,10 +24,13 @@ function getAvailableTypes(): SessionType[] {
   return ["cash", "tournament"];
 }
 
+const BRAND = "#155DFC";
+
 export default function AddSessionScreen() {
   const { session } = useLocalSearchParams();
   const editing = session ? JSON.parse(session as string) : null;
 
+  const { user } = useAuth();
   const { colors, spacing, radius, typography, inputTypo } = usePokerTheme();
   const insets = useSafeAreaInsets();
   const cashOutRef = useRef<TextInput>(null);
@@ -163,18 +169,22 @@ export default function AddSessionScreen() {
     profit === null ? "—"
     : `${profit >= 0 ? "+" : "-"}$${Math.abs(profit).toFixed(2)}`;
 
-  // ── Input card style (Figma: bg-tertiary, radius 8, border-default) ──
   const inputCard = {
-    backgroundColor: colors.bg.tertiary,
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.primary,
+    borderRadius: 12,
+    borderWidth: 1.5,
     borderColor: colors.border.default,
     overflow: "hidden" as const,
+    shadowColor: "#000" as const,
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   };
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.bg.secondary, paddingTop: insets.top }}
+      style={{ flex: 1, backgroundColor: colors.bg.primary, paddingTop: insets.top }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={{ flex: 1 }}>
@@ -184,12 +194,28 @@ export default function AddSessionScreen() {
           showsVerticalScrollIndicator={false}
         >
 
-          {/* ── Type toggle (Figma tab style, only when both types enabled) ── */}
+          {/* ── Guest nudge banner ── */}
+          {!user && !editing && (
+            <TouchableOpacity
+              onPress={() => router.push("/welcome")}
+              activeOpacity={0.85}
+              style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginBottom: spacing.lg, backgroundColor: "#FEF3C7", borderRadius: 10, borderWidth: 1, borderColor: "#FDE68A" }}
+            >
+              <Ionicons name="cloud-offline-outline" size={18} color="#D97706" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: "600", color: "#92400E" }}>Sessions won't be backed up</Text>
+                <Text style={{ fontSize: 12, color: "#B45309", marginTop: 1 }}>Sign in to save your data to the cloud</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={14} color="#D97706" />
+            </TouchableOpacity>
+          )}
+
+          {/* ── Type toggle (only when both types enabled) ── */}
           {showTypeToggle && (
             <SegmentedControl
               options={[
-                { value: "cash", label: "Cash Game" },
-                { value: "tournament", label: "Tournament" },
+                { value: "cash",       label: "Cash Game",  icon: "cash-outline"   },
+                { value: "tournament", label: "Tournament",  icon: "trophy-outline" },
               ]}
               selected={type}
               disabled={!!editing}
@@ -240,12 +266,21 @@ export default function AddSessionScreen() {
               </View>
 
               <SectionLabel label="Stakes" colors={colors} spacing={spacing} typography={typography} />
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing["2xl"] }}>
-                {["1/1", "1/2", "2/3", "5/5", "10/10"].map((s) => (
-                  <Chip key={s} label={s} selected={stakes === s}
-                    onPress={() => setStakes(s)}
-                    colors={colors} spacing={spacing} radius={radius} typography={typography} />
-                ))}
+              <View style={{
+                backgroundColor: colors.bg.tertiary,
+                borderRadius: 12,
+                borderWidth: 1.5,
+                borderColor: colors.border.default,
+                padding: spacing.md,
+                marginBottom: spacing["2xl"],
+              }}>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+                  {["1/1", "1/2", "2/3", "5/5", "10/10"].map((s) => (
+                    <Chip key={s} label={s} selected={stakes === s}
+                      onPress={() => setStakes(s)}
+                      colors={colors} spacing={spacing} radius={radius} typography={typography} />
+                  ))}
+                </View>
               </View>
             </>
           )}
@@ -347,13 +382,22 @@ export default function AddSessionScreen() {
 
           {/* ── Duration (shared) ── */}
           <SectionLabel label="Duration" colors={colors} spacing={spacing} typography={typography} />
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing["2xl"] }}>
-            {[1, 2, 3, 4, 5, 6, 8].map((h) => (
-              <Chip key={h} label={h === 8 ? "8h+" : `${h}h`}
-                selected={duration === h}
-                onPress={() => setDuration(duration === h ? null : h)}
-                colors={colors} spacing={spacing} radius={radius} typography={typography} />
-            ))}
+          <View style={{
+            backgroundColor: colors.bg.tertiary,
+            borderRadius: 12,
+            borderWidth: 1.5,
+            borderColor: colors.border.default,
+            padding: spacing.md,
+            marginBottom: spacing["2xl"],
+          }}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+              {[1, 2, 3, 4, 5, 6, 8].map((h) => (
+                <Chip key={h} label={h === 8 ? "8h+" : `${h}h`}
+                  selected={duration === h}
+                  onPress={() => setDuration(duration === h ? null : h)}
+                  colors={colors} spacing={spacing} radius={radius} typography={typography} />
+              ))}
+            </View>
           </View>
 
           {/* ── Venue / State (shared) ── */}

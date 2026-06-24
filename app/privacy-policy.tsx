@@ -93,7 +93,7 @@ export default function PrivacyPolicyScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <StakemateLogo size={48} />
+        <StakemateLogo size={32} variant="blue" />
         <Text style={[styles.title, { color: colors.text.primary }]}>Privacy Policy</Text>
         <Text style={[styles.updated, { color: colors.text.tertiary }]}>
           Last updated: {LAST_UPDATED}

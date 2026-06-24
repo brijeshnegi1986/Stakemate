@@ -27,6 +27,7 @@ export type SocialPost = {
   is_live: boolean;
   content: string | null;
   image_url: string | null;
+  stake_deal_id: string | null;
   created_at: string;
   profile: SocialProfile;
   reactions: ReactionGroup[];
@@ -46,6 +47,7 @@ export type CreatePostInput = {
   content?: string | null;
   image_url?: string | null;
   is_live?: boolean;
+  stake_deal_id?: string | null;
   visibility?: "public" | "friends";
 };
 
@@ -65,7 +67,7 @@ const SAVE_EMOJI = "⭐";
 // Posts query — no profiles join (FK points to auth.users, not public.profiles)
 const POST_QUERY = `
   id, user_id, session_type, session_name, venue, status,
-  amount, amount_label, is_live, content, image_url, created_at,
+  amount, amount_label, is_live, content, image_url, stake_deal_id, created_at,
   social_reactions (emoji, user_id),
   social_comments (id)
 ` as const;
@@ -107,6 +109,7 @@ function normalizePosts(rows: any[], currentUserId: string, profilesMap: Map<str
       is_live: row.is_live,
       content: row.content,
       image_url: row.image_url ?? null,
+      stake_deal_id: row.stake_deal_id ?? null,
       created_at: row.created_at,
       profile: profilesMap.get(row.user_id) ?? { id: row.user_id, username: null, display_name: null, avatar_url: null },
       reactions: Object.entries(grouped).map(([emoji, v]) => ({ emoji, ...v })),
@@ -467,6 +470,44 @@ export async function getUserPosts(
 
   if (error || !data) return [];
   const profilesMap = await fetchProfiles([profileId]);
+  return normalizePosts(data, currentUserId, profilesMap);
+}
+
+// ─── Staked player feed ───────────────────────────────────────────────────────
+
+export async function fetchStakedPlayerFeed(currentUserId: string, limit = 30): Promise<SocialPost[]> {
+  // Get deal IDs where current user has a confirmed claim
+  const { data: claims } = await supabase
+    .from("stake_claims")
+    .select("deal_id")
+    .eq("buyer_id", currentUserId)
+    .eq("status", "confirmed");
+
+  if (!claims || claims.length === 0) return [];
+
+  const dealIds = claims.map((c: any) => c.deal_id as string);
+
+  // Get seller user IDs from those deals
+  const { data: deals } = await supabase
+    .from("stake_deals")
+    .select("user_id")
+    .in("id", dealIds);
+
+  if (!deals || deals.length === 0) return [];
+
+  const sellerIds = [...new Set(deals.map((d: any) => d.user_id as string))];
+
+  // Fetch recent posts from those sellers
+  const { data, error } = await supabase
+    .from("social_posts")
+    .select(POST_QUERY)
+    .in("user_id", sellerIds)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error || !data) return [];
+
+  const profilesMap = await fetchProfiles(sellerIds);
   return normalizePosts(data, currentUserId, profilesMap);
 }
 

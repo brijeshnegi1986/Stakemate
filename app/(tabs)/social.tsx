@@ -1,4 +1,5 @@
 import { SellStakesModal } from "@/components/SellStakesModal";
+import { SignInSheet } from "@/components/SignInSheet";
 import { useAuth } from "@/context/AuthContext";
 import {
   addComment,
@@ -8,6 +9,7 @@ import {
   fetchComments,
   fetchFollowingFeed,
   fetchPublicFeed,
+  fetchStakedPlayerFeed,
   followPlayer,
   getFollowingIds,
   SocialComment,
@@ -21,7 +23,10 @@ import {
   dealStatusColor,
   dealStatusLabel,
   fetchPublicStakeDeals,
+  getMyClaimForDeal,
+  getStakeDealWithSeller,
   isPublishedStatus,
+  StakeClaim,
   StakeDeal,
 } from "@/lib/stakes";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
@@ -54,7 +59,7 @@ const PURPLE = "#7C3AED";
 const GREEN  = "#22C55E";
 const REACTION_EMOJIS = ["🔥", "💰", "🎉", "👏", "😅", "🤑"];
 
-type Tab = "public" | "following" | "stakes";
+type Tab = "public" | "following" | "stakes" | "backed";
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
@@ -423,7 +428,7 @@ function CommentsModal({
 // ─── Post card ────────────────────────────────────────────────────────────────
 
 function PostCard({
-  post, currentUserId, isFollowing, onReact, onDelete, onComment, onFollow, onPressProfile,
+  post, currentUserId, isFollowing, onReact, onDelete, onComment, onFollow, onPressProfile, onBuyStake,
 }: {
   post: SocialPost;
   currentUserId: string;
@@ -433,6 +438,7 @@ function PostCard({
   onComment: (post: SocialPost) => void;
   onFollow: (userId: string, currently: boolean) => void;
   onPressProfile: (userId: string) => void;
+  onBuyStake?: (dealId: string) => void;
 }) {
   const { colors } = usePokerTheme();
   const isTournament = post.session_type === "tournament";
@@ -443,6 +449,13 @@ function PostCard({
   const profitColor = profit >= 0 ? "#22C55E" : "#EF4444";
   const profitStr = `${profit >= 0 ? "+" : "-"}$${Math.abs(profit).toLocaleString("en-AU")}`;
   const isSessionPost = post.session_name != null || post.amount != null;
+
+  const [dealSnap, setDealSnap] = useState<StakeDeal | null>(null);
+  useEffect(() => {
+    if (post.stake_deal_id) {
+      getStakeDealWithSeller(post.stake_deal_id).then((d) => setDealSnap(d)).catch(() => {});
+    }
+  }, [post.stake_deal_id]);
 
   function options() {
     Alert.alert("Options", undefined, isOwn
@@ -492,9 +505,83 @@ function PostCard({
         <Text style={[styles.postContent, { color: colors.text.primary }]}>{post.content}</Text>
       ) : null}
 
-      {/* Session block — only shown when it's a session share */}
-      {isSessionPost ? (
-        <View style={[styles.sessionBlock, { backgroundColor: colors.bg.secondary, borderColor: colors.border.subtle }]}>
+      {/* Stake deal card — shown when this post advertises stakes */}
+      {post.stake_deal_id && dealSnap ? (
+        <TouchableOpacity
+          activeOpacity={0.75}
+          onPress={() => { if (onBuyStake) onBuyStake(post.stake_deal_id!); }}
+          style={{
+            marginTop: 8, borderRadius: 12, overflow: "hidden",
+            borderWidth: 1, borderColor: "#7C3AED40",
+            backgroundColor: colors.bg.secondary,
+          }}
+        >
+          {/* Header row */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12, paddingBottom: 10 }}>
+            <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: "#7C3AED18", alignItems: "center", justifyContent: "center" }}>
+              <Ionicons name="trophy-outline" size={18} color="#7C3AED" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text.primary }} numberOfLines={1}>{dealSnap.tournament_name}</Text>
+              {(dealSnap.venue || dealSnap.tournament_date) ? (
+                <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 1 }} numberOfLines={1}>
+                  {[dealSnap.venue, dealSnap.tournament_date ? new Date(dealSnap.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
+                </Text>
+              ) : null}
+            </View>
+            <View style={{ backgroundColor: isOwn ? "#7C3AED30" : "#7C3AED", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 }}>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: isOwn ? "#7C3AED" : "#fff" }}>
+                {isOwn ? "Manage Deal" : "Buy Stakes"}
+              </Text>
+            </View>
+          </View>
+
+          {/* Stats row */}
+          <View style={{ flexDirection: "row", borderTopWidth: 1, borderTopColor: "#7C3AED20" }}>
+            {[
+              { label: "Buy-in",    value: dealSnap.buy_in ? `$${dealSnap.buy_in.toLocaleString()}` : "—" },
+              { label: "Selling",   value: `${dealSnap.total_action_selling}%` },
+              { label: "Available", value: `${Math.max(0, dealSnap.total_action_selling - dealSnap.action_claimed)}%` },
+              { label: "Price/1%",  value: dealSnap.price_per_percent ? `$${dealSnap.price_per_percent}` : "—" },
+            ].map((stat, i, arr) => (
+              <View
+                key={stat.label}
+                style={{
+                  flex: 1, alignItems: "center", paddingVertical: 10,
+                  borderRightWidth: i < arr.length - 1 ? 1 : 0,
+                  borderRightColor: "#7C3AED20",
+                }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: "700", color: i === 2 ? "#7C3AED" : colors.text.primary }}>{stat.value}</Text>
+                <Text style={{ fontSize: 10, color: colors.text.tertiary, marginTop: 2 }}>{stat.label}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Min piece + markup row */}
+          {(dealSnap.min_piece > 1 || dealSnap.markup !== 1) ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingBottom: 10, paddingTop: 6 }}>
+              {dealSnap.min_piece > 1 ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Ionicons name="layers-outline" size={12} color={colors.text.tertiary} />
+                  <Text style={{ fontSize: 11, color: colors.text.tertiary }}>Min {dealSnap.min_piece}%</Text>
+                </View>
+              ) : null}
+              {dealSnap.markup !== 1 ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Ionicons name="pricetag-outline" size={12} color={colors.text.tertiary} />
+                  <Text style={{ fontSize: 11, color: colors.text.tertiary }}>{dealSnap.markup}× markup</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+        </TouchableOpacity>
+      ) : isSessionPost ? (
+        /* Regular session block (no stake deal) */
+        <TouchableOpacity
+          activeOpacity={1}
+          style={[styles.sessionBlock, { backgroundColor: colors.bg.secondary, borderColor: colors.border.subtle }]}
+        >
           <View style={[styles.sessionIconWrap, { backgroundColor: isTournament ? "#8B5CF6" : "#F97316" }]}>
             <Ionicons name={isTournament ? "trophy-outline" : "cash-outline"} size={16} color="#fff" />
           </View>
@@ -510,13 +597,15 @@ function PostCard({
               </View>
             ) : null}
           </View>
-          <View style={{ alignItems: "flex-end" }}>
-            <Text style={[styles.profitText, { color: profitColor }]}>{profitStr}</Text>
-            {post.amount_label ? (
-              <Text style={[styles.profitLabel, { color: colors.text.tertiary }]}>{post.amount_label}</Text>
-            ) : null}
-          </View>
-        </View>
+          {post.amount != null ? (
+            <View style={{ alignItems: "flex-end", gap: 4 }}>
+              <Text style={[styles.profitText, { color: profitColor }]}>{profitStr}</Text>
+              {post.amount_label ? (
+                <Text style={[styles.profitLabel, { color: colors.text.tertiary }]}>{post.amount_label}</Text>
+              ) : null}
+            </View>
+          ) : null}
+        </TouchableOpacity>
       ) : null}
 
       {/* Caption */}
@@ -581,6 +670,7 @@ function StakeDealCard({
   deal,
   currentUserId,
   followingIds,
+  claimRefreshKey,
   onBuy,
   onFollow,
   onPressProfile,
@@ -588,6 +678,7 @@ function StakeDealCard({
   deal: StakeDeal;
   currentUserId: string;
   followingIds: Set<string>;
+  claimRefreshKey?: number;
   onBuy: (deal: StakeDeal) => void;
   onFollow: (userId: string, currently: boolean) => void;
   onPressProfile: (userId: string) => void;
@@ -600,6 +691,15 @@ function StakeDealCard({
   const seller       = deal.seller_profile;
   const sellerName   = seller?.display_name || seller?.username || "Player";
   const isFollowingSeller = followingIds.has(deal.user_id);
+
+  const [myClaim, setMyClaim] = useState<StakeClaim | null>(null);
+
+  useEffect(() => {
+    if (isOwner || !currentUserId) return;
+    getMyClaimForDeal(deal.id, currentUserId)
+      .then(setMyClaim)
+      .catch(() => {});
+  }, [deal.id, currentUserId, isOwner, claimRefreshKey]);
 
   const daysUntil = deal.tournament_date
     ? Math.ceil((new Date(deal.tournament_date + "T00:00:00").getTime() - Date.now()) / 86400000)
@@ -700,11 +800,42 @@ function StakeDealCard({
         <View style={{ flex: 1 }} />
         <TouchableOpacity
           onPress={() => onBuy(deal)}
-          style={[sDealStyles.ctaBtn, { backgroundColor: isOwner ? PURPLE : GREEN }]}
+          style={[
+            sDealStyles.ctaBtn,
+            {
+              backgroundColor: isOwner
+                ? PURPLE
+                : myClaim?.status === "confirmed"
+                ? "#22C55E"
+                : myClaim?.status === "pending"
+                ? "#F97316"
+                : GREEN,
+            },
+          ]}
           activeOpacity={0.85}
         >
-          <Ionicons name={isOwner ? "settings-outline" : "cash-outline"} size={14} color="#fff" />
-          <Text style={sDealStyles.ctaBtnText}>{isOwner ? "Manage" : "Buy Stake"}</Text>
+          <Ionicons
+            name={
+              isOwner
+                ? "settings-outline"
+                : myClaim?.status === "confirmed"
+                ? "checkmark-circle-outline"
+                : myClaim?.status === "pending"
+                ? "time-outline"
+                : "cash-outline"
+            }
+            size={14}
+            color="#fff"
+          />
+          <Text style={sDealStyles.ctaBtnText}>
+            {isOwner
+              ? "Manage"
+              : myClaim?.status === "confirmed"
+              ? "Confirmed ✓"
+              : myClaim?.status === "pending"
+              ? "Pending..."
+              : "Buy Stake"}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -795,6 +926,7 @@ export default function SocialScreen() {
   const insets = useSafeAreaInsets();
 
   const [tab, setTab]                     = useState<Tab>("public");
+  const [signInSheet, setSignInSheet]     = useState<{ title: string; description: string; icon?: any } | null>(null);
   const [posts, setPosts]                 = useState<SocialPost[]>([]);
   const [loading, setLoading]             = useState(false);
   const [refreshing, setRefreshing]       = useState(false);
@@ -807,21 +939,36 @@ export default function SocialScreen() {
   const [loadingStakes,     setLoadingStakes]     = useState(false);
   const [refreshingStakes,  setRefreshingStakes]  = useState(false);
   const [buyModalDeal,      setBuyModalDeal]      = useState<StakeDeal | null>(null);
+  const [claimRefreshKey,   setClaimRefreshKey]   = useState(0);
+  // deal ID opened from a community post (no full StakeDeal object needed)
+  const [buyDealIdFromPost, setBuyDealIdFromPost] = useState<string | null>(null);
+
+  // ── Backed tab ───────────────────────────────────────────────────────────
+  const [backedPosts,       setBackedPosts]       = useState<SocialPost[]>([]);
+  const [loadingBacked,     setLoadingBacked]     = useState(false);
+  const [refreshingBacked,  setRefreshingBacked]  = useState(false);
 
   // ── Animated header ──────────────────────────────────────────────────────
+  // spacerHeightAnim = the height below the status bar that the title occupies.
+  // When it shrinks to 0, the tab bar slides up to just below the status bar.
+  // Tab bar is in normal document flow (not absolute) so content follows it automatically.
   const headerTranslateY = useRef(new Animated.Value(0)).current;
-  const contentMarginTop = useRef(new Animated.Value(0)).current;
+  const spacerHeightAnim = useRef(new Animated.Value(0)).current;
   const lastScrollY      = useRef(0);
   const headerShown      = useRef(true);
-  const headerHeightRef  = useRef(0);
-  const [headerHeight, setHeaderHeight] = useState(0);
+  const titleHeightRef   = useRef(0);
+  const insetsTopRef     = useRef(insets.top);
+  const [titleHeight, setTitleHeight] = useState(0);
 
-  // Keep contentMarginTop in sync whenever headerHeight is first measured
+  useEffect(() => { insetsTopRef.current = insets.top; }, [insets.top]);
+
+  // Once title height is measured, set the spacer to the correct initial height
   useEffect(() => {
-    if (headerHeight > 0 && headerShown.current) {
-      contentMarginTop.setValue(headerHeight);
+    if (titleHeight > 0 && headerShown.current) {
+      // Spacer = title height minus the safe-area portion (tab bar handles safe-area via paddingTop)
+      spacerHeightAnim.setValue(titleHeight - insetsTopRef.current);
     }
-  }, [headerHeight]);
+  }, [titleHeight]);
 
   const handleScroll = useCallback((event: any) => {
     const y    = event.nativeEvent.contentOffset.y;
@@ -832,11 +979,11 @@ export default function SocialScreen() {
       headerShown.current = false;
       Animated.parallel([
         Animated.timing(headerTranslateY, {
-          toValue: -headerHeightRef.current,
+          toValue: -titleHeightRef.current,
           duration: 220,
           useNativeDriver: true,
         }),
-        Animated.timing(contentMarginTop, {
+        Animated.timing(spacerHeightAnim, {
           toValue: 0,
           duration: 220,
           useNativeDriver: false,
@@ -850,14 +997,14 @@ export default function SocialScreen() {
           duration: 220,
           useNativeDriver: true,
         }),
-        Animated.timing(contentMarginTop, {
-          toValue: headerHeightRef.current,
+        Animated.timing(spacerHeightAnim, {
+          toValue: titleHeightRef.current - insetsTopRef.current,
           duration: 220,
           useNativeDriver: false,
         }),
       ]).start();
     }
-  }, [headerTranslateY, contentMarginTop]);
+  }, [headerTranslateY, spacerHeightAnim]);
 
   const userId = user?.id ?? "";
 
@@ -895,6 +1042,22 @@ export default function SocialScreen() {
   useFocusEffect(useCallback(() => {
     if (tab === "stakes") loadStakes();
   }, [tab, loadStakes]));
+
+  const loadBacked = useCallback(async (silent = false) => {
+    if (!userId) return;
+    if (!silent) setLoadingBacked(true);
+    try {
+      const data = await fetchStakedPlayerFeed(userId);
+      setBackedPosts(data);
+    } catch { /* ignore */ } finally {
+      setLoadingBacked(false);
+      setRefreshingBacked(false);
+    }
+  }, [userId]);
+
+  useFocusEffect(useCallback(() => {
+    if (tab === "backed") loadBacked();
+  }, [tab, loadBacked]));
 
   const handleReact = async (postId: string, emoji: string, reacted: boolean) => {
     if (!userId) return;
@@ -955,17 +1118,16 @@ export default function SocialScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.bg.secondary }]}>
 
-      {/* ── Animated floating header ── */}
+      {/* ── Collapsible title section — absolute, slides up on scroll ── */}
       <Animated.View
         style={[styles.animHeader, { transform: [{ translateY: headerTranslateY }] }]}
         onLayout={(e) => {
           const h = e.nativeEvent.layout.height;
-          headerHeightRef.current = h;
-          setHeaderHeight(h);
+          titleHeightRef.current = h;
+          setTitleHeight(h);
         }}
       >
-        {/* Blue top bar */}
-        <View style={[styles.header, { backgroundColor: BRAND, paddingTop: insets.top + 12 }]}>
+        <View style={[styles.header, { backgroundColor: BRAND, paddingTop: insets.top + 12, paddingBottom: 12 }]}>
           <View style={styles.headerRow}>
             <View>
               <Text style={styles.headerTitle}>Community</Text>
@@ -981,35 +1143,57 @@ export default function SocialScreen() {
               </TouchableOpacity>
             </View>
           </View>
-
-          {/* Underline tabs */}
-          <View style={styles.tabBar}>
-            {([
-              ["public",    "globe",   "Public"],
-              ["following", "people",  "Following"],
-              ["stakes",    "trending-up", "Stakes"],
-            ] as const).map(([key, icon, label]) => (
-              <TouchableOpacity
-                key={key}
-                onPress={() => setTab(key as Tab)}
-                style={[styles.tabItem, tab === key && styles.tabItemActive]}
-                activeOpacity={0.8}
-              >
-                <Ionicons
-                  name={tab === key ? icon as any : `${icon}-outline` as any}
-                  size={15}
-                  color={tab === key ? "#fff" : "rgba(255,255,255,0.55)"}
-                />
-                <Text style={[styles.tabLabel, { color: tab === key ? "#fff" : "rgba(255,255,255,0.55)" }]}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
         </View>
-
       </Animated.View>
 
-      {/* ── Scrollable content — margin shrinks to 0 when header hides, grows back when header returns ── */}
-      <Animated.View style={{ flex: 1, marginTop: contentMarginTop }}>
+      {/* ── Spacer that shrinks when title hides, pushing tab bar up ── */}
+      <Animated.View style={{ height: spacerHeightAnim }} />
+
+      {/* ── Sticky tab bar — in normal flow, always below safe area ── */}
+      <View style={[styles.stickyTabBar, { backgroundColor: BRAND, paddingTop: insets.top }]}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabBar}
+          contentContainerStyle={{ paddingRight: 8 }}
+          bounces={false}
+        >
+          {([
+            ["public",    "globe",        "Public"],
+            ["following", "people",       "Following"],
+            ["stakes",    "trending-up",  "Stakes"],
+            ["backed",    "ribbon",       "Backed"],
+          ] as const).map(([key, icon, label]) => (
+            <TouchableOpacity
+              key={key}
+              onPress={() => {
+                if (!user && key !== "public") {
+                  const meta: Record<string, { title: string; description: string; icon: any }> = {
+                    following: { icon: "people-outline", title: "Follow Players", description: "Sign in to follow players and see their sessions, results and big wins." },
+                    stakes:    { icon: "trending-up-outline", title: "Staking Marketplace", description: "Sign in to buy and sell poker action with players in the community." },
+                    backed:    { icon: "ribbon-outline", title: "Your Backed Players", description: "Sign in to track sessions from players you've staked and backed." },
+                  };
+                  setSignInSheet(meta[key]);
+                  return;
+                }
+                setTab(key as Tab);
+              }}
+              style={[styles.tabItem, tab === key && styles.tabItemActive]}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name={tab === key ? icon as any : `${icon}-outline` as any}
+                size={15}
+                color={tab === key ? "#fff" : "rgba(255,255,255,0.55)"}
+              />
+              <Text style={[styles.tabLabel, { color: tab === key ? "#fff" : "rgba(255,255,255,0.55)" }]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* ── Scrollable content — fills remaining space below the sticky tab bar ── */}
+      <View style={{ flex: 1 }}>
 
         {tab === "stakes" ? (
           /* ── Stakes marketplace feed ── */
@@ -1022,6 +1206,7 @@ export default function SocialScreen() {
                 deal={item}
                 currentUserId={userId}
                 followingIds={followingIds}
+                claimRefreshKey={claimRefreshKey}
                 onBuy={setBuyModalDeal}
                 onFollow={handleFollow}
                 onPressProfile={handlePressProfile}
@@ -1046,6 +1231,51 @@ export default function SocialScreen() {
               )
             }
           />
+        ) : tab === "backed" ? (
+          /* ── Backed players feed ── */
+          <FlatList
+            key="backed"
+            data={backedPosts}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <PostCard
+                post={item}
+                currentUserId={userId}
+                isFollowing={followingIds.has(item.user_id)}
+                onReact={handleReact}
+                onDelete={handleDelete}
+                onComment={setCommentsPost}
+                onFollow={handleFollow}
+                onPressProfile={handlePressProfile}
+                onBuyStake={setBuyDealIdFromPost}
+              />
+            )}
+            onRefresh={() => { setRefreshingBacked(true); loadBacked(true); }}
+            refreshing={refreshingBacked}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 120 }}
+            ListHeaderComponent={
+              <View style={{ marginBottom: 8, paddingHorizontal: 2 }}>
+                <Text style={{ fontSize: 13, color: colors.text.tertiary, lineHeight: 19 }}>
+                  Posts from players you've confirmed stakes with. Pull to refresh for the latest updates.
+                </Text>
+              </View>
+            }
+            ListEmptyComponent={
+              loadingBacked ? (
+                <View style={styles.centered}><ActivityIndicator size="large" color={BRAND} /></View>
+              ) : (
+                <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
+                  <Ionicons name="ribbon-outline" size={44} color={colors.text.tertiary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No updates yet</Text>
+                  <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>
+                    When you have confirmed stakes in a player's tournament, their posts will appear here.
+                  </Text>
+                </View>
+              )
+            }
+          />
         ) : (
           /* ── Public / Following post feed ── */
           <FlatList
@@ -1062,6 +1292,7 @@ export default function SocialScreen() {
                 onComment={setCommentsPost}
                 onFollow={handleFollow}
                 onPressProfile={handlePressProfile}
+                onBuyStake={setBuyDealIdFromPost}
               />
             )}
             onRefresh={() => { setRefreshing(true); loadData(true); }}
@@ -1069,6 +1300,41 @@ export default function SocialScreen() {
             onScroll={handleScroll}
             scrollEventThrottle={16}
             contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 120 }}
+            ListHeaderComponent={
+              tab === "public" ? (
+                <View style={[styles.welcomeCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                  <View style={styles.welcomeTop}>
+                    <View style={styles.welcomeIconWrap}>
+                      <Text style={{ fontSize: 22 }}>🃏</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.welcomeHeading, { color: colors.text.primary }]}>Welcome to the Community</Text>
+                      <Text style={[styles.welcomeSub, { color: colors.text.tertiary }]}>
+                        May your reads be sharp and your variance kind. This is where poker players connect, share the felt, and back each other at the table.
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={[styles.welcomeDivider, { backgroundColor: colors.border.default }]} />
+                  <View style={styles.welcomeFeatures}>
+                    {[
+                      { icon: "create-outline", label: "Post Sessions", desc: "Share results, big pots & bluffs" },
+                      { icon: "people-outline", label: "Follow Players", desc: "Track the players you back or admire" },
+                      { icon: "trending-up-outline", label: "Buy & Sell Stakes", desc: "Find or offer action on tournaments" },
+                    ].map((f) => (
+                      <View key={f.label} style={styles.welcomeFeatureRow}>
+                        <View style={[styles.welcomeFeatureIcon, { backgroundColor: `${BRAND}12` }]}>
+                          <Ionicons name={f.icon as any} size={14} color={BRAND} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.welcomeFeatureLabel, { color: colors.text.primary }]}>{f.label}</Text>
+                          <Text style={[styles.welcomeFeatureDesc, { color: colors.text.tertiary }]}>{f.desc}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : null
+            }
             ListEmptyComponent={
               loading ? (
                 <View style={styles.centered}><ActivityIndicator size="large" color={BRAND} /></View>
@@ -1095,7 +1361,7 @@ export default function SocialScreen() {
             }
           />
         )}
-      </Animated.View>
+      </View>
 
       {/* ── Buyer modal (from stakes tab) ── */}
       {buyModalDeal && (
@@ -1103,8 +1369,19 @@ export default function SocialScreen() {
           visible={!!buyModalDeal}
           dealId={buyModalDeal.id}
           userId={userId}
-          onClose={() => setBuyModalDeal(null)}
-          onDealCreated={() => { setBuyModalDeal(null); loadStakes(true); }}
+          onClose={() => { setBuyModalDeal(null); setClaimRefreshKey((k) => k + 1); loadStakes(true); }}
+          onDealCreated={() => { setBuyModalDeal(null); setClaimRefreshKey((k) => k + 1); loadStakes(true); }}
+        />
+      )}
+
+      {/* ── Buyer modal (opened from a community post tile) ── */}
+      {buyDealIdFromPost && (
+        <SellStakesModal
+          visible={!!buyDealIdFromPost}
+          dealId={buyDealIdFromPost}
+          userId={userId}
+          onClose={() => setBuyDealIdFromPost(null)}
+          onDealCreated={() => setBuyDealIdFromPost(null)}
         />
       )}
 
@@ -1127,6 +1404,14 @@ export default function SocialScreen() {
           ))
         }
       />
+
+      <SignInSheet
+        visible={!!signInSheet}
+        onClose={() => setSignInSheet(null)}
+        title={signInSheet?.title}
+        description={signInSheet?.description}
+        icon={signInSheet?.icon}
+      />
     </View>
   );
 }
@@ -1144,8 +1429,12 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
 
+  stickyTabBar: {
+    zIndex: 9,
+  },
+
   header: { paddingHorizontal: 20, paddingBottom: 0 },
-  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
+  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerTitle: { color: "#fff", fontSize: 22, fontWeight: "800", letterSpacing: -0.3 },
   headerSub: { color: "rgba(255,255,255,0.6)", fontSize: 12, fontWeight: "500", marginTop: 2 },
   headerIconBtn: {
@@ -1157,7 +1446,7 @@ const styles = StyleSheet.create({
   inviteBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
 
   tabBar: { flexDirection: "row" },
-  tabItem: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 12, paddingHorizontal: 4, marginRight: 24, borderBottomWidth: 2, borderBottomColor: "transparent" },
+  tabItem: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 2, borderBottomColor: "transparent" },
   tabItemActive: { borderBottomColor: "#fff" },
   tabLabel: { fontSize: 14, fontWeight: "700" },
 
@@ -1311,4 +1600,17 @@ const styles = StyleSheet.create({
   emptySub: { fontSize: 13, textAlign: "center", lineHeight: 19 },
   emptyAction: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8, paddingHorizontal: 20, paddingVertical: 11, borderRadius: 12 },
   emptyActionText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+
+  // Welcome card
+  welcomeCard: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, padding: 16, gap: 12, marginBottom: 4 },
+  welcomeTop: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  welcomeIconWrap: { width: 44, height: 44, borderRadius: 12, backgroundColor: `${BRAND}12`, alignItems: "center", justifyContent: "center" },
+  welcomeHeading: { fontSize: 15, fontWeight: "700", marginBottom: 4 },
+  welcomeSub: { fontSize: 13, lineHeight: 19 },
+  welcomeDivider: { height: StyleSheet.hairlineWidth },
+  welcomeFeatures: { gap: 10 },
+  welcomeFeatureRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  welcomeFeatureIcon: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  welcomeFeatureLabel: { fontSize: 13, fontWeight: "600" },
+  welcomeFeatureDesc: { fontSize: 12, marginTop: 1 },
 });

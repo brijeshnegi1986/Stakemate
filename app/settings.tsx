@@ -1,6 +1,7 @@
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { useThemeContext, type ThemePreference } from "@/store/ThemeContext";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import * as Location from "expo-location";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import {
@@ -11,6 +12,7 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TouchableOpacity,
   TouchableWithoutFeedback,
@@ -63,6 +65,7 @@ export default function SettingsScreen() {
   const [defaultView, setDefaultView] = useState("all");
   const [sessionCount, setSessionCount] = useState(0);
   const [currency, setCurrency] = useState("AUD");
+  const [locationEnabled, setLocationEnabled] = useState(false);
   const [currencyModalVisible, setCurrencyModalVisible] = useState(false);
   const [themeModalVisible, setThemeModalVisible] = useState(false);
   const [viewModalVisible, setViewModalVisible] = useState(false);
@@ -79,6 +82,7 @@ export default function SettingsScreen() {
       setDefaultVenue(getSetting("defaultVenue") ?? "");
       setDefaultView(getSetting("dashboardView") ?? "all");
       setCurrency(getSetting("currency") ?? "AUD");
+      setLocationEnabled(getSetting("locationEnabled") === "true");
       setSessionCount(getSessions().length);
     }, [])
   );
@@ -107,6 +111,18 @@ export default function SettingsScreen() {
   const handleVenueChange = (v: string) => {
     setDefaultVenue(v);
     setSetting("defaultVenue", v);
+  };
+
+  const handleLocationToggle = async (value: boolean) => {
+    if (value) {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission denied", "Allow location access in your device Settings to enable this feature.");
+        return;
+      }
+    }
+    setSetting("locationEnabled", value ? "true" : "false");
+    setLocationEnabled(value);
   };
 
   const handleClearSessions = () => {
@@ -313,6 +329,27 @@ export default function SettingsScreen() {
           </View>
           <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
         </TouchableOpacity>
+
+        <View style={divider} />
+
+        {/* Location access toggle */}
+        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingVertical: spacing.md + 2, gap: spacing.md }}>
+          <Ionicons name="navigate-outline" size={20} color={colors.text.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text.primary, ...typography.bodySm, fontWeight: "600" }}>
+              Use My Location
+            </Text>
+            <Text style={{ color: colors.text.tertiary, ...typography.caption, marginTop: 1 }}>
+              Auto-detect state when starting a session
+            </Text>
+          </View>
+          <Switch
+            value={locationEnabled}
+            onValueChange={handleLocationToggle}
+            trackColor={{ false: colors.border.default, true: colors.bg.brand }}
+            thumbColor="#fff"
+          />
+        </View>
 
       </View>
 

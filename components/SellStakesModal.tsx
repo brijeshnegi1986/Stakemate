@@ -1,5 +1,7 @@
 import { setTournamentStakeDeal, TournamentEvent } from "@/db/database";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { sendPushToUser } from "@/lib/notifications";
+import { supabase } from "@/lib/supabase";
 import {
   cancelStakeDeal,
   claimStake,
@@ -227,7 +229,7 @@ function PackageForm({
           </View>
           <View style={styles.formRowDivider} />
           <View style={{ flex: 1 }}>
-            <Text style={[styles.cardFieldLabel, { color: colors.text.tertiary }]}>Min piece</Text>
+            <Text style={[styles.cardFieldLabel, { color: colors.text.tertiary }]}>Min sell piece</Text>
             <View style={[styles.cardInputRow, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
               <TextInput
                 value={minPiece}
@@ -280,7 +282,7 @@ function PackageForm({
         <View style={[styles.cardDivider, { backgroundColor: colors.border.subtle }]} />
 
         {/* Markup toggle */}
-        <View style={[styles.cardFieldBlock, { paddingBottom: showMarkup ? 8 : 0 }]}>
+        <View style={[styles.cardFieldBlock, showMarkup && { paddingBottom: 8 }]}>
           <View style={{ flexDirection: "row", alignItems: "center" }}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.cardFieldLabel, { color: colors.text.tertiary }]}>Markup</Text>
@@ -315,7 +317,7 @@ function PackageForm({
             onChangeText={setNotes}
             placeholder="Any extra details for potential backers..."
             placeholderTextColor={colors.text.disabled}
-            style={[styles.cardInput, styles.textarea, { color: colors.text.primary, backgroundColor: colors.bg.primary, borderRadius: 10, paddingHorizontal: 12, paddingTop: 10 }]}
+            style={[styles.textarea, { color: colors.text.primary, backgroundColor: colors.bg.primary, borderRadius: 10, paddingHorizontal: 12, paddingTop: 10, fontSize: 14, fontWeight: "400" }]}
             multiline
             numberOfLines={3}
           />
@@ -455,8 +457,18 @@ function PublishPromptView({
       <TouchableOpacity
         onPress={async () => {
           try {
-            await publishStakeDeal(deal.id, visibility === "followers" ? "friends" : "public");
-            onPublished({ ...deal, status: "active", visibility: visibility === "followers" ? "friends" : "public" });
+            const vis = visibility === "followers" ? "friends" : "public";
+            await publishStakeDeal(deal.id, vis);
+            // Back-link any community posts the seller already shared for this tournament
+            Promise.resolve(
+              supabase
+                .from("social_posts")
+                .update({ stake_deal_id: deal.id })
+                .eq("user_id", deal.user_id)
+                .ilike("session_name", deal.tournament_name)
+                .is("stake_deal_id", null)
+            ).catch(() => {});
+            onPublished({ ...deal, status: "active", visibility: vis });
           } catch (e: any) {
             Alert.alert("Error", e?.message || "Could not publish deal.");
           }
@@ -564,11 +576,32 @@ function SellerDashView({
 
   async function handleClaimAction(claim: StakeClaim, status: "confirmed" | "rejected") {
     try {
-      await updateClaimStatus(claim.id, status);
+      const { percentClaimed } = await updateClaimStatus(claim.id, status);
       onDealChanged({
         ...deal,
+        // Reflect the confirmed % in the local deal so the progress bar updates immediately
+        action_claimed: status === "confirmed"
+          ? deal.action_claimed + percentClaimed
+          : deal.action_claimed,
         claims: deal.claims?.map((c) => c.id === claim.id ? { ...c, status } : c),
       });
+      // Notify the buyer of the outcome
+      const buyerName = claim.buyer_profile?.display_name || claim.buyer_profile?.username || "Someone";
+      if (status === "confirmed") {
+        sendPushToUser(
+          claim.buyer_id,
+          "Stake claim confirmed! ✅",
+          `Your ${claim.percent_claimed}% claim on ${deal.tournament_name} was confirmed.`,
+          { dealId: deal.id }
+        ).catch(() => {});
+      } else {
+        sendPushToUser(
+          claim.buyer_id,
+          "Stake claim update",
+          `Your ${claim.percent_claimed}% claim on ${deal.tournament_name} was not accepted.`,
+          { dealId: deal.id }
+        ).catch(() => {});
+      }
     } catch {
       Alert.alert("Error", "Could not update claim.");
     }
@@ -759,17 +792,22 @@ function BuyerPurchaseView({
   colors,
   insets,
   onClose,
+  onActionClaimed,
 }: {
   deal: StakeDeal;
   userId: string;
   colors: any;
   insets: any;
   onClose: () => void;
+  onActionClaimed?: (addedPct: number) => void;
 }) {
   const sellerName   = deal.seller_profile?.display_name || deal.seller_profile?.username || "Seller";
   const sellerHandle = deal.seller_profile?.username ? `@${deal.seller_profile.username}` : null;
 
-  const available     = deal.total_action_selling - deal.action_claimed;
+  // Track locally so progress bar updates immediately after claiming without full reload
+  const [localActionClaimed, setLocalActionClaimed] = useState(deal.action_claimed);
+
+  const available     = deal.total_action_selling - localActionClaimed;
   const minPiece      = deal.min_piece ?? 1;
   const canClaim      = deal.status === "open" || deal.status === "active";
 
@@ -790,7 +828,7 @@ function BuyerPurchaseView({
 
   const claimNum  = Math.min(Math.max(parseFloat(claimPct) || minPiece, minPiece), available);
   const costNum   = deal.price_per_percent != null ? claimNum * deal.price_per_percent * (deal.markup ?? 1) : null;
-  const pctSold   = deal.total_action_selling > 0 ? deal.action_claimed / deal.total_action_selling : 0;
+  const pctSold   = deal.total_action_selling > 0 ? localActionClaimed / deal.total_action_selling : 0;
   const statusColor = dealStatusColor(deal.status);
 
   function adjustPct(delta: number) {
@@ -811,6 +849,16 @@ function BuyerPurchaseView({
     try {
       const claim = await claimStake(deal.id, userId, pct, message.trim() || undefined);
       setMyClaim(claim);
+      // Update progress bar immediately
+      setLocalActionClaimed((prev) => prev + pct);
+      onActionClaimed?.(pct);
+      // Notify the seller
+      sendPushToUser(
+        deal.user_id,
+        "New stake claim! 🤝",
+        `Someone wants to buy ${pct}% of your ${deal.tournament_name} action.`,
+        { dealId: deal.id }
+      ).catch(() => {});
       Alert.alert("Claim submitted!", "The seller will confirm your claim. You'll hear back soon.");
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Could not submit claim.");
@@ -883,7 +931,7 @@ function BuyerPurchaseView({
       <View style={[styles.buyerStatsRow, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
         {[
           { label: "Total",     value: `${deal.total_action_selling}%` },
-          { label: "Available", value: `${available.toFixed(1)}%`,     color: available > 0 ? GREEN : RED },
+          { label: "Available", value: `${Math.max(0, available).toFixed(1)}%`, color: available > 0 ? GREEN : RED },
           { label: "Price/1%",  value: deal.price_per_percent ? `$${deal.price_per_percent}` : "—" },
           { label: "Markup",    value: deal.markup !== 1 ? `${deal.markup}×` : "Face" },
         ].map((stat, i, arr) => (
@@ -896,7 +944,7 @@ function BuyerPurchaseView({
 
       {/* Progress bar */}
       <View>
-        <ProgressBar claimed={deal.action_claimed} total={deal.total_action_selling} color={PURPLE} />
+        <ProgressBar claimed={localActionClaimed} total={deal.total_action_selling} color={PURPLE} />
         <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
           <Text style={[styles.progressLabel, { color: colors.text.tertiary }]}>{Math.round(pctSold * 100)}% sold</Text>
           <Text style={[styles.progressLabel, { color: colors.text.tertiary }]}>{available.toFixed(1)}% left</Text>
@@ -956,8 +1004,9 @@ function BuyerPurchaseView({
                   value={claimPct}
                   onChangeText={(v) => setClaimPct(v.replace(/[^0-9.]/g, ""))}
                   keyboardType="numeric"
-                  style={[styles.stepperInput, { color: colors.text.primary }]}
+                  style={[styles.stepperInput, { color: colors.text.primary, width: "100%", includeFontPadding: false }]}
                   textAlign="center"
+                  textAlignVertical="center"
                 />
                 <Text style={[styles.stepperUnit, { color: colors.text.tertiary }]}>%</Text>
               </View>
@@ -1075,35 +1124,48 @@ export function SellStakesModal({
     setLoading(true);
     setView("loading");
 
-    const loader = !dealIdProp && event
-      ? getStakeDeal(resolvedDealId)                    // seller: no need for seller profile
-      : getStakeDealWithSeller(resolvedDealId);         // buyer: need seller profile
-
-    loader
+    // Always load the deal first (no profiles join → works regardless of profiles RLS)
+    getStakeDeal(resolvedDealId)
       .then((d) => {
-        if (!d || d.status === "cancelled") {
-          // Deal gone — if we know it's the owner, show create form
+        if (!d) {
+          // Deal not found or blocked by RLS — if we have an event, allow creating a new one
+          if (event) {
+            setView("create");
+          } else {
+            Alert.alert("Package unavailable", "This stake deal could not be loaded. It may have been cancelled or is no longer available.");
+            onClose();
+          }
+          setLoading(false);
+          return;
+        }
+        if (d.status === "cancelled") {
           setView("create");
+          setLoading(false);
           return;
         }
         setDeal(d);
         const owner = d.user_id === userId;
         if (owner) {
+          // Seller path — no seller profile needed
           setView("seller_dash");
+          setLoading(false);
         } else {
-          // Need seller profile for buyer view
-          if (!d.seller_profile) {
-            getStakeDealWithSeller(d.id).then((full) => {
-              if (full) setDeal(full);
-              setView("buyer_purchase");
-            });
-          } else {
-            setView("buyer_purchase");
-          }
+          // Buyer path — fetch seller profile as a best-effort second call
+          getStakeDealWithSeller(d.id)
+            .then((full) => { if (full) setDeal(full); })
+            .catch(() => { /* seller profile optional — show view without it */ })
+            .finally(() => { setView("buyer_purchase"); setLoading(false); });
         }
       })
-      .catch(() => setView("create"))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (event) {
+          setView("create");
+        } else {
+          Alert.alert("Error", "Could not load stake package. Check your connection and try again.");
+          onClose();
+        }
+        setLoading(false);
+      });
   }, [visible, dealIdProp, event?.stake_deal_id]);
 
   // ── Header title ──────────────────────────────────────────────────────────
@@ -1116,8 +1178,7 @@ export function SellStakesModal({
     buyer_purchase: "Buy Stake",
   };
 
-  const showBack  = view === "seller_edit" || view === "publish_prompt";
-  const showShare = view === "seller_dash" && deal && isPublishedStatus(deal.status);
+  const showBack = view === "seller_edit" || view === "publish_prompt";
 
   function handleBack() {
     if (view === "seller_edit") setView("seller_dash");
@@ -1239,25 +1300,7 @@ export function SellStakesModal({
               </Text>
             )}
           </View>
-          <View style={styles.headerBtn}>
-            {showShare && (
-              <TouchableOpacity
-                onPress={() => shareStakeDealExternal({
-                  tournament_name:      deal!.tournament_name,
-                  venue:                deal!.venue,
-                  tournament_date:      deal!.tournament_date,
-                  buy_in:               deal!.buy_in,
-                  total_action_selling: deal!.total_action_selling,
-                  price_per_percent:    deal!.price_per_percent,
-                  markup:               deal!.markup,
-                  notes:                deal!.notes,
-                })}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons name="share-outline" size={22} color={BRAND} />
-              </TouchableOpacity>
-            )}
-          </View>
+          <View style={styles.headerBtn} />
         </View>
 
         {/* Body */}
@@ -1312,6 +1355,9 @@ export function SellStakesModal({
             colors={colors}
             insets={insets}
             onClose={onClose}
+            onActionClaimed={(pct) =>
+              setDeal((d) => d ? { ...d, action_claimed: d.action_claimed + pct } : d)
+            }
           />
         ) : null}
       </KeyboardAvoidingView>
@@ -1483,7 +1529,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "flex-start",
     paddingVertical: 12, paddingHorizontal: 14, gap: 10,
   },
-  detailLabel: { fontSize: 13, width: 70 },
+  detailLabel: { fontSize: 13, width: 84 },
   detailValue: { flex: 1, fontSize: 13, fontWeight: "600" },
 
   sectionTitle: { fontSize: 15, fontWeight: "700", marginTop: 4 },
@@ -1560,7 +1606,7 @@ const styles = StyleSheet.create({
     width: 44, height: 44, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth,
     alignItems: "center", justifyContent: "center",
   },
-  stepperInput: { fontSize: 28, fontWeight: "800" },
+  stepperInput: { fontSize: 28, fontWeight: "800", height: 44, lineHeight: 36 },
   stepperUnit:  { fontSize: 14, marginTop: 2 },
 
   costRow: {

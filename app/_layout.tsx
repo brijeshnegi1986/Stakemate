@@ -4,7 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, Stack, ThemeProvider } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
-import { Text, TouchableOpacity } from "react-native";
+import { Text, TouchableOpacity, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 import { initDB } from "../db/database";
@@ -34,168 +34,69 @@ function RootLayoutContent() {
     },
   };
 
+  // Shared close button for modals (iOS standard: bare xmark, no circle bg)
+  const modalClose = () => (
+    <TouchableOpacity
+      onPress={() => router.back()}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      style={{ marginLeft: 4 }}
+    >
+      <Ionicons name="close" size={24} color={themeColors.text.secondary} />
+    </TouchableOpacity>
+  );
+
+  // Shared back button for push screens (iOS standard: chevron-back)
+  const pushBack = () => (
+    <TouchableOpacity
+      onPress={() => router.back()}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      style={{ flexDirection: "row", alignItems: "center", gap: 4, marginLeft: -4 }}
+    >
+      <Ionicons name="chevron-back" size={24} color={themeColors.text.primary} />
+    </TouchableOpacity>
+  );
+
+  // Shared modal header options (no explicit background — inherits navigation theme card color, single surface)
+  const modalOptions = (title: string) => ({
+    presentation: "modal" as const,
+    title,
+    headerTintColor: themeColors.text.primary,
+    headerTitleStyle: { fontWeight: "600" as const, fontSize: 17 },
+    headerShadowVisible: false,
+    headerLeft: modalClose,
+  });
+
+  // Shared push header options
+  const pushOptions = (title: string) => ({
+    title,
+    headerTintColor: themeColors.text.primary,
+    headerTitleStyle: { fontWeight: "600" as const, fontSize: 17 },
+    headerShadowVisible: true,
+    headerLeft: pushBack,
+  });
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider value={navigationTheme}>
         <Stack initialRouteName="index">
-          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="index"   options={{ headerShown: false }} />
           <Stack.Screen name="welcome" options={{ headerShown: false }} />
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="live" options={{ presentation: "modal", headerShown: false }} />
-          <Stack.Screen
-            name="add-session"
-            options={{
-              presentation: "modal",
-              title: "Add Completed Session",
-              headerStyle: { backgroundColor: themeColors.bg.primary },
-              headerTintColor: themeColors.text.primary,
-              headerTitleStyle: { fontWeight: "700", fontSize: 17 },
-              headerLeft: () => (
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  style={{ paddingRight: 12 }}
-                >
-                  <Ionicons name="chevron-down" size={22} color={themeColors.text.primary} />
-                </TouchableOpacity>
-              ),
-            }}
-          />
-          <Stack.Screen
-            name="session-detail"
-            options={{
-              title: "Session Detail",
-              headerShadowVisible: true,
-              headerStyle: { backgroundColor: themeColors.bg.primary },
-              headerTintColor: themeColors.text.primary,
-              headerTitleStyle: { fontWeight: "700", fontSize: 17 },
-              headerLeft: () => (
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
-                >
-                  <Ionicons name="arrow-back" size={20} color={themeColors.text.primary} />
-                  <Text style={{ marginLeft: 8, color: themeColors.text.primary, fontWeight: "600", fontSize: 16 }}>
-                    Back
-                  </Text>
-                </TouchableOpacity>
-              ),
-            }}
-          />
-          <Stack.Screen
-            name="session-edit"
-            options={{
-              title: "Edit Session",
-              headerShadowVisible: true,
-              headerStyle: { backgroundColor: themeColors.bg.primary },
-              headerTintColor: themeColors.text.primary,
-              headerTitleStyle: { fontWeight: "700", fontSize: 17 },
-              headerLeft: () => (
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
-                >
-                  <Ionicons name="arrow-back" size={20} color={themeColors.text.primary} />
-                  <Text style={{ marginLeft: 8, color: themeColors.text.primary, fontWeight: "600", fontSize: 16 }}>
-                    Back
-                  </Text>
-                </TouchableOpacity>
-              ),
-            }}
-          />
-          <Stack.Screen
-            name="sign-in"
-            options={{ presentation: "modal", headerShown: false }}
-          />
-          <Stack.Screen
-            name="explore"
-            options={{
-              presentation: "modal",
-              title: "Explore Stakemate",
-              headerStyle: { backgroundColor: themeColors.bg.primary },
-              headerTintColor: themeColors.text.primary,
-              headerTitleStyle: { fontWeight: "700", fontSize: 17 },
-              headerLeft: () => (
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  style={{ paddingRight: 12 }}
-                >
-                  <Ionicons name="chevron-down" size={22} color={themeColors.text.primary} />
-                </TouchableOpacity>
-              ),
-            }}
-          />
-          <Stack.Screen
-            name="settings"
-            options={{
-              presentation: "modal",
-              title: "Settings",
-              headerStyle: { backgroundColor: themeColors.bg.primary },
-              headerTintColor: themeColors.text.primary,
-              headerTitleStyle: { fontWeight: "700", fontSize: 17 },
-              headerLeft: () => (
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  style={{ flexDirection: "row", alignItems: "center", paddingRight: 12 }}
-                >
-                  <Ionicons name="chevron-down" size={22} color={themeColors.text.primary} />
-                </TouchableOpacity>
-              ),
-            }}
-          />
-          <Stack.Screen
-            name="privacy-policy"
-            options={{
-              presentation: "modal",
-              title: "Privacy Policy",
-              headerStyle: { backgroundColor: themeColors.bg.primary },
-              headerTintColor: themeColors.text.primary,
-              headerTitleStyle: { fontWeight: "700", fontSize: 17 },
-              headerLeft: () => (
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  style={{ paddingRight: 12 }}
-                >
-                  <Ionicons name="chevron-down" size={22} color={themeColors.text.primary} />
-                </TouchableOpacity>
-              ),
-            }}
-          />
-          <Stack.Screen
-            name="terms"
-            options={{
-              presentation: "modal",
-              title: "Terms of Service",
-              headerStyle: { backgroundColor: themeColors.bg.primary },
-              headerTintColor: themeColors.text.primary,
-              headerTitleStyle: { fontWeight: "700", fontSize: 17 },
-              headerLeft: () => (
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  style={{ paddingRight: 12 }}
-                >
-                  <Ionicons name="chevron-down" size={22} color={themeColors.text.primary} />
-                </TouchableOpacity>
-              ),
-            }}
-          />
-          <Stack.Screen
-            name="user-profile"
-            options={{
-              headerShown: false,
-              animation: "slide_from_right",
-            }}
-          />
-          <Stack.Screen
-            name="modal"
-            options={{ presentation: "modal", title: "Modal" }}
-          />
+          <Stack.Screen name="(tabs)"  options={{ headerShown: false }} />
+          <Stack.Screen name="live"    options={{ presentation: "modal", headerShown: false }} />
+          <Stack.Screen name="sign-in" options={{ presentation: "modal", headerShown: false }} />
+
+          <Stack.Screen name="add-session"    options={modalOptions("Add Completed Session")} />
+          <Stack.Screen name="explore"        options={modalOptions("Explore Stakemate")} />
+          <Stack.Screen name="settings"       options={modalOptions("Settings")} />
+          <Stack.Screen name="privacy-policy" options={modalOptions("Privacy Policy")} />
+          <Stack.Screen name="terms"          options={modalOptions("Terms of Service")} />
+
+          <Stack.Screen name="session-detail" options={pushOptions("Session Detail")} />
+          <Stack.Screen name="session-edit"   options={pushOptions("Edit Session")} />
+
+          <Stack.Screen name="notifications"  options={{ ...pushOptions("Notifications"), headerShown: false }} />
+          <Stack.Screen name="user-profile"   options={{ headerShown: false, animation: "slide_from_right" }} />
+          <Stack.Screen name="modal"          options={{ presentation: "modal", title: "Modal" }} />
         </Stack>
         <StatusBar style={isDark ? "light" : "dark"} />
       </ThemeProvider>

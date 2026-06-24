@@ -49,8 +49,26 @@ Join our community of developers creating universal apps.
 - [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
 - [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
 
-## command to build for iOS
+## command to build for iOS through expo
 
 eas build --platform ios --profile production --clear-cache
 
 eas submit --platform ios --latest
+
+## command to build and submit to iOS
+
+ eas build --platform ios --profile production --local
+
+ eas submit --platform ios --profile production --latest
+
+ Once you upload a logo (e.g. crown-melbourne.png), update the venues table:
+
+UPDATE venues
+SET logo_url = '<https://zktdckwnazuhmthxmmoc.supabase.co/storage/v1/object/public/venue-logos/crown-melbourne.png>'
+WHERE slug = 'crown-melbourne';
+
+For tournament banners, update the tournaments table:
+
+UPDATE tournaments
+SET series_image_url = '<https://zktdckwnazuhmthxmmoc.supabase.co/storage/v1/object/public/tournament-banners/wsop-circuit-2025.jpg>'
+WHERE series = 'WSOP Circuit 2025';

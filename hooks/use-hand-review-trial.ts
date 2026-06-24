@@ -1,5 +1,5 @@
 import { getSetting, setSetting } from "@/db/database";
-import { HAND_REVIEW_TRIAL_DAYS } from "@/constants/subscription";
+import { TRIAL_DAYS as HAND_REVIEW_TRIAL_DAYS } from "@/constants/subscription";
 
 const SETTING_KEY = "handReviewFirstUsed";
 const MS_PER_DAY  = 86_400_000;

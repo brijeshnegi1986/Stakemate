@@ -104,7 +104,7 @@ export default function WelcomeScreen() {
 
           <View style={styles.bodyWrap}>
             <Text style={styles.body}>
-              Track sessions, manage your bankroll, connect with players, and discover staking opportunities.
+              Track sessions, manage your bankroll, and connect with players.
             </Text>
           </View>
         </View>
@@ -116,7 +116,7 @@ export default function WelcomeScreen() {
             activeOpacity={0.88}
             style={styles.getStartedBtn}
           >
-            <Text style={styles.getStartedText}>Get Started</Text>
+            <Text style={styles.getStartedText}>Sign In</Text>
           </TouchableOpacity>
 
           <TouchableOpacity onPress={handleSkip} activeOpacity={0.6} style={styles.skipBtn}>
@@ -132,11 +132,16 @@ export default function WelcomeScreen() {
         animationType="slide"
         onRequestClose={() => setShowSignInModal(false)}
       >
-        <TouchableOpacity
-          style={styles.modalBackdrop}
-          activeOpacity={1}
-          onPress={() => setShowSignInModal(false)}
-        />
+        {/* Single root keeps the sheet rounded corners clipping against transparent, not grey */}
+        <View style={styles.modalRoot}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setShowSignInModal(false)}
+          >
+            <View style={styles.modalBackdrop} />
+          </TouchableOpacity>
+
         <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 24 }]}>
           {/* Handle */}
           <View style={styles.modalHandle} />
@@ -162,7 +167,7 @@ export default function WelcomeScreen() {
                   buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
                   buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
                   cornerRadius={14}
-                  style={{ flex: 1, height: 54 }}
+                  style={{ flex: 1, height: 50 }}
                   onPress={handleAppleSignIn}
                 />
               </View>
@@ -209,6 +214,7 @@ export default function WelcomeScreen() {
           >
             <Text style={styles.modalSkipText}>Maybe later</Text>
           </TouchableOpacity>
+        </View>
         </View>
       </Modal>
     </View>
@@ -313,6 +319,10 @@ const styles = StyleSheet.create({
   },
 
   // Sign-in modal
+  modalRoot: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(15,23,43,0.45)",
@@ -368,18 +378,18 @@ const styles = StyleSheet.create({
   },
   appleBtnWrap: {
     width: "100%",
-    height: 54,
+    height: 50,
     marginBottom: 12,
   },
   appleBtn: {
     width: "100%",
+    height: 50,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 9,
     backgroundColor: "#000",
     borderRadius: 14,
-    paddingVertical: 15,
     marginBottom: 12,
   },
   appleBtnText: {
@@ -390,13 +400,13 @@ const styles = StyleSheet.create({
   },
   googleBtn: {
     width: "100%",
+    height: 50,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 9,
     backgroundColor: "#fff",
     borderRadius: 14,
-    paddingVertical: 15,
     marginBottom: 14,
     borderWidth: 1.5,
     borderColor: "#e2e8f0",

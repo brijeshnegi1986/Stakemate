@@ -1,9 +1,10 @@
+import { HandReviewLauncher } from "@/components/HandReviewLauncher";
 import { PaywallModal } from "@/components/PaywallModal";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useState } from "react";
-import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Animated, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 function MenuRow({
@@ -30,33 +31,99 @@ function MenuRow({
   );
 }
 
+const BRAND = "#155DFC";
+
 export default function MoreScreen() {
   const { colors, spacing } = usePokerTheme();
   const insets = useSafeAreaInsets();
-  const [showPaywall, setShowPaywall] = useState(false);
+  const [showPaywall, setShowPaywall]         = useState(false);
+  const [showHandReview, setShowHandReview]   = useState(false);
+
+  const headerTranslateY    = useRef(new Animated.Value(0)).current;
+  const headerContentMargin = useRef(new Animated.Value(0)).current;
+  const headerShown         = useRef(true);
+  const lastScrollY         = useRef(0);
+  const headerHeightRef     = useRef(0);
+  const [headerHeight, setHeaderHeight] = useState(0);
+
+  useEffect(() => {
+    if (headerHeight > 0 && headerShown.current) {
+      headerContentMargin.setValue(headerHeight);
+    }
+  }, [headerHeight]);
+
+  const handleScroll = useCallback((event: any) => {
+    const y    = event.nativeEvent.contentOffset.y;
+    const diff = y - lastScrollY.current;
+    lastScrollY.current = y;
+    if (diff > 6 && y > 10 && headerShown.current) {
+      headerShown.current = false;
+      Animated.parallel([
+        Animated.timing(headerTranslateY, { toValue: -headerHeightRef.current, duration: 220, useNativeDriver: true }),
+        Animated.timing(headerContentMargin, { toValue: 0, duration: 220, useNativeDriver: false }),
+      ]).start();
+    } else if ((diff < -6 || y <= 0) && !headerShown.current) {
+      headerShown.current = true;
+      Animated.parallel([
+        Animated.timing(headerTranslateY, { toValue: 0, duration: 220, useNativeDriver: true }),
+        Animated.timing(headerContentMargin, { toValue: headerHeightRef.current, duration: 220, useNativeDriver: false }),
+      ]).start();
+    }
+  }, [headerTranslateY, headerContentMargin]);
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.bg.secondary }}
-      contentContainerStyle={{
-        padding: spacing.lg,
-        paddingTop: insets.top + spacing.lg,
-        paddingBottom: 49 + insets.bottom + 32,
-      }}
-      showsVerticalScrollIndicator={false}
-    >
+    <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
       <PaywallModal visible={showPaywall} onClose={() => setShowPaywall(false)} />
+      <HandReviewLauncher visible={showHandReview} onClose={() => setShowHandReview(false)} />
+
+      {/* ── Blue top bar (absolute, animated) ── */}
+      <Animated.View
+        onLayout={(e) => { const h = e.nativeEvent.layout.height; headerHeightRef.current = h; setHeaderHeight(h); }}
+        style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, backgroundColor: BRAND, paddingTop: insets.top + 10, paddingBottom: 16, paddingHorizontal: 20, transform: [{ translateY: headerTranslateY }] }}
+      >
+        <Text style={{ color: "#fff", fontSize: 22, fontWeight: "800" }}>More</Text>
+      </Animated.View>
+
+      <Animated.View style={{ flex: 1, marginTop: headerContentMargin }}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{
+          padding: spacing.lg,
+          paddingBottom: 49 + insets.bottom + 32,
+        }}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+      >
 
       {/* ── Upgrade ── */}
       <TouchableOpacity
         onPress={() => setShowPaywall(true)}
         activeOpacity={0.88}
-        style={[styles.upgradeBtn, { backgroundColor: colors.bg.brand }]}
+        style={[styles.upgradeBtn, { backgroundColor: "#D97706" }]}
       >
-        <Ionicons name="trophy-outline" size={20} color="#fff" />
+        <Ionicons name="star" size={20} color="#FEF3C7" />
         <Text style={styles.upgradeBtnText}>Upgrade to Pro / Elite</Text>
-        <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.7)" />
+        <Ionicons name="chevron-forward" size={20} color="rgba(254,243,199,0.7)" />
       </TouchableOpacity>
+
+      {/* ── Tools ── */}
+      <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>Tools</Text>
+      <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+        <MenuRow
+          icon="compass-outline"
+          label="Explore Stakemate"
+          iconColor="#0EA5E9"
+          onPress={() => router.push("/explore")}
+        />
+        <MenuRow
+          icon="color-wand-outline"
+          label="AI Hand Review"
+          iconColor="#7C3AED"
+          onPress={() => setShowHandReview(true)}
+          isLast
+        />
+      </View>
 
       {/* ── General ── */}
       <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>General</Text>
@@ -87,7 +154,9 @@ export default function MoreScreen() {
           isLast
         />
       </View>
-    </ScrollView>
+      </ScrollView>
+      </Animated.View>
+    </View>
   );
 }
 

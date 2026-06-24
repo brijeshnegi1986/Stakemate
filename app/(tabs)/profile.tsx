@@ -55,7 +55,7 @@ function MenuRow({
 
 // ─── Field row ────────────────────────────────────────────────────────────────
 function FieldRow({
-  icon, iconColor, placeholder, value, onChangeText, multiline, keyboardType, autoCapitalize, isLast,
+  icon, iconColor, placeholder, value, onChangeText, multiline, keyboardType, autoCapitalize, isLast, editable = true,
 }: {
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
   iconColor?: string;
@@ -66,6 +66,7 @@ function FieldRow({
   keyboardType?: "default" | "url" | "email-address";
   autoCapitalize?: "none" | "sentences" | "words";
   isLast?: boolean;
+  editable?: boolean;
 }) {
   const { colors, inputTypo } = usePokerTheme();
   return (
@@ -82,9 +83,10 @@ function FieldRow({
           multiline={multiline}
           keyboardType={keyboardType ?? "default"}
           autoCapitalize={autoCapitalize ?? "sentences"}
+          editable={editable}
           style={[
             styles.fieldInput,
-            { color: colors.text.primary, ...inputTypo.body },
+            { color: editable ? colors.text.primary : colors.text.secondary, ...inputTypo.body },
             multiline && { minHeight: 80, textAlignVertical: "top", paddingTop: 2 },
           ]}
         />
@@ -102,10 +104,11 @@ const COUNTRIES = [
   "United Kingdom",
 ];
 
-function CountryRow({ value, onChange, isLast }: { value: string; onChange: (v: string) => void; isLast?: boolean }) {
+function CountryRow({ value, onChange, isLast, editable = true }: { value: string; onChange: (v: string) => void; isLast?: boolean; editable?: boolean }) {
   const { colors } = usePokerTheme();
 
   function handlePress() {
+    if (!editable) return;
     ActionSheetIOS.showActionSheetWithOptions(
       {
         title: "Country of Residence",
@@ -120,23 +123,39 @@ function CountryRow({ value, onChange, isLast }: { value: string; onChange: (v: 
 
   return (
     <>
-      <TouchableOpacity onPress={handlePress} activeOpacity={0.7} style={styles.fieldRow}>
+      <TouchableOpacity onPress={handlePress} activeOpacity={editable ? 0.7 : 1} style={styles.fieldRow}>
         <View style={[styles.rowIconWrap, { backgroundColor: colors.text.secondary + "18" }]}>
           <MaterialCommunityIcons name="earth" size={18} color={colors.text.secondary} />
         </View>
-        <Text style={[styles.fieldInput, { color: value ? colors.text.primary : colors.text.tertiary }]}>
+        <Text style={[styles.fieldInput, { color: value ? (editable ? colors.text.primary : colors.text.secondary) : colors.text.tertiary }]}>
           {value || "Country of residence"}
         </Text>
-        <MaterialCommunityIcons name="chevron-down" size={18} color={colors.text.tertiary} />
+        {editable && <MaterialCommunityIcons name="chevron-down" size={18} color={colors.text.tertiary} />}
       </TouchableOpacity>
       {!isLast && <View style={[styles.rowDivider, { backgroundColor: colors.border.subtle }]} />}
     </>
   );
 }
 
+const BRAND = "#155DFC";
+
+type ProfileSnapshot = {
+  displayName: string;
+  username: string;
+  bio: string;
+  country: string;
+  avatarUri: string | null;
+  twitter: string;
+  instagram: string;
+  youtube: string;
+  twitch: string;
+  hendonMob: string;
+  pokerIndex: string;
+};
+
 export default function ProfileScreen() {
   const { colors, spacing, radius, isDark } = usePokerTheme();
-  const { user, profile, signOut, refreshProfile, session, signInWithApple, signInWithGoogle } = useAuth();
+  const { user, profile, signOut, refreshProfile, session, signInWithApple, signInWithGoogle, restoreFromCloud, isSyncing } = useAuth();
   const insets = useSafeAreaInsets();
 
   const [displayName, setDisplayName]       = useState(profile?.display_name ?? "");
@@ -154,6 +173,8 @@ export default function ProfileScreen() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [appleAvailable, setAppleAvailable] = useState(false);
   const [showPaywall, setShowPaywall]       = useState(false);
+  const [isEditing, setIsEditing]           = useState(false);
+  const [snapshot, setSnapshot]             = useState<ProfileSnapshot | null>(null);
 
   useEffect(() => {
     if (Platform.OS === "ios") {
@@ -161,12 +182,49 @@ export default function ProfileScreen() {
     }
   }, []);
 
+  const isDirty = isEditing && snapshot != null && (
+    displayName !== snapshot.displayName ||
+    username    !== snapshot.username    ||
+    bio         !== snapshot.bio         ||
+    country     !== snapshot.country     ||
+    avatarUri   !== snapshot.avatarUri   ||
+    twitter     !== snapshot.twitter     ||
+    instagram   !== snapshot.instagram   ||
+    youtube     !== snapshot.youtube     ||
+    twitch      !== snapshot.twitch      ||
+    hendonMob   !== snapshot.hendonMob   ||
+    pokerIndex  !== snapshot.pokerIndex
+  );
+
   const isSignedIn = !!session;
   const TAB_BAR_H  = 49 + insets.bottom;
   const BOTTOM_PAD = TAB_BAR_H + 32;
 
+  function handleEdit() {
+    setSnapshot({ displayName, username, bio, country, avatarUri, twitter, instagram, youtube, twitch, hendonMob, pokerIndex });
+    setIsEditing(true);
+  }
+
+  function handleCancel() {
+    if (!snapshot) { setIsEditing(false); return; }
+    setDisplayName(snapshot.displayName);
+    setUsername(snapshot.username);
+    setBio(snapshot.bio);
+    setCountry(snapshot.country);
+    setAvatarUri(snapshot.avatarUri);
+    setTwitter(snapshot.twitter);
+    setInstagram(snapshot.instagram);
+    setYoutube(snapshot.youtube);
+    setTwitch(snapshot.twitch);
+    setHendonMob(snapshot.hendonMob);
+    setPokerIndex(snapshot.pokerIndex);
+    setIsEditing(false);
+    setSnapshot(null);
+  }
+
   // ─── Avatar pick & upload ────────────────────────────────────────────────
   async function handlePickAvatar() {
+    if (!isEditing) return;
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
       Alert.alert("Permission needed", "Allow access to your photo library to set a profile picture.");
@@ -202,7 +260,7 @@ export default function ProfileScreen() {
 
   // ─── Save ────────────────────────────────────────────────────────────────
   async function handleSave() {
-    if (!user) return;
+    if (!user || !isDirty) return;
     setSaving(true);
     const { error } = await supabase.from("profiles").upsert({
       id: user.id,
@@ -220,8 +278,13 @@ export default function ProfileScreen() {
       poker_index_url: pokerIndex.trim() || null,
     });
     setSaving(false);
-    if (error) Alert.alert("Error", "Couldn't save profile. Try again.");
-    else { await refreshProfile(); Alert.alert("Saved", "Profile updated."); }
+    if (error) {
+      Alert.alert("Error", "Couldn't save profile. Try again.");
+    } else {
+      await refreshProfile();
+      setIsEditing(false);
+      setSnapshot(null);
+    }
   }
 
   async function handleSignOut() {
@@ -247,11 +310,15 @@ export default function ProfileScreen() {
   // ─── Signed-out ───────────────────────────────────────────────────────────
   if (!isSignedIn) {
     return (
-      <ScrollView
-        style={{ flex: 1, backgroundColor: colors.bg.secondary }}
-        contentContainerStyle={{ padding: spacing.lg, paddingTop: insets.top + spacing.lg, paddingBottom: BOTTOM_PAD }}
-        showsVerticalScrollIndicator={false}
-      >
+      <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+        <View style={{ backgroundColor: BRAND, paddingTop: insets.top + 10, paddingBottom: 16, paddingHorizontal: 20 }}>
+          <Text style={{ color: "#fff", fontSize: 22, fontWeight: "800" }}>Profile</Text>
+        </View>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: spacing.lg, paddingBottom: BOTTOM_PAD }}
+          showsVerticalScrollIndicator={false}
+        >
         <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, alignItems: "center" }]}>
           <View style={[styles.avatarCircle, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default, marginBottom: 16 }]}>
             <MaterialCommunityIcons name="account-outline" size={48} color={colors.text.tertiary} />
@@ -289,15 +356,47 @@ export default function ProfileScreen() {
             <Text style={[styles.socialBtnText, { color: colors.text.primary }]}>Continue with Google</Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
+        </ScrollView>
+      </View>
     );
   }
 
   // ─── Signed-in ────────────────────────────────────────────────────────────
   return (
+    <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+      {/* ── Header ── */}
+      <View style={{ backgroundColor: BRAND, paddingTop: insets.top + 10, paddingBottom: 14, paddingHorizontal: 20, flexDirection: "row", alignItems: "flex-end" }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: "#fff", fontSize: 22, fontWeight: "800" }}>Profile</Text>
+          {profile?.username ? (
+            <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 12, fontWeight: "500", marginTop: 2 }}>@{profile.username}</Text>
+          ) : null}
+        </View>
+        {isEditing ? (
+          <View style={{ flexDirection: "row", gap: 8, paddingBottom: 2 }}>
+            <TouchableOpacity onPress={handleCancel} style={styles.headerPillCancel} activeOpacity={0.75}>
+              <Text style={styles.headerPillCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleSave}
+              disabled={!isDirty || saving}
+              activeOpacity={0.85}
+              style={[styles.headerPillSave, { opacity: isDirty && !saving ? 1 : 0.4 }]}
+            >
+              <Text style={styles.headerPillSaveText}>{saving ? "Saving…" : "Save"}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity onPress={handleEdit} style={styles.headerPillEdit} activeOpacity={0.75}>
+            <MaterialCommunityIcons name="pencil-outline" size={14} color="#fff" />
+            <Text style={styles.headerPillEditText}>Edit</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
     <ScrollView
-      style={{ flex: 1, backgroundColor: colors.bg.secondary }}
-      contentContainerStyle={{ padding: spacing.lg, paddingTop: insets.top + spacing.lg, paddingBottom: BOTTOM_PAD }}
+      style={{ flex: 1 }}
+      contentContainerStyle={{ padding: spacing.lg, paddingBottom: BOTTOM_PAD }}
       showsVerticalScrollIndicator={false}
     >
       <PaywallModal visible={showPaywall} onClose={() => setShowPaywall(false)} />
@@ -306,16 +405,16 @@ export default function ProfileScreen() {
       <TouchableOpacity
         onPress={() => setShowPaywall(true)}
         activeOpacity={0.88}
-        style={[styles.upgradeBtn, { backgroundColor: colors.bg.brand }]}
+        style={[styles.upgradeBtn, { backgroundColor: "#D97706" }]}
       >
-        <MaterialCommunityIcons name="crown-outline" size={20} color="#fff" />
+        <MaterialCommunityIcons name="star" size={20} color="#FEF3C7" />
         <Text style={styles.upgradeBtnText}>Upgrade to Pro / Elite</Text>
-        <MaterialCommunityIcons name="chevron-right" size={20} color="rgba(255,255,255,0.7)" />
+        <MaterialCommunityIcons name="chevron-right" size={20} color="rgba(254,243,199,0.7)" />
       </TouchableOpacity>
 
       {/* ── Avatar ── */}
       <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, alignItems: "center" }]}>
-        <TouchableOpacity onPress={handlePickAvatar} activeOpacity={0.8} disabled={uploadingAvatar} style={styles.avatarWrap}>
+        <TouchableOpacity onPress={handlePickAvatar} activeOpacity={isEditing ? 0.8 : 1} disabled={uploadingAvatar || !isEditing} style={styles.avatarWrap}>
           {avatarUri ? (
             <Image source={{ uri: avatarUri }} style={styles.avatarImage} contentFit="cover" />
           ) : (
@@ -323,9 +422,11 @@ export default function ProfileScreen() {
               <MaterialCommunityIcons name="account-outline" size={48} color={colors.text.tertiary} />
             </View>
           )}
-          <View style={[styles.avatarEditBadge, { backgroundColor: colors.bg.brand }]}>
-            <MaterialCommunityIcons name={uploadingAvatar ? "loading" : "camera-outline"} size={14} color="#fff" />
-          </View>
+          {isEditing && (
+            <View style={[styles.avatarEditBadge, { backgroundColor: colors.bg.brand }]}>
+              <MaterialCommunityIcons name={uploadingAvatar ? "loading" : "camera-outline"} size={14} color="#fff" />
+            </View>
+          )}
         </TouchableOpacity>
         <Text style={[styles.avatarName, { color: colors.text.primary }]}>
           {profile?.display_name || "Your Profile"}
@@ -346,6 +447,7 @@ export default function ProfileScreen() {
           value={username}
           onChangeText={setUsername}
           autoCapitalize="none"
+          editable={isEditing}
         />
         <FieldRow
           icon="account-outline"
@@ -353,6 +455,7 @@ export default function ProfileScreen() {
           placeholder="Display name"
           value={displayName}
           onChangeText={setDisplayName}
+          editable={isEditing}
         />
         <FieldRow
           icon="text-box-outline"
@@ -361,8 +464,9 @@ export default function ProfileScreen() {
           value={bio}
           onChangeText={setBio}
           multiline
+          editable={isEditing}
         />
-        <CountryRow value={country} onChange={setCountry} isLast />
+        <CountryRow value={country} onChange={setCountry} isLast editable={isEditing} />
       </View>
 
       {/* ── Social channels ── */}
@@ -375,6 +479,7 @@ export default function ProfileScreen() {
           value={twitter}
           onChangeText={setTwitter}
           autoCapitalize="none"
+          editable={isEditing}
         />
         <FieldRow
           icon="instagram"
@@ -383,6 +488,7 @@ export default function ProfileScreen() {
           value={instagram}
           onChangeText={setInstagram}
           autoCapitalize="none"
+          editable={isEditing}
         />
         <FieldRow
           icon="youtube"
@@ -391,6 +497,7 @@ export default function ProfileScreen() {
           value={youtube}
           onChangeText={setYoutube}
           autoCapitalize="none"
+          editable={isEditing}
         />
         <FieldRow
           icon="twitch"
@@ -399,6 +506,7 @@ export default function ProfileScreen() {
           value={twitch}
           onChangeText={setTwitch}
           autoCapitalize="none"
+          editable={isEditing}
         />
         <FieldRow
           icon="cards-playing-outline"
@@ -408,6 +516,7 @@ export default function ProfileScreen() {
           onChangeText={setHendonMob}
           keyboardType="url"
           autoCapitalize="none"
+          editable={isEditing}
         />
         <FieldRow
           icon="poker-chip"
@@ -418,28 +527,32 @@ export default function ProfileScreen() {
           keyboardType="url"
           autoCapitalize="none"
           isLast
+          editable={isEditing}
         />
       </View>
-
-      {/* ── Save ── */}
-      <TouchableOpacity
-        onPress={handleSave}
-        disabled={saving}
-        activeOpacity={0.85}
-        style={[styles.saveBtn, { backgroundColor: colors.bg.brand, opacity: saving ? 0.6 : 1 }]}
-      >
-        <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>
-          {saving ? "Saving…" : "Save Profile"}
-        </Text>
-      </TouchableOpacity>
 
       {/* ── Account ── */}
       <SectionHeader label="Account" />
       <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, padding: 0, overflow: "hidden" }]}>
+        <MenuRow
+          icon="cloud-download-outline"
+          label={isSyncing ? "Restoring…" : "Restore from Cloud"}
+          onPress={() => {
+            Alert.alert(
+              "Restore from Cloud",
+              "This will sync your cloud data to this device. Any local-only data will be pushed to the cloud first.",
+              [
+                { text: "Cancel", style: "cancel" },
+                { text: "Restore", onPress: () => restoreFromCloud() },
+              ]
+            );
+          }}
+        />
         <MenuRow icon="logout" label="Sign Out" iconColor={colors.text.danger} labelColor={colors.text.danger} onPress={handleSignOut} />
         <MenuRow icon="delete-outline" label="Delete Account" iconColor={colors.text.danger} labelColor={colors.text.danger} onPress={handleDeleteAccount} hideChevron isLast />
       </View>
     </ScrollView>
+    </View>
   );
 }
 
@@ -459,6 +572,47 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginBottom: 8,
     marginLeft: 4,
+  },
+
+  // Header pills
+  headerPillEdit: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginBottom: 2,
+  },
+  headerPillEditText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  headerPillCancel: {
+    backgroundColor: "rgba(255,255,255,0.15)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginBottom: 2,
+  },
+  headerPillCancelText: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  headerPillSave: {
+    backgroundColor: "#fff",
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginBottom: 2,
+  },
+  headerPillSaveText: {
+    color: "#155DFC",
+    fontSize: 13,
+    fontWeight: "700",
   },
 
   // Avatar
@@ -544,7 +698,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
     borderRadius: 12,
-    borderWidth: 1,
+    borderWidth: 1.5,
     height: 50,
   },
   socialBtnText: {
@@ -575,14 +729,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "700",
-  },
-
-  // Save
-  saveBtn: {
-    borderRadius: 999,
-    paddingVertical: 15,
-    alignItems: "center",
-    marginBottom: 24,
   },
 
   // Menu row

@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
@@ -68,6 +69,7 @@ export default function StartSessionScreen() {
         state:          stateRegion,
         startTime:      now,
       });
+      router.replace("/live/active");
     } else {
       startLiveSession({
         buyIn:     parseFloat(buyIn),
@@ -76,14 +78,20 @@ export default function StartSessionScreen() {
         venue:     venue.trim(),
         startTime: now,
       });
+      router.replace("/live/active");
     }
-    router.replace("/live/active");
   };
 
   const inputCard = {
-    backgroundColor: colors.bg.tertiary,
-    borderRadius: 8,
-    borderWidth: 1,
+    backgroundColor: colors.bg.primary,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: colors.border.default,
+    shadowColor: "#000" as const,
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   };
 
   const labelStyle = {
@@ -97,7 +105,7 @@ export default function StartSessionScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.bg.secondary }}
+      style={{ flex: 1, backgroundColor: colors.bg.primary }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <Animated.View style={{
@@ -115,8 +123,8 @@ export default function StartSessionScreen() {
           {showTypeToggle && (
             <SegmentedControl
               options={[
-                { value: "cash", label: "Cash Game" },
-                { value: "tournament", label: "Tournament" },
+                { value: "cash",       label: "Cash Game",   icon: "cash-outline"   },
+                { value: "tournament", label: "Tournament",   icon: "trophy-outline" },
               ]}
               selected={type}
               onChange={(value) => {
@@ -179,33 +187,44 @@ export default function StartSessionScreen() {
           </View>
 
           {/* Quick buy-in chips */}
-          <View style={{ flexDirection: "row", gap: spacing.sm, marginBottom: spacing["2xl"] }}>
-            {QUICK_BUYINS.map((amount) => (
-              <TouchableOpacity
-                key={amount}
-                onPress={() => setBuyIn(String(amount))}
-                style={{
-                  flex: 1,
-                  paddingVertical: spacing.sm,
-                  borderRadius: radius.full,
-                  alignItems: "center",
-                  backgroundColor: buyIn === String(amount) ? colors.bg.brand : colors.bg.tertiary,
-                  borderWidth: 1,
-                  borderColor: buyIn === String(amount) ? colors.border.brand : colors.border.subtle,
-                }}
-              >
-                <Text style={{
-                  color: buyIn === String(amount) ? colors.text.onBrand : colors.text.secondary,
-                  ...typography.caption,
-                  fontWeight: "600",
-                }}>
-                  ${amount}
-                </Text>
-              </TouchableOpacity>
-            ))}
+          <View style={{
+            marginHorizontal: -spacing.lg,
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.md,
+            backgroundColor: colors.bg.primary,
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderColor: colors.border.default,
+            marginBottom: spacing["2xl"],
+          }}>
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              {QUICK_BUYINS.map((amount) => (
+                <TouchableOpacity
+                  key={amount}
+                  onPress={() => setBuyIn(String(amount))}
+                  style={{
+                    flex: 1,
+                    paddingVertical: spacing.sm,
+                    borderRadius: radius.full,
+                    alignItems: "center",
+                    backgroundColor: buyIn === String(amount) ? colors.bg.brand : colors.bg.tertiary,
+                    borderWidth: 1,
+                    borderColor: buyIn === String(amount) ? colors.border.brand : colors.border.default,
+                  }}
+                >
+                  <Text style={{
+                    color: buyIn === String(amount) ? colors.text.onBrand : colors.text.secondary,
+                    ...typography.caption,
+                    fontWeight: "600",
+                  }}>
+                    ${amount}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
 
-          {/* ── Entries (tournament only) ── */}
+          {/* ── Entries + Sell Action (tournament only) ── */}
           {type === "tournament" && (
             <>
               <Text style={labelStyle}>Total Entries (optional)</Text>
@@ -225,6 +244,7 @@ export default function StartSessionScreen() {
                   style={{ color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, textAlign: "right" }}
                 />
               </View>
+
             </>
           )}
 
@@ -232,11 +252,20 @@ export default function StartSessionScreen() {
           {type === "cash" && (
             <>
               <Text style={labelStyle}>Stakes</Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing["2xl"] }}>
-                {STAKES.map((s) => (
-                  <Chip key={s} label={s} selected={stakes === s} onPress={() => setStakes(s)}
-                    colors={colors} spacing={spacing} radius={radius} typography={typography} />
-                ))}
+              <View style={{
+                backgroundColor: colors.bg.tertiary,
+                borderRadius: 12,
+                borderWidth: 1.5,
+                borderColor: colors.border.default,
+                padding: spacing.md,
+                marginBottom: spacing["2xl"],
+              }}>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+                  {STAKES.map((s) => (
+                    <Chip key={s} label={s} selected={stakes === s} onPress={() => setStakes(s)}
+                      colors={colors} spacing={spacing} radius={radius} typography={typography} />
+                  ))}
+                </View>
               </View>
             </>
           )}
@@ -285,6 +314,7 @@ export default function StartSessionScreen() {
           </TouchableOpacity>
         </View>
       </Animated.View>
+
     </KeyboardAvoidingView>
   );
 }

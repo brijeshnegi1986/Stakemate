@@ -1,8 +1,10 @@
 import { supabase } from "@/lib/supabase";
-import { pullFromCloud } from "@/lib/sync";
+import { pullFromCloud, pushAllToCloud, clearLocalUserData } from "@/lib/sync";
+import { getSetting, setSetting } from "@/db/database";
+import { registerAndSavePushToken } from "@/lib/notifications";
 import { Session, User } from "@supabase/supabase-js";
 import * as AppleAuthentication from "expo-apple-authentication";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { Alert, Platform } from "react-native";
@@ -29,10 +31,12 @@ type AuthContextType = {
   user: User | null;
   profile: Profile | null;
   loading: boolean;
+  isSyncing: boolean;
   signInWithApple: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  restoreFromCloud: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -40,16 +44,22 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   profile: null,
   loading: true,
+  isSyncing: false,
   signInWithApple: async () => {},
   signInWithGoogle: async () => {},
   signOut: async () => {},
   refreshProfile: async () => {},
+  restoreFromCloud: async () => {},
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  // Tracks whether we've already restored cloud data for the current sign-in.
+  // Prevents duplicate wipes on every Supabase token refresh (which also fires SIGNED_IN).
+  const hasPulledRef = useRef(false);
 
   async function handleDeepLink(url: string) {
     if (!url.includes("auth/callback")) return;
@@ -80,11 +90,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(session);
       if (session) {
         fetchProfile(session.user.id);
-        if (event === "SIGNED_IN") {
-          pullFromCloud(session.user.id).catch(console.error);
+        // Pull on first sign-in or on initial session load (e.g. after reinstall).
+        // TOKEN_REFRESHED also emits SIGNED_IN — the ref guard prevents re-wiping on refresh.
+        if ((event === "SIGNED_IN" || event === "INITIAL_SESSION") && !hasPulledRef.current) {
+          hasPulledRef.current = true;
+          setIsSyncing(true);
+
+          const storedUserId = getSetting("current_user_id");
+          const isAccountSwitch = !!storedUserId && storedUserId !== session.user.id;
+          setSetting("current_user_id", session.user.id);
+
+          if (isAccountSwitch) {
+            // Account switch: old account's data was already pushed during sign-out.
+            // Safe to clear local now and restore the new account from cloud.
+            clearLocalUserData();
+            pullFromCloud(session.user.id)
+              .catch(console.error)
+              .finally(() => setIsSyncing(false));
+          } else {
+            // Same account (app update / reinstall / token refresh):
+            // Push any local data that may not have synced, then restore from cloud.
+            pushAllToCloud(session.user.id)
+              .catch(console.error)
+              .finally(() =>
+                pullFromCloud(session.user.id)
+                  .catch(console.error)
+                  .finally(() => setIsSyncing(false))
+              );
+          }
+          registerAndSavePushToken(session.user.id).catch(console.error);
         }
       } else {
         setProfile(null);
+        hasPulledRef.current = false;
       }
     });
 
@@ -108,6 +146,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function refreshProfile() {
     if (session) await fetchProfile(session.user.id);
+  }
+
+  async function restoreFromCloud() {
+    if (!session?.user.id) return;
+    setIsSyncing(true);
+    await pushAllToCloud(session.user.id).catch(console.error);
+    await pullFromCloud(session.user.id).catch(console.error);
+    setIsSyncing(false);
   }
 
   async function signInWithApple() {
@@ -160,6 +206,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function signOut() {
+    // Push all local data to cloud before signing out so nothing is lost on account switch.
+    const userId = session?.user.id;
+    if (userId) {
+      await pushAllToCloud(userId).catch(console.error);
+    }
     await supabase.auth.signOut();
     setProfile(null);
   }
@@ -169,11 +220,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       session,
       user: session?.user ?? null,
       profile,
+      isSyncing,
       loading,
       signInWithApple,
       signInWithGoogle,
       signOut,
       refreshProfile,
+      restoreFromCloud,
     }}>
       {children}
     </AuthContext.Provider>

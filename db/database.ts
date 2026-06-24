@@ -127,14 +127,15 @@ export const addSession = (session: {
   venue: string;
   profit: number;
   date: string;
-}) => {
-  db.runSync(
+}): number => {
+  const result = db.runSync(
     `INSERT INTO sessions
        (type, buyIn, cashOut, duration, stakes, state, venue, profit, date, status)
      VALUES ('cash', ?, ?, ?, ?, ?, ?, ?, ?, 'completed')`,
     [session.buyIn, session.cashOut, session.duration ?? 0,
      session.stakes, session.state, session.venue, session.profit, session.date]
   );
+  return result.lastInsertRowId;
 };
 
 // ─── CRUD — Tournament ────────────────────────────────────────────────────────
@@ -417,9 +418,9 @@ export const saveNoteEntry = (data: {
   enhancedNotes: string | null;
   title?: string;
   metadata?: HandMetadata | null;
-}): void => {
+}): number => {
   const now = Date.now();
-  db.runSync(
+  const result = db.runSync(
     `INSERT INTO notes_history
        (session_id, session_date, session_venue, session_profit, session_type, raw_notes, enhanced_notes, title, metadata, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -427,6 +428,7 @@ export const saveNoteEntry = (data: {
      data.sessionType, data.rawNotes, data.enhancedNotes, data.title ?? "",
      data.metadata ? JSON.stringify(data.metadata) : null, now, now]
   );
+  return result.lastInsertRowId;
 };
 
 export const updateNoteEntry = (id: number, data: {

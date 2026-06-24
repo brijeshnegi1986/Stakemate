@@ -1,11 +1,14 @@
+import { HandReviewLauncher } from "@/components/HandReviewLauncher";
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { fetchAppNotifications, getUnreadCount } from "@/lib/appNotifications";
 import { getMyStakeClaims, getMyStakeDeals, MyStakeClaim, StakeDeal } from "@/lib/stakes";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Animated,
   ScrollView,
   StyleSheet,
@@ -71,9 +74,31 @@ function fmtTourneyDateLabel(dateStr: string): string {
   return d.toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" });
 }
 
+type NextUpGroup = { imageUrl: string | null; events: TournamentEvent[] };
+
+function groupByBanner(events: TournamentEvent[]): NextUpGroup[] {
+  const map = new Map<string, TournamentEvent[]>();
+  const solo: TournamentEvent[] = [];
+  for (const e of events) {
+    const img = e.image_url?.trim() ?? "";
+    if (img) {
+      const arr = map.get(img) ?? [];
+      arr.push(e);
+      map.set(img, arr);
+    } else {
+      solo.push(e);
+    }
+  }
+  const groups: NextUpGroup[] = [];
+  for (const [img, evts] of map) groups.push({ imageUrl: img, events: evts });
+  for (const e of solo) groups.push({ imageUrl: null, events: [e] });
+  groups.sort((a, b) => a.events[0].date.localeCompare(b.events[0].date));
+  return groups;
+}
+
 export default function HomeScreen() {
   const { colors } = usePokerTheme();
-  const { profile, refreshProfile } = useAuth();
+  const { profile, refreshProfile, isSyncing } = useAuth();
   const insets = useSafeAreaInsets();
 
   const [sessions, setSessions]           = useState<Session[]>([]);
@@ -83,6 +108,8 @@ export default function HomeScreen() {
   const [myDeals,  setMyDeals]            = useState<StakeDeal[]>([]);
   const [myClaims, setMyClaims]           = useState<MyStakeClaim[]>([]);
   const [upcomingTourneys, setUpcomingTourneys] = useState<TournamentEvent[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showHandReview, setShowHandReview] = useState(false);
 
   const meta = CURRENCY_META[currency] ?? CURRENCY_META.AUD;
 
@@ -94,7 +121,7 @@ export default function HomeScreen() {
       refreshProfile();
       const todayYMD = new Date().toISOString().split("T")[0];
       const allEvents = getTournamentEvents();
-      setUpcomingTourneys(allEvents.filter((e) => e.date >= todayYMD).slice(0, 2));
+      setUpcomingTourneys(allEvents.filter((e) => e.date >= todayYMD).slice(0, 10));
       const uid = profile?.id;
       if (uid) {
         const localEventIds = new Set(getTournamentEvents().map((e) => e.id));
@@ -106,6 +133,23 @@ export default function HomeScreen() {
       }
     }, [profile?.id])
   );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!profile?.id) return;
+      getUnreadCount(profile.id).then(setUnreadCount).catch(() => {});
+    }, [profile?.id])
+  );
+
+  // Reload from SQLite once cloud sync completes
+  useEffect(() => {
+    if (!isSyncing) {
+      setSessions(getSessions() || []);
+      setActiveSession(getActiveSession());
+      const todayYMD = new Date().toISOString().split("T")[0];
+      setUpcomingTourneys(getTournamentEvents().filter((e) => e.date >= todayYMD).slice(0, 10));
+    }
+  }, [isSyncing]);
 
   const totalProfit = useMemo(
     () => sessions.reduce((s, x) => s + (x.profit || 0), 0),
@@ -150,6 +194,13 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 120 }}
       >
+        {/* ── Sync banner ── */}
+        {isSyncing && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: "#EFF6FF" }}>
+            <ActivityIndicator size="small" color={BRAND} />
+            <Text style={{ color: BRAND, fontSize: 13, fontWeight: "500" }}>Syncing your data…</Text>
+          </View>
+        )}
         {/* ── Blue header ── */}
         <View style={[styles.topBar, { backgroundColor: BRAND, paddingTop: insets.top + 10 }]}>
           <View style={styles.topBarLeft}>
@@ -167,6 +218,14 @@ export default function HomeScreen() {
             </View>
           </View>
           <View style={styles.topBarActions}>
+            <TouchableOpacity onPress={() => router.push("/notifications" as any)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ position: "relative" }}>
+              <Ionicons name="notifications-outline" size={22} color="rgba(255,255,255,0.85)" />
+              {unreadCount > 0 && (
+                <View style={styles.notifBadge}>
+                  <Text style={styles.notifBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => router.push("/settings")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="settings-outline" size={22} color="rgba(255,255,255,0.85)" />
             </TouchableOpacity>
@@ -265,6 +324,22 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* ── AI Hand Review card ── */}
+        <TouchableOpacity
+          onPress={() => setShowHandReview(true)}
+          activeOpacity={0.82}
+          style={[styles.handReviewCard, { backgroundColor: "#7C3AED12", borderColor: "#7C3AED30" }]}
+        >
+          <View style={[styles.handReviewIcon, { backgroundColor: "#7C3AED18" }]}>
+            <Ionicons name="color-wand-outline" size={18} color="#7C3AED" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.handReviewTitle, { color: "#7C3AED" }]}>AI Hand Review</Text>
+            <Text style={[styles.handReviewSub, { color: "#7C3AED99" }]}>Describe a hand — get instant coaching</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color="#7C3AED80" />
+        </TouchableOpacity>
+
         {/* ── Live session banner ── */}
         {activeSession && (
           <TouchableOpacity
@@ -304,7 +379,47 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               </View>
               <View style={{ gap: 8 }}>
-                {upcomingTourneys.map((t) => {
+                {groupByBanner(upcomingTourneys).map((g, gi) => {
+                  const isSeries = g.events.length > 1;
+                  if (isSeries) {
+                    return (
+                      <TouchableOpacity
+                        key={gi}
+                        onPress={() => router.navigate("/(tabs)/calendar")}
+                        activeOpacity={0.75}
+                        style={[styles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, padding: 0, overflow: "hidden" }]}
+                      >
+                        {g.imageUrl ? (
+                          <Image source={{ uri: g.imageUrl }} style={{ width: "100%", height: 120 }} contentFit="cover" />
+                        ) : null}
+                        {g.events.map((t, i) => {
+                          const label = fmtTourneyDateLabel(t.date);
+                          const isToday = label === "Today";
+                          const labelColor = isToday ? "#22C55E" : colors.text.tertiary;
+                          const labelBg = isToday ? "#22C55E15" : colors.bg.secondary;
+                          return (
+                            <View key={t.id}>
+                              {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.default, marginHorizontal: 12 }} />}
+                              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12 }}>
+                                <View style={{ flex: 1, gap: 2 }}>
+                                  <Text style={[styles.stakeCardName, { color: colors.text.primary }]} numberOfLines={1}>{t.name}</Text>
+                                  {(t.venue || t.buyin) ? (
+                                    <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]} numberOfLines={1}>
+                                      {[t.venue, t.buyin].filter(Boolean).join(" · ")}
+                                    </Text>
+                                  ) : null}
+                                </View>
+                                <View style={[styles.stakeStatusPill, { backgroundColor: labelBg }]}>
+                                  <Text style={[styles.stakeStatusText, { color: labelColor }]}>{label}</Text>
+                                </View>
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </TouchableOpacity>
+                    );
+                  }
+                  const t = g.events[0];
                   const label = fmtTourneyDateLabel(t.date);
                   const isToday = label === "Today";
                   const labelColor = isToday ? "#22C55E" : colors.text.tertiary;
@@ -317,26 +432,16 @@ export default function HomeScreen() {
                       style={[styles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: isToday ? "#22C55E30" : colors.border.default, padding: 0, overflow: "hidden" }]}
                     >
                       {t.image_url ? (
-                        <Image
-                          source={{ uri: t.image_url }}
-                          style={{ width: "100%", height: 120 }}
-                          contentFit="cover"
-                        />
+                        <Image source={{ uri: t.image_url }} style={{ width: "100%", height: 120 }} contentFit="cover" />
                       ) : null}
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12 }}>
                         <View style={{ flex: 1, gap: 2 }}>
-                          <Text style={[styles.stakeCardName, { color: colors.text.primary }]} numberOfLines={1}>
-                            {t.name}
-                          </Text>
+                          <Text style={[styles.stakeCardName, { color: colors.text.primary }]} numberOfLines={1}>{t.name}</Text>
                           {t.venue ? (
-                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]} numberOfLines={1}>
-                              {t.venue}
-                            </Text>
+                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]} numberOfLines={1}>{t.venue}</Text>
                           ) : null}
                           {t.buyin ? (
-                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]}>
-                              {t.buyin}
-                            </Text>
+                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]}>{t.buyin}</Text>
                           ) : null}
                         </View>
                         <View style={[styles.stakeStatusPill, { backgroundColor: labelBg }]}>
@@ -392,7 +497,7 @@ export default function HomeScreen() {
                             <Text style={[styles.stakeCardName, { color: colors.text.primary }]} numberOfLines={1}>
                               {deal.tournament_name}
                             </Text>
-                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]}>
+                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]} numberOfLines={1}>
                               Selling {totalPct}%
                               {deal.price_per_percent ? ` · $${deal.price_per_percent}/% ` : ""}
                               {deal.tournament_date ? ` · ${new Date(deal.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" })}` : ""}
@@ -516,6 +621,8 @@ export default function HomeScreen() {
           </View>
         </View>
       </ScrollView>
+
+      <HandReviewLauncher visible={showHandReview} onClose={() => setShowHandReview(false)} />
     </View>
   );
 }
@@ -864,9 +971,56 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignSelf: "flex-start",
     marginTop: 2,
+    flexShrink: 0,
   },
   stakeStatusText: {
     fontSize: 11,
     fontWeight: "700",
+  },
+
+  // Notification badge on bell icon
+  notifBadge: {
+    position: "absolute",
+    top: -4,
+    right: -6,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#EF4444",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  notifBadgeText: {
+    color: "#fff",
+    fontSize: 9,
+    fontWeight: "800",
+  },
+
+  handReviewCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 10,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  handReviewIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  handReviewTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  handReviewSub: {
+    fontSize: 12,
+    marginTop: 1,
   },
 });

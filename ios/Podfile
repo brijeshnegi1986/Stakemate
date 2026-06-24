@@ -64,5 +64,16 @@ target 'Stakemate' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        # Fix SwiftUICore linker error on Xcode 16 simulator builds
+        config.build_settings['OTHER_LDFLAGS'] ||= ['$(inherited)']
+        flags = config.build_settings['OTHER_LDFLAGS']
+        flags = [flags] if flags.is_a?(String)
+        unless flags.include?('-weak_framework SwiftUICore')
+          config.build_settings['OTHER_LDFLAGS'] = flags + ['-weak_framework SwiftUICore']
+        end
+      end
+    end
   end
 end

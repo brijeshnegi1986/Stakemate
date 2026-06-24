@@ -144,17 +144,29 @@ export async function createStakeDeal(input: CreateStakeDealInput): Promise<Stak
 export async function getStakeDeal(dealId: string): Promise<StakeDeal | null> {
   const { data, error } = await supabase
     .from("stake_deals")
-    .select(`*, stake_claims(*, profiles:buyer_id(id, username, display_name, avatar_url))`)
+    .select(`*, stake_claims(id, deal_id, buyer_id, percent_claimed, amount_paid, status, message, created_at)`)
     .eq("id", dealId)
     .single();
 
   if (error) return null;
 
   const deal = data as any;
-  const claims: StakeClaim[] = (deal.stake_claims ?? []).map((c: any) => ({
+  const rawClaims: any[] = deal.stake_claims ?? [];
+
+  // Fetch buyer profiles in a separate query — avoids needing a FK to public.profiles
+  let buyerProfileMap = new Map<string, any>();
+  if (rawClaims.length > 0) {
+    const buyerIds = [...new Set(rawClaims.map((c: any) => c.buyer_id as string))];
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select("id, username, display_name, avatar_url")
+      .in("id", buyerIds);
+    for (const p of profiles ?? []) buyerProfileMap.set(p.id, p);
+  }
+
+  const claims: StakeClaim[] = rawClaims.map((c: any) => ({
     ...c,
-    buyer_profile: c.profiles ?? null,
-    profiles: undefined,
+    buyer_profile: buyerProfileMap.get(c.buyer_id) ?? null,
   }));
 
   return { ...deal, claims, stake_claims: undefined };
@@ -340,16 +352,25 @@ export async function claimStake(
   percentClaimed: number,
   message?: string
 ): Promise<StakeClaim> {
-  const { data: deal } = await supabase
-    .from("stake_deals")
-    .select("price_per_percent, markup, action_claimed, total_action_selling")
-    .eq("id", dealId)
-    .single();
+  const [{ data: deal }, { data: activeClaims }] = await Promise.all([
+    supabase
+      .from("stake_deals")
+      .select("price_per_percent, markup, total_action_selling")
+      .eq("id", dealId)
+      .single(),
+    // Check pending + confirmed claims to prevent double-booking
+    supabase
+      .from("stake_claims")
+      .select("percent_claimed")
+      .eq("deal_id", dealId)
+      .in("status", ["pending", "confirmed"]),
+  ]);
 
   if (!deal) throw new Error("Deal not found");
 
-  const remaining = deal.total_action_selling - deal.action_claimed;
-  if (percentClaimed > remaining) throw new Error(`Only ${remaining}% remaining`);
+  const alreadyClaimed = (activeClaims ?? []).reduce((s, c) => s + c.percent_claimed, 0);
+  const remaining = deal.total_action_selling - alreadyClaimed;
+  if (percentClaimed > remaining) throw new Error(`Only ${remaining.toFixed(0)}% remaining`);
 
   const amountPaid =
     deal.price_per_percent != null
@@ -370,24 +391,44 @@ export async function claimStake(
     .single();
 
   if (error) throw error;
-
-  await supabase
-    .from("stake_deals")
-    .update({ action_claimed: deal.action_claimed + percentClaimed })
-    .eq("id", dealId);
-
+  // action_claimed is updated by the seller when confirming (owner has UPDATE permission)
   return data as StakeClaim;
 }
 
 export async function updateClaimStatus(
   claimId: string,
   status: "confirmed" | "rejected"
-): Promise<void> {
+): Promise<{ percentClaimed: number }> {
+  // Fetch claim details first so we can update action_claimed on the deal
+  const { data: claim } = await supabase
+    .from("stake_claims")
+    .select("deal_id, percent_claimed")
+    .eq("id", claimId)
+    .single();
+
   const { error } = await supabase
     .from("stake_claims")
     .update({ status })
     .eq("id", claimId);
   if (error) throw error;
+
+  // On confirmation, increment the deal's action_claimed.
+  // The seller owns the deal so this UPDATE is permitted by RLS.
+  if (status === "confirmed" && claim) {
+    const { data: deal } = await supabase
+      .from("stake_deals")
+      .select("action_claimed")
+      .eq("id", claim.deal_id)
+      .single();
+    if (deal) {
+      await supabase
+        .from("stake_deals")
+        .update({ action_claimed: deal.action_claimed + claim.percent_claimed })
+        .eq("id", claim.deal_id);
+    }
+  }
+
+  return { percentClaimed: claim?.percent_claimed ?? 0 };
 }
 
 export async function withdrawClaim(claimId: string, dealId: string, percent: number): Promise<void> {

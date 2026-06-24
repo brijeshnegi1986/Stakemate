@@ -7,9 +7,9 @@ import {
 import { useSubscription } from "@/context/SubscriptionContext";
 import { Ionicons } from "@expo/vector-icons";
 import { presentCodeRedemptionSheetIOS } from "expo-iap";
+import { Image } from "expo-image";
 import { router } from "expo-router";
 import { useState } from "react";
-import { Image } from "expo-image";
 import {
   ActivityIndicator,
   Alert,
@@ -30,14 +30,14 @@ const BRAND = "#155DFC";
 
 const PLAN_META: Record<Plan, { label: string; tagline: string; color: string; accent: string }> = {
   pro: {
-    label:   "Stakemate Pro",
+    label:   "Pro",
     tagline: "Serious players, serious stats",
     color:   BRAND,
     accent:  "#4B82FF",
   },
   elite: {
-    label:   "Stakemate Elite",
-    tagline: "Everything Pro + AI hand analysis",
+    label:   "Elite",
+    tagline: "Everything Pro + AI coaching",
     color:   "#7C3AED",
     accent:  "#9B5DF5",
   },
@@ -59,23 +59,25 @@ const PRODUCT_IDS: Record<Plan, Record<Period, string>> = {
   elite: { yearly: PRODUCT_ELITE_YEARLY, monthly: PRODUCT_ELITE_MONTHLY },
 };
 
-const PRO_FEATURES = [
-  "Session analytics & charts",
-  "Hourly rate tracking",
-  "Win/loss streaks",
-  "Multi-bankroll tracking",
-  "Hand history & replays",
-  "Tournament calendar",
-  "Staking manager",
-  "Social feed & follows",
-  "Dark mode",
-  "PDF exports",
-  "Currency conversion",
+const PRO_FEATURES: { text: string; icon: string }[] = [
+  { text: "Unlimited sessions & notes",       icon: "infinite-outline" },
+  { text: "Full analytics & charts",          icon: "bar-chart-outline" },
+  { text: "Hourly rate & win rate tracking",  icon: "trending-up-outline" },
+  { text: "Win/loss streak tracking",         icon: "flame-outline" },
+  { text: "Tournament calendar",              icon: "calendar-outline" },
+  { text: "Device calendar sync",             icon: "sync-outline" },
+  { text: "Social feed — view & interact",    icon: "globe-outline" },
+  { text: "Dark mode",                        icon: "moon-outline" },
+  { text: "PDF export",                       icon: "document-text-outline" },
+  { text: "Currency conversion",              icon: "cash-outline" },
+  { text: "Location auto-detect",             icon: "location-outline" },
 ];
 
-const ELITE_ONLY = [
-  "AI hand exploit analysis",
-  "AI session coaching",
+const ELITE_ONLY: { text: string; icon: string }[] = [
+  { text: "AI hand exploit analysis",         icon: "hardware-chip-outline" },
+  { text: "AI session coaching",              icon: "chatbubble-ellipses-outline" },
+  { text: "AI note enhance & compress",       icon: "sparkles-outline" },
+  { text: "Publish tournaments to community", icon: "megaphone-outline" },
 ];
 
 export function PaywallModal({
@@ -224,11 +226,11 @@ export function PaywallModal({
             {plan === "elite" && (
               <>
                 {ELITE_ONLY.map((f) => (
-                  <View key={f} style={styles.featureItem}>
+                  <View key={f.text} style={styles.featureItem}>
                     <View style={[styles.featCheck, { backgroundColor: "#7C3AED" }]}>
-                      <Ionicons name="hardware-chip-outline" size={12} color="#fff" />
+                      <Ionicons name={f.icon as any} size={12} color="#fff" />
                     </View>
-                    <Text style={[styles.featureText, { fontWeight: "700", color: "#7C3AED" }]}>{f}</Text>
+                    <Text style={[styles.featureText, { fontWeight: "700", color: "#7C3AED" }]}>{f.text}</Text>
                     <View style={styles.eliteTag}>
                       <Text style={styles.eliteTagText}>ELITE</Text>
                     </View>
@@ -240,11 +242,11 @@ export function PaywallModal({
             )}
 
             {PRO_FEATURES.map((f) => (
-              <View key={f} style={styles.featureItem}>
+              <View key={f.text} style={styles.featureItem}>
                 <View style={[styles.featCheck, { backgroundColor: `${meta.color}18` }]}>
-                  <Ionicons name="checkmark" size={13} color={meta.color} />
+                  <Ionicons name={f.icon as any} size={13} color={meta.color} />
                 </View>
-                <Text style={styles.featureText}>{f}</Text>
+                <Text style={styles.featureText}>{f.text}</Text>
               </View>
             ))}
           </View>

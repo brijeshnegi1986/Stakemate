@@ -1,11 +1,29 @@
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
+import { StatusBar } from "expo-status-bar";
 import { Tabs } from "expo-router";
+import { View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+const BRAND = "#155DFC";
 
 export default function TabLayout() {
   const { colors } = usePokerTheme();
+  const insets = useSafeAreaInsets();
 
   return (
+    <View style={{ flex: 1 }}>
+      <StatusBar style="light" />
+      {/* Brand blue band that fills the status bar area on every tab screen */}
+      <View
+        style={{
+          position: "absolute",
+          top: 0, left: 0, right: 0,
+          height: insets.top,
+          backgroundColor: BRAND,
+          zIndex: 999,
+        }}
+      />
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -24,7 +42,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="history"
         options={{
-          title: "Stats",
+          title: "Bankroll",
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons name={focused ? "pie-chart" : "pie-chart-outline"} size={size} color={color} />
           ),
@@ -33,7 +51,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="social"
         options={{
-          title: "Social",
+          title: "Community",
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons name={focused ? "people" : "people-outline"} size={size} color={color} />
           ),
@@ -71,5 +89,6 @@ export default function TabLayout() {
       <Tabs.Screen name="live"    options={{ href: null }} />
       <Tabs.Screen name="add"     options={{ href: null }} />
     </Tabs>
+    </View>
   );
 }

@@ -24,6 +24,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { deleteSession, getRebuysTotal, parseRebuys, saveNotes, saveNoteEntry } from "../db/database";
+import { syncNoteToCloud, deleteSessionFromCloud } from "@/lib/sync";
 
 export default function SessionDetailScreen() {
   const { session: sessionParam } = useLocalSearchParams();
@@ -56,11 +57,12 @@ export default function SessionDetailScreen() {
     setNotesChanged(false);
     Keyboard.dismiss();
     try {
-      saveNoteEntry({
+      const noteId = saveNoteEntry({
         sessionId: session.id, sessionDate: session.date,
         sessionVenue: session.venue ?? "", sessionProfit: session.profit ?? 0,
         sessionType: session.type ?? "cash", rawNotes, enhancedNotes: null,
       });
+      if (user?.id) syncNoteToCloud(user.id, noteId).catch(console.error);
     } catch {}
   };
 
@@ -72,6 +74,7 @@ export default function SessionDetailScreen() {
         style: "destructive",
         onPress: () => {
           deleteSession(session.id);
+          if (user?.id) deleteSessionFromCloud(user.id, session.id).catch(console.error);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           router.replace("/(tabs)");
         },

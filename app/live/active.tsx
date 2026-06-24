@@ -1,5 +1,5 @@
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -9,13 +9,14 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
-  StatusBar,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   useWindowDimensions,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   abandonLiveSession,
   addRebuy,
@@ -46,6 +47,7 @@ function formatCountdown(seconds: number): string {
 export default function ActiveSessionScreen() {
   const { colors, spacing, radius, typography, inputTypo } = usePokerTheme();
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
   const innerRing = Math.min(width * 0.55, 220);
   const outerRing = innerRing + 44;
@@ -240,22 +242,25 @@ export default function ActiveSessionScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
-      <StatusBar barStyle={colors.bg.primary === "#020618" ? "light-content" : "dark-content"} />
 
-      {/* ── TOP BAR ── */}
+      {/* ── TOP BAR — matches Stack modal header height/spacing ── */}
       <View style={{
-        paddingTop: Platform.OS === "ios" ? 60 : 40,
-        paddingHorizontal: spacing.lg,
-        paddingBottom: spacing.sm,
+        height: 44,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: spacing.md,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: colors.border.default,
+        marginTop: 8,
       }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          {/* Home */}
+          {/* Dismiss / go home */}
           <TouchableOpacity
             onPress={() => router.replace("/(tabs)")}
             hitSlop={{ top: 12, bottom: 12, left: 4, right: 16 }}
             style={{ width: 68, alignItems: "flex-start" }}
           >
-            <MaterialCommunityIcons name="home-outline" size={24} color={colors.text.secondary} />
+            <Ionicons name="chevron-down" size={26} color={colors.text.primary} />
           </TouchableOpacity>
 
           {/* LIVE / BREAK badge */}
@@ -291,7 +296,6 @@ export default function ActiveSessionScreen() {
               Abandon
             </Text>
           </TouchableOpacity>
-        </View>
       </View>
 
       {/* ── CENTER: TIMER ── */}
@@ -415,7 +419,7 @@ export default function ActiveSessionScreen() {
 
         {/* Rebuy FAB */}
         <SmallFAB
-          icon="cash-plus"
+          icon="cash-outline"
           label="Rebuy"
           onPress={handleOpenRebuy}
           active={rebuysCount > 0}
@@ -691,7 +695,7 @@ function SmallFAB({ icon, label, onPress, active, activeColor, activeBorder, act
         elevation: active ? 4 : 1,
       }}
     >
-      <MaterialCommunityIcons
+      <Ionicons
         name={icon}
         size={22}
         color={active ? activeIcon : colors.text.secondary}

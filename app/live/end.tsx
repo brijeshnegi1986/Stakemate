@@ -1,4 +1,6 @@
+import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { syncSessionToCloud } from "@/lib/sync";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Haptics from "expo-haptics";
@@ -15,6 +17,7 @@ import { endLiveSession, endLiveTournament, getActiveSession, getRebuysTotal, pa
 
 export default function EndSessionScreen() {
   const { colors, spacing, radius, typography, inputTypo } = usePokerTheme();
+  const { user } = useAuth();
   const [session, setSession] = useState<Session | null>(null);
 
   // Cash
@@ -87,6 +90,7 @@ export default function EndSessionScreen() {
     } else {
       endLiveSession(session.id, parseFloat(cashOut), profit, durationHours);
     }
+    if (user?.id) syncSessionToCloud(user.id, session.id).catch(console.error);
     router.replace("/(tabs)");
   };
 

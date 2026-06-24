@@ -1,5 +1,6 @@
 import { PaywallModal } from "@/components/PaywallModal";
 import { SegmentedControl } from "@/components/SegmentedControl";
+import { SignInSheet } from "@/components/SignInSheet";
 import { SellStakesModal } from "@/components/SellStakesModal";
 import { useAuth } from "@/context/AuthContext";
 import { useSubscription } from "@/context/SubscriptionContext";
@@ -10,6 +11,7 @@ import {
   getTournamentEvents,
   TournamentEvent,
 } from "@/db/database";
+import { syncEventToCloud, deleteEventFromCloud } from "@/lib/sync";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import {
   createPost,
@@ -21,20 +23,22 @@ import {
   unfollowPlayer,
   unsaveTournamentPost,
 } from "@/lib/social";
-import { cancelStakeDeal, claimStake, getOpenDealByAuthorAndTournament, getStakeDeal } from "@/lib/stakes";
-import { deleteMySubmission, fetchMyPendingSubmissions, fetchOfficialTournaments, OfficialTournament, submitTournamentToDirectory } from "@/lib/tournaments";
+import { cancelStakeDeal, claimStake, getOpenDealByAuthorAndTournament, getStakeDeal, isPublishedStatus } from "@/lib/stakes";
+import { deleteMySubmission, deleteMyTournament, deleteSeriesTournaments, fetchMyPendingSubmissions, fetchOfficialTournaments, fetchSeries, fetchVenues, OfficialTournament, SeriesInfo, submitTournamentToDirectory, TournamentType, unpublishMyTournament, unpublishSeriesTournaments, updateMyTournament, VenueInfo } from "@/lib/tournaments";
 import { Ionicons } from "@expo/vector-icons";
 import * as Calendar from "expo-calendar";
-import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import { useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Image,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   ScrollView,
@@ -124,45 +128,64 @@ async function scheduleNotifications(event: TournamentEvent) {
 
 // ─── Calendar sync helper ─────────────────────────────────────────────────────
 
-async function addToDeviceCalendar(event: TournamentEvent): Promise<boolean> {
+type CalendarResult = { ok: boolean; reason?: "denied" | "no_calendar" | "error" };
+
+async function addToDeviceCalendar(event: TournamentEvent): Promise<CalendarResult> {
   try {
-    const permResult = await Calendar.requestCalendarPermissions();
-    if (permResult?.status !== "granted") return false;
+    const { status } = await Calendar.requestCalendarPermissions();
+    if (status !== "granted") return { ok: false, reason: "denied" };
 
     let targetCal: any = null;
 
     if (Platform.OS === "ios") {
-      try {
-        targetCal = Calendar.getDefaultCalendarSync();
-      } catch { /* fall through to manual search */ }
+      try { targetCal = Calendar.getDefaultCalendarSync(); } catch { /* fall through */ }
     }
 
     if (!targetCal) {
       const calendars = await Calendar.getCalendars(Calendar.EntityTypes.EVENT);
       if (Platform.OS === "ios") {
-        targetCal = calendars.find((c) => c.allowsModifications && (c.type === "caldav" || c.type === "local"))
-          ?? calendars.find((c) => c.allowsModifications);
+        targetCal = calendars.find((c: any) => c.allowsModifications && (c.type === "caldav" || c.type === "local"))
+          ?? calendars.find((c: any) => c.allowsModifications);
       } else {
         targetCal = calendars.find((c: any) => c.isPrimary && c.allowsModifications)
-          ?? calendars.find((c) => c.allowsModifications);
+          ?? calendars.find((c: any) => c.allowsModifications);
       }
     }
 
-    if (!targetCal) return false;
+    if (!targetCal) return { ok: false, reason: "no_calendar" };
 
     const start = new Date(event.date + "T09:00:00");
     const end   = new Date(event.date + "T18:00:00");
+    const notes = [event.buyin ? `Buy-in: ${event.buyin}` : "", event.notes || ""].filter(Boolean).join("\n") || undefined;
 
     await targetCal.createEvent({
       title: event.name,
       startDate: start,
       endDate: end,
       location: event.venue || undefined,
-      notes: [event.buyin ? `Buy-in: ${event.buyin}` : "", event.notes || ""].filter(Boolean).join("\n"),
+      notes,
       alarms: [{ relativeOffset: -1440 }, { relativeOffset: -60 }],
     });
-    return true;
-  } catch { return false; }
+    return { ok: true };
+  } catch (e) {
+    console.error("[Calendar]", e);
+    return { ok: false, reason: "error" };
+  }
+}
+
+function handleCalendarResult(result: CalendarResult) {
+  if (result.ok) {
+    Alert.alert("Added!", "Added to your device calendar.");
+  } else if (result.reason === "denied") {
+    Alert.alert("Calendar Access Denied", "Go to Settings > Stakemate > Calendars to enable.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Open Settings", onPress: () => Linking.openURL("app-settings:") },
+    ]);
+  } else if (result.reason === "no_calendar") {
+    Alert.alert("No Calendar Found", "Please ensure you have a writable calendar set up in the iOS Calendar app.");
+  } else {
+    Alert.alert("Error", "Could not add to calendar. Please try again.");
+  }
 }
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
@@ -170,7 +193,7 @@ async function addToDeviceCalendar(event: TournamentEvent): Promise<boolean> {
 export default function CalendarScreen() {
   const { colors } = usePokerTheme();
   const insets = useSafeAreaInsets();
-  const { user, profile } = useAuth();
+  const { user, profile, isSyncing } = useAuth();
   const { isPro, isElite } = useSubscription();
 
   const today = new Date();
@@ -179,7 +202,6 @@ export default function CalendarScreen() {
   const [viewMonth, setViewMonth]               = useState(today.getMonth());
   const [selectedDate, setSelectedDate]         = useState<string | null>(null);
   const [events, setEvents]                     = useState<TournamentEvent[]>([]);
-  const [showAddModal, setShowAddModal]         = useState(false);
   const [shareEvent, setShareEvent]             = useState<TournamentEvent | null>(null);
   const [stakeEvent, setStakeEvent]             = useState<TournamentEvent | null>(null);
   const [showSettings, setShowSettings]         = useState(false);
@@ -192,17 +214,103 @@ export default function CalendarScreen() {
   const [officialTournaments, setOfficialTournaments] = useState<OfficialTournament[]>([]);
   const [loadingOfficial, setLoadingOfficial]   = useState(false);
   const [pendingSubmissions, setPendingSubmissions] = useState<OfficialTournament[]>([]);
-  const [filterState, setFilterState]           = useState<string>(() => getSetting("defaultState") ?? "NSW");
+  const [editingSubmission, setEditingSubmission] = useState<OfficialTournament | null>(null);
+  const [editingApproved, setEditingApproved] = useState<OfficialTournament | null>(null);
+  const [filterState, setFilterState]           = useState<string | null>(null);
   const [searchQuery, setSearchQuery]           = useState("");
+  const [showStateFilter, setShowStateFilter]   = useState(false);
   const [selectedSeries, setSelectedSeries]     = useState<string | null>(null);
-  const [scheduleView, setScheduleView]         = useState<"list" | "month">("month");
+  const [scheduleView, setScheduleView]         = useState<"list" | "month">("list");
   const [hidePastEvents, setHidePastEvents]     = useState(false);
   const [calAccessGranted, setCalAccessGranted] = useState<boolean | null>(null);
 
-  const [form, setForm]         = useState({ name: "", venue: "", buyin: "", notes: "" });
-  const [formImage, setFormImage] = useState<string | null>(null);
+  // ── Header hide-on-scroll (Facebook style) ───────────────────────────────
+  const headerTranslateY  = useRef(new Animated.Value(0)).current;
+  const contentMarginTop  = useRef(new Animated.Value(0)).current;
+  const headerShown       = useRef(true);
+  const lastScrollY       = useRef(0);
+  const headerHeightRef   = useRef(0);
+  const [calHeaderHeight, setCalHeaderHeight] = useState(0);
+
+  useEffect(() => {
+    if (calHeaderHeight > 0 && headerShown.current) {
+      contentMarginTop.setValue(calHeaderHeight);
+    }
+  }, [calHeaderHeight]);
+
+  const handleCalScroll = useCallback((event: any) => {
+    const y    = event.nativeEvent.contentOffset.y;
+    const diff = y - lastScrollY.current;
+    lastScrollY.current = y;
+
+    if (diff > 6 && y > 10 && headerShown.current) {
+      headerShown.current = false;
+      Animated.parallel([
+        Animated.timing(headerTranslateY, { toValue: -headerHeightRef.current, duration: 220, useNativeDriver: true }),
+        Animated.timing(contentMarginTop, { toValue: 0, duration: 220, useNativeDriver: false }),
+      ]).start();
+    } else if ((diff < -6 || y <= 0) && !headerShown.current) {
+      headerShown.current = true;
+      Animated.parallel([
+        Animated.timing(headerTranslateY, { toValue: 0, duration: 220, useNativeDriver: true }),
+        Animated.timing(contentMarginTop, { toValue: headerHeightRef.current, duration: 220, useNativeDriver: false }),
+      ]).start();
+    }
+  }, [headerTranslateY, contentMarginTop]);
+
+  // ── Chips hide-on-scroll (Tournaments tab) ────────────────────────────────
+  const chipsTranslateY    = useRef(new Animated.Value(0)).current;
+  const chipsContentMargin = useRef(new Animated.Value(0)).current;
+  const chipsVisible       = useRef(true);
+  const lastTourneyScrollY = useRef(0);
+  const chipsHeightRef     = useRef(0);
+  const [chipsHeight, setChipsHeight] = useState(0);
+
+  // Keep content margin in sync once chips height is first measured
+  useEffect(() => {
+    if (chipsHeight > 0 && chipsVisible.current) {
+      chipsContentMargin.setValue(chipsHeight);
+    }
+  }, [chipsHeight]);
+
+  const handleTourneyScroll = useCallback((event: any) => {
+    const y    = event.nativeEvent.contentOffset.y;
+    const diff = y - lastTourneyScrollY.current;
+    lastTourneyScrollY.current = y;
+
+    if (diff > 6 && y > 10 && chipsVisible.current) {
+      chipsVisible.current = false;
+      Animated.parallel([
+        Animated.timing(chipsTranslateY, { toValue: -chipsHeightRef.current, duration: 220, useNativeDriver: true }),
+        Animated.timing(chipsContentMargin, { toValue: 0, duration: 220, useNativeDriver: false }),
+      ]).start();
+    } else if ((diff < -6 || y <= 0) && !chipsVisible.current) {
+      chipsVisible.current = true;
+      Animated.parallel([
+        Animated.timing(chipsTranslateY, { toValue: 0, duration: 220, useNativeDriver: true }),
+        Animated.timing(chipsContentMargin, { toValue: chipsHeightRef.current, duration: 220, useNativeDriver: false }),
+      ]).start();
+    }
+  }, [chipsTranslateY, chipsContentMargin]);
 
   const displayName = profile?.display_name || profile?.username || user?.email?.split("@")[0] || "Player";
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") return;
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low });
+        const [place] = await Location.reverseGeocodeAsync({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+        const stateMap: Record<string, string> = {
+          "New South Wales": "NSW", "Victoria": "VIC", "Queensland": "QLD",
+          "Western Australia": "WA", "South Australia": "SA",
+          "Australian Capital Territory": "ACT", "Northern Territory": "NT", "Tasmania": "TAS",
+        };
+        // Location detected but we no longer auto-filter — user controls the state filter manually
+      } catch { /* silently ignore */ }
+    })();
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -242,11 +350,11 @@ export default function CalendarScreen() {
     useCallback(() => {
       if (calTab !== "tournaments") return;
       setLoadingOfficial(true);
-      fetchOfficialTournaments({ state: filterState, search: searchQuery })
+      fetchOfficialTournaments({ state: filterState ?? undefined, search: searchQuery })
         .then(setOfficialTournaments)
         .catch(() => setOfficialTournaments([]))
         .finally(() => setLoadingOfficial(false));
-      if (user?.id && isElite) {
+      if (user?.id) {
         fetchMyPendingSubmissions(user.id)
           .then(setPendingSubmissions)
           .catch(() => setPendingSubmissions([]));
@@ -284,6 +392,11 @@ export default function CalendarScreen() {
 
   function refresh() { setEvents(getTournamentEvents()); }
 
+  // Reload from SQLite once cloud sync completes
+  useEffect(() => {
+    if (!isSyncing) refresh();
+  }, [isSyncing]);
+
   // ── Calendar grid ──────────────────────────────────────────────────────────
   const firstDay    = new Date(viewYear, viewMonth, 1).getDay();
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
@@ -302,24 +415,31 @@ export default function CalendarScreen() {
     const map = new Map<string, OfficialTournament[]>();
     const solo: OfficialTournament[] = [];
     for (const t of officialTournaments) {
-      if (t.series) {
-        const arr = map.get(t.series) ?? [];
+      const seriesKey = t.series_info?.name ?? null;
+      if (seriesKey) {
+        const arr = map.get(seriesKey) ?? [];
         arr.push(t);
-        map.set(t.series, arr);
+        map.set(seriesKey, arr);
       } else {
         solo.push(t);
       }
     }
-    const groups: { name: string; imageUrl: string | null; dateFrom: string; dateTo: string; tournaments: OfficialTournament[] }[] = [];
+    const groups: SeriesGroup[] = [];
     for (const [name, tournaments] of map) {
       if (tournaments.length === 1) {
         solo.push(tournaments[0]);
       } else {
         groups.push({
           name,
-          imageUrl: tournaments[0].series_image_url ?? null,
+          seriesId: tournaments[0].series_id ?? null,
+          submittedBy: tournaments[0].submitted_by ?? null,
+          imageUrl: tournaments[0].series_info?.banner_url ?? null,
           dateFrom: tournaments[0].tournament_date,
           dateTo: tournaments[tournaments.length - 1].tournament_date,
+          venue: tournaments[0].venue ?? "",
+          city: tournaments[0].city ?? "",
+          venueLogoUrl: tournaments[0].venue_info?.logo_url ?? null,
+          venueWebsite: tournaments[0].venue_info?.website ?? null,
           tournaments,
         });
       }
@@ -339,65 +459,6 @@ export default function CalendarScreen() {
   function handleDayPress(day: number) {
     const ymd = toYMD(viewYear, viewMonth, day);
     setSelectedDate((prev) => prev === ymd ? null : ymd);
-  }
-
-  function openAddModal(date?: string) {
-    if (date) setSelectedDate(date);
-    setForm({ name: "", venue: "", buyin: "", notes: "" });
-    setFormImage(null);
-    setShowAddModal(true);
-  }
-
-  async function handleSave(date: string = todayYMD) {
-    if (!form.name.trim()) return;
-    const saved = addTournamentEvent({
-      name:  form.name.trim(),
-      date,
-      venue: form.venue.trim(),
-      buyin: form.buyin.trim(),
-      notes: form.notes.trim(),
-      image_url: formImage ?? "",
-    });
-
-    refresh();
-    setShowAddModal(false);
-
-    const savedEvent: TournamentEvent = {
-      id: saved, date, created_at: Date.now(),
-      name: form.name.trim(), venue: form.venue.trim(),
-      buyin: form.buyin.trim(), notes: form.notes.trim(),
-      image_url: formImage ?? "",
-    };
-
-    await scheduleNotifications(savedEvent);
-
-    Alert.alert(
-      "Add to Device Calendar?",
-      "Would you like to sync this tournament to your phone's calendar?",
-      [
-        {
-          text: "Add to Calendar",
-          onPress: async () => {
-            const ok = await addToDeviceCalendar(savedEvent);
-            if (ok) Alert.alert("Added!", "Tournament added to your device calendar with reminders.");
-            else Alert.alert("Couldn't add", "Please check calendar permissions in Settings.");
-          },
-        },
-        { text: "Skip", style: "cancel" },
-      ]
-    );
-  }
-
-  async function handlePickImage() {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"] as any,
-      allowsEditing: true,
-      aspect: [16, 9],
-      quality: 0.8,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setFormImage(result.assets[0].uri);
-    }
   }
 
   // Idempotent: check server for existing deal before opening create form
@@ -435,8 +496,12 @@ export default function CalendarScreen() {
         );
         return;
       }
-      if (deal.status !== "open") {
-        Alert.alert("Deal No Longer Open", `This stake deal is currently "${deal.status}". Only open deals can be advertised.`);
+      if (deal.status === "draft") {
+        Alert.alert("Deal Not Published", "Publish your stake deal first by opening it and tapping Publish.");
+        return;
+      }
+      if (!isPublishedStatus(deal.status)) {
+        Alert.alert("Deal Unavailable", `This stake deal is "${deal.status}" and cannot be advertised.`);
         return;
       }
       const remaining = deal.total_action_selling - deal.action_claimed;
@@ -473,6 +538,7 @@ export default function CalendarScreen() {
           const evt = events.find((e) => e.id === id);
           if (evt?.stake_deal_id) cancelStakeDeal(evt.stake_deal_id).catch(() => {});
           deleteTournamentEvent(id);
+          if (user?.id) deleteEventFromCloud(user.id, id).catch(console.error);
           refresh();
         },
       },
@@ -511,61 +577,70 @@ export default function CalendarScreen() {
     : [];
 
   return (
-    <View style={[styles.root, { backgroundColor: colors.bg.secondary }]}>
+    <View style={[styles.root, { backgroundColor: colors.bg.tertiary }]}>
 
-      {/* ── Header ── */}
-      <View style={[styles.header, { backgroundColor: colors.bg.primary, paddingTop: insets.top + 12, borderBottomColor: colors.border.default }]}>
-        <View style={styles.headerRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.headerGreeting, { color: colors.text.tertiary }]}>Welcome back</Text>
-            <Text style={[styles.headerName, { color: colors.text.primary }]} numberOfLines={1}>{displayName}</Text>
-          </View>
-          <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
-            {/* Add Custom — Schedule tab only, Pro/Elite */}
-            {isPro && calTab === "schedule" && (
+      {/* ── Animated floating header ── */}
+      <Animated.View
+        style={[styles.animHeader, { transform: [{ translateY: headerTranslateY }] }]}
+        onLayout={(e) => {
+          const h = e.nativeEvent.layout.height;
+          headerHeightRef.current = h;
+          setCalHeaderHeight(h);
+        }}
+      >
+        <View style={[styles.header, { backgroundColor: BRAND, paddingTop: insets.top + 12 }]}>
+          <View style={styles.headerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.headerGreeting, { color: "rgba(255,255,255,0.7)" }]}>Welcome back</Text>
+              <Text style={[styles.headerName, { color: "#fff" }]} numberOfLines={1}>{displayName}</Text>
+            </View>
+            <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
+              {calTab === "tournaments" && isElite && (
+                <TouchableOpacity
+                  onPress={() => setShowPublish(true)}
+                  style={[styles.addHeaderBtn, { backgroundColor: "rgba(255,255,255,0.2)" }]}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="add-circle-outline" size={16} color="#fff" />
+                  <Text style={styles.addHeaderBtnText}>Publish</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
-                onPress={() => openAddModal(selectedDate ?? todayYMD)}
-                style={[styles.addCustomBtn, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary }]}
+                onPress={() => setShowSettings(true)}
+                style={[styles.iconBtn, { backgroundColor: "rgba(255,255,255,0.2)" }]}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                activeOpacity={0.75}
+                activeOpacity={0.7}
               >
-                <Ionicons name="add" size={16} color={colors.text.secondary} />
-                <Text style={[styles.addCustomBtnText, { color: colors.text.secondary }]}>Add Custom</Text>
+                <Ionicons name="settings-outline" size={18} color="#fff" />
               </TouchableOpacity>
-            )}
-            {/* Publish — Tournaments tab, Elite only */}
-            {calTab === "tournaments" && isElite && (
-              <TouchableOpacity
-                onPress={() => setShowPublish(true)}
-                style={[styles.addHeaderBtn, { backgroundColor: PURPLE }]}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="add-circle-outline" size={16} color="#fff" />
-                <Text style={styles.addHeaderBtnText}>Publish</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              onPress={() => setShowSettings(true)}
-              style={[styles.iconBtn, { backgroundColor: colors.bg.secondary }]}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="settings-outline" size={18} color={colors.text.secondary} />
-            </TouchableOpacity>
+            </View>
           </View>
+
+          {/* Segmented control */}
+          <SegmentedControl
+            options={[
+              { value: "schedule",    label: "My Schedule", icon: "calendar-outline" },
+              { value: "tournaments", label: "Tournaments",  icon: "trophy-outline"   },
+            ]}
+            selected={calTab}
+            onChange={(v) => {
+              setCalTab(v as CalTab);
+              // Show header when switching tabs
+              if (!headerShown.current) {
+                headerShown.current = true;
+                Animated.parallel([
+                  Animated.timing(headerTranslateY, { toValue: 0, duration: 220, useNativeDriver: true }),
+                  Animated.timing(contentMarginTop, { toValue: headerHeightRef.current, duration: 220, useNativeDriver: false }),
+                ]).start();
+              }
+            }}
+          />
         </View>
+      </Animated.View>
 
-        {/* Segmented control */}
-        <SegmentedControl
-          options={[
-            { value: "schedule",    label: "My Schedule", icon: "calendar-outline" },
-            { value: "tournaments", label: "Tournaments",  icon: "trophy-outline"   },
-          ]}
-          selected={calTab}
-          onChange={(v) => setCalTab(v as CalTab)}
-        />
-      </View>
+      {/* ── Scrollable content — margin shrinks to 0 when header hides ── */}
+      <Animated.View style={{ flex: 1, marginTop: contentMarginTop }}>
 
       {/* ── My Schedule tab ── */}
       {calTab === "schedule" && (
@@ -573,6 +648,8 @@ export default function CalendarScreen() {
           <ScrollView
             contentContainerStyle={{ paddingBottom: 49 + insets.bottom + 32 }}
             showsVerticalScrollIndicator={false}
+            onScroll={handleCalScroll}
+            scrollEventThrottle={16}
           >
             {/* ── View toggle ── */}
             <View style={[styles.calSegmentWrap, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
@@ -664,7 +741,7 @@ export default function CalendarScreen() {
                           onShare={() => setShareEvent(e)}
                           onShareStake={() => handleShareStakeDeal(e)}
                           onSellStakes={() => handleSellStakesPress(e)}
-                          onCalendarSync={() => addToDeviceCalendar(e).then((ok) => Alert.alert(ok ? "Added!" : "Error", ok ? "Added to your device calendar." : "Could not add to calendar."))}
+                          onCalendarSync={() => addToDeviceCalendar(e).then(handleCalendarResult)}
                         />
                       ))}
                       {selectedSavedPosts.map((p) => (
@@ -684,7 +761,7 @@ export default function CalendarScreen() {
                       onDelete={() => handleDelete(e.id)} onShare={() => setShareEvent(e)}
                       onShareStake={() => handleShareStakeDeal(e)}
                       onSellStakes={() => handleSellStakesPress(e)}
-                      onCalendarSync={() => addToDeviceCalendar(e).then((ok) => Alert.alert(ok ? "Added!" : "Error", ok ? "Added to your device calendar." : "Could not add to calendar."))}
+                      onCalendarSync={() => addToDeviceCalendar(e).then(handleCalendarResult)}
                     />
                   ))}
                   {savedTournaments.filter((p) => p.status === todayYMD).map((p) => (
@@ -702,7 +779,7 @@ export default function CalendarScreen() {
                       onDelete={() => handleDelete(e.id)} onShare={() => setShareEvent(e)}
                       onShareStake={() => handleShareStakeDeal(e)}
                       onSellStakes={() => handleSellStakesPress(e)}
-                      onCalendarSync={() => addToDeviceCalendar(e).then((ok) => Alert.alert(ok ? "Added!" : "Error", ok ? "Added to your device calendar." : "Could not add to calendar."))}
+                      onCalendarSync={() => addToDeviceCalendar(e).then(handleCalendarResult)}
                     />
                   ))}
                 </View>
@@ -732,23 +809,30 @@ export default function CalendarScreen() {
                 </View>
               )}
 
-              {/* Empty state */}
+              {/* Empty state / sync loader */}
               {events.length === 0 && savedTournaments.length === 0 && (
-                <View style={[styles.emptyState, { borderColor: colors.border.default }]}>
-                  <Ionicons name="calendar-outline" size={44} color={colors.text.tertiary} />
-                  <Text style={[styles.emptyStateTitle, { color: colors.text.primary }]}>No tournaments yet</Text>
-                  <Text style={[styles.emptyStateSub, { color: colors.text.tertiary }]}>
-                    Browse the Tournaments tab and tap ⭐ to add events to your schedule.
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => setCalTab("tournaments")}
-                    style={[styles.emptyAction, { backgroundColor: BRAND }]}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="trophy-outline" size={14} color="#fff" />
-                    <Text style={styles.emptyActionText}>Browse Tournaments</Text>
-                  </TouchableOpacity>
-                </View>
+                isSyncing ? (
+                  <View style={{ alignItems: "center", paddingVertical: 60, gap: 14 }}>
+                    <ActivityIndicator size="large" color={BRAND} />
+                    <Text style={{ color: colors.text.secondary, fontSize: 14 }}>Syncing your data…</Text>
+                  </View>
+                ) : (
+                  <View style={[styles.emptyState, { borderColor: colors.border.default }]}>
+                    <Ionicons name="calendar-outline" size={44} color={colors.text.tertiary} />
+                    <Text style={[styles.emptyStateTitle, { color: colors.text.primary }]}>No tournaments yet</Text>
+                    <Text style={[styles.emptyStateSub, { color: colors.text.tertiary }]}>
+                      Browse the Tournaments tab and tap ⭐ to add events to your schedule.
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setCalTab("tournaments")}
+                      style={[styles.emptyAction, { backgroundColor: BRAND }]}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="trophy-outline" size={14} color="#fff" />
+                      <Text style={styles.emptyActionText}>Browse Tournaments</Text>
+                    </TouchableOpacity>
+                  </View>
+                )
               )}
             </View>
           </ScrollView>
@@ -758,7 +842,7 @@ export default function CalendarScreen() {
       {/* ── Tournaments tab ── */}
       {calTab === "tournaments" && (
         <View style={{ flex: 1 }}>
-          {/* Search bar */}
+          {/* Search bar — always visible */}
           <View style={[styles.searchRow, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
             <View style={[styles.searchBox, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
               <Ionicons name="search-outline" size={16} color={colors.text.tertiary} />
@@ -774,36 +858,40 @@ export default function CalendarScreen() {
             </View>
           </View>
 
-          {/* State filter chips */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.stateChipsRow}
-            style={[styles.stateChipsScroll, { borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary }]}
-            alwaysBounceHorizontal={false}
-          >
-            {["NSW", "VIC", "QLD", "WA", "SA", "ACT", "NT", "TAS"].map((s) => (
-              <TouchableOpacity
-                key={s}
-                onPress={() => setFilterState(s)}
-                activeOpacity={0.75}
-                style={[
-                  styles.stateChip,
-                  filterState === s
-                    ? { backgroundColor: BRAND, borderColor: BRAND }
-                    : { backgroundColor: colors.bg.secondary, borderColor: colors.border.default },
-                ]}
-              >
-                <Text style={[styles.stateChipText, { color: filterState === s ? "#fff" : colors.text.secondary }]}>{s}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          {/* Location row + filter button */}
+          <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary }}>
+            <Ionicons name="location-outline" size={13} color={colors.text.tertiary} />
+            <Text style={{ marginLeft: 4, fontSize: 12, color: colors.text.tertiary, fontWeight: "500", flex: 1 }}>
+              {filterState
+                ? <>Showing tournaments in <Text style={{ color: BRAND, fontWeight: "700" }}>{filterState}</Text></>
+                : <>Showing <Text style={{ color: BRAND, fontWeight: "700" }}>all locations</Text></>
+              }
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowStateFilter(true)}
+              activeOpacity={0.75}
+              style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1, borderColor: filterState ? BRAND : colors.border.default, backgroundColor: filterState ? BRAND + "15" : colors.bg.secondary }}
+            >
+              <Ionicons name="options-outline" size={12} color={filterState ? BRAND : colors.text.secondary} />
+              <Text style={{ fontSize: 11, fontWeight: "600", color: filterState ? BRAND : colors.text.secondary }}>
+                {filterState ? filterState : "Filter"}
+              </Text>
+              {filterState && (
+                <TouchableOpacity onPress={() => setFilterState(null)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                  <Ionicons name="close-circle" size={13} color={BRAND} />
+                </TouchableOpacity>
+              )}
+            </TouchableOpacity>
+          </View>
 
+          <View style={{ flex: 1 }}>
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingBottom: 49 + insets.bottom + 32, paddingTop: 12 }}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            onScroll={(e) => { handleCalScroll(e); handleTourneyScroll(e); }}
+            scrollEventThrottle={16}
           >
             {/* Official tournaments */}
             {loadingOfficial ? (
@@ -815,29 +903,71 @@ export default function CalendarScreen() {
                 <Ionicons name="trophy-outline" size={44} color={colors.text.tertiary} />
                 <Text style={[styles.emptyStateTitle, { color: colors.text.primary }]}>No tournaments found</Text>
                 <Text style={[styles.emptyStateSub, { color: colors.text.tertiary }]}>
-                  {searchQuery.trim() ? "Try a different search term." : `No upcoming tournaments in ${filterState} yet.`}
+                  {searchQuery.trim() ? "Try a different search term." : filterState ? `No upcoming tournaments in ${filterState} yet.` : "No upcoming tournaments found."}
                 </Text>
               </View>
             ) : (
               <View style={{ gap: 10 }}>
                 <Text style={[styles.sectionLabel, { color: colors.text.tertiary, marginBottom: 4, paddingHorizontal: 16 }]}>
-                  {officialTournaments.length} UPCOMING IN {filterState}
+                  {officialTournaments.length} UPCOMING{filterState ? ` IN ${filterState}` : ""}
                 </Text>
 
                 {/* Series groups */}
-                {seriesGroups.map((g) => (
-                  <SeriesCard
-                    key={g.name}
-                    group={g}
-                    colors={colors}
-                    onPress={() => setSelectedSeries(g.name)}
-                  />
-                ))}
+                {seriesGroups.map((g) => {
+                  const isSeriesOwner = !!user?.id && g.submittedBy === user.id;
+                  return (
+                    <SeriesCard
+                      key={g.name}
+                      group={g}
+                      colors={colors}
+                      onPress={() => setSelectedSeries(g.name)}
+                      onEditSeries={isSeriesOwner ? () => setSelectedSeries(g.name) : undefined}
+                      onUnpublishSeries={isSeriesOwner && g.seriesId ? () => Alert.alert(
+                        "Unpublish Series",
+                        `Move all events in "${g.name}" back to pending? They will be removed from the public directory until re-approved.`,
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Unpublish All", style: "destructive", onPress: async () => {
+                              try {
+                                await unpublishSeriesTournaments(g.seriesId!);
+                                setOfficialTournaments((prev) => prev.filter((t) => t.series_id !== g.seriesId));
+                                setPendingSubmissions((prev) => [
+                                  ...g.tournaments.map((t) => ({ ...t, status: "pending" as const })),
+                                  ...prev,
+                                ]);
+                              } catch (e: any) {
+                                Alert.alert("Could not unpublish", e?.message ?? "Please try again.");
+                              }
+                            },
+                          },
+                        ]
+                      ) : undefined}
+                      onDeleteSeries={isSeriesOwner && g.seriesId ? () => Alert.alert(
+                        "Delete Series",
+                        `Permanently delete all ${g.tournaments.length} events in "${g.name}"? This cannot be undone.`,
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          {
+                            text: "Delete All", style: "destructive", onPress: async () => {
+                              try {
+                                await deleteSeriesTournaments(g.seriesId!);
+                                setOfficialTournaments((prev) => prev.filter((t) => t.series_id !== g.seriesId));
+                              } catch (e: any) {
+                                Alert.alert("Could not delete", e?.message ?? "Please try again.");
+                              }
+                            },
+                          },
+                        ]
+                      ) : undefined}
+                    />
+                  );
+                })}
 
                 {/* Solo / non-series tournaments */}
                 {soloTournaments.length > 0 && seriesGroups.length > 0 && (
                   <Text style={[styles.sectionLabel, { color: colors.text.tertiary, marginTop: 4, paddingHorizontal: 16 }]}>
-                    INDIVIDUAL EVENTS
+                    WEEKLY TOURNEYS
                   </Text>
                 )}
                 {soloTournaments.map((t) => (
@@ -846,13 +976,31 @@ export default function CalendarScreen() {
                     tournament={t}
                     colors={colors}
                     onAdded={refresh}
+                    onEditOwn={() => setEditingApproved(t)}
+                    onUnpublishOwn={async () => {
+                      try {
+                        await unpublishMyTournament(t.id);
+                        setOfficialTournaments((prev) => prev.filter((x) => x.id !== t.id));
+                        setPendingSubmissions((prev) => [{ ...t, status: "pending" as const }, ...prev]);
+                      } catch (e: any) {
+                        Alert.alert("Could not unpublish", e?.message ?? "Please try again.");
+                      }
+                    }}
+                    onDeleteOwn={async () => {
+                      try {
+                        await deleteMyTournament(t.id);
+                        setOfficialTournaments((prev) => prev.filter((x) => x.id !== t.id));
+                      } catch (e: any) {
+                        Alert.alert("Could not delete", e?.message ?? "Please try again.");
+                      }
+                    }}
                   />
                 ))}
               </View>
             )}
 
             {/* My pending submissions */}
-            {isElite && pendingSubmissions.length > 0 && (
+            {pendingSubmissions.length > 0 && (
               <View style={[styles.section, { gap: 10, marginTop: 8 }]}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                   <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>MY SUBMISSIONS</Text>
@@ -867,6 +1015,7 @@ export default function CalendarScreen() {
                     colors={colors}
                     userId={user?.id ?? ""}
                     onDeleted={() => setPendingSubmissions((prev) => prev.filter((p) => p.id !== t.id))}
+                    onEdit={() => setEditingSubmission(t)}
                   />
                 ))}
               </View>
@@ -888,8 +1037,49 @@ export default function CalendarScreen() {
               </TouchableOpacity>
             )}
           </ScrollView>
+          </View>
         </View>
       )}
+
+      {/* ── State Filter Modal ── */}
+      <Modal visible={showStateFilter} transparent animationType="slide" onRequestClose={() => setShowStateFilter(false)}>
+        <View style={{ flex: 1, justifyContent: "flex-end" }}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowStateFilter(false)}>
+            <View style={{ flex: 1, backgroundColor: "rgba(15,23,43,0.45)" }} />
+          </TouchableOpacity>
+          <View style={{ backgroundColor: colors.bg.primary, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: insets.bottom + 16, paddingHorizontal: 20, paddingTop: 20 }}>
+            <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text.primary, marginBottom: 6 }}>Filter by State</Text>
+            <Text style={{ fontSize: 12, color: colors.text.tertiary, marginBottom: 16 }}>Select a state or show all locations</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+              <TouchableOpacity
+                onPress={() => { setFilterState(null); setShowStateFilter(false); }}
+                activeOpacity={0.75}
+                style={{
+                  paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, borderWidth: 1.5,
+                  backgroundColor: filterState === null ? BRAND : colors.bg.secondary,
+                  borderColor: filterState === null ? BRAND : colors.border.default,
+                }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: "700", color: filterState === null ? "#fff" : colors.text.primary }}>All</Text>
+              </TouchableOpacity>
+              {["NSW", "VIC", "QLD", "WA", "SA", "ACT", "NT", "TAS"].map((s) => (
+                <TouchableOpacity
+                  key={s}
+                  onPress={() => { setFilterState(s); setShowStateFilter(false); }}
+                  activeOpacity={0.75}
+                  style={{
+                    paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, borderWidth: 1.5,
+                    backgroundColor: filterState === s ? BRAND : colors.bg.secondary,
+                    borderColor: filterState === s ? BRAND : colors.border.default,
+                  }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: "700", color: filterState === s ? "#fff" : colors.text.primary }}>{s}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Calendar Settings — full-screen modal ── */}
       <CalendarSettingsModal
@@ -901,21 +1091,6 @@ export default function CalendarScreen() {
         onHidePastEventsChange={setHidePastEvents}
         onRequestCalAccess={handleRequestCalAccess}
         onOpenPaywall={() => { setShowSettings(false); setShowPaywall(true); }}
-        insets={insets}
-        colors={colors}
-      />
-
-      {/* ── Add Tournament — full-screen stack-style modal ── */}
-      <AddTournamentModal
-        visible={showAddModal}
-        onClose={() => { Keyboard.dismiss(); setShowAddModal(false); }}
-        todayYMD={todayYMD}
-        form={form}
-        setForm={setForm}
-        formImage={formImage}
-        onPickImage={handlePickImage}
-        onRemoveImage={() => setFormImage(null)}
-        onSave={handleSave}
         insets={insets}
         colors={colors}
       />
@@ -967,6 +1142,47 @@ export default function CalendarScreen() {
         />
       )}
 
+      {/* ── Edit Submission ── */}
+      {editingSubmission && user?.id && (
+        <EditSubmissionModal
+          visible={!!editingSubmission}
+          onClose={() => setEditingSubmission(null)}
+          tournament={editingSubmission}
+          userId={user.id}
+          onUpdated={(updated) => {
+            setPendingSubmissions((prev) => prev.map((p) => p.id === updated.id ? updated : p));
+            setEditingSubmission(null);
+          }}
+          onDeleted={(id) => {
+            setPendingSubmissions((prev) => prev.filter((p) => p.id !== id));
+            setEditingSubmission(null);
+          }}
+          insets={insets}
+          colors={colors}
+        />
+      )}
+
+      {/* ── Edit Approved Tournament ── */}
+      {editingApproved && user?.id && (
+        <EditSubmissionModal
+          visible={!!editingApproved}
+          onClose={() => setEditingApproved(null)}
+          tournament={editingApproved}
+          userId={user.id}
+          onUpdated={(updated) => {
+            setOfficialTournaments((prev) => prev.filter((t) => t.id !== updated.id));
+            setPendingSubmissions((prev) => [updated, ...prev]);
+            setEditingApproved(null);
+          }}
+          onDeleted={(id) => {
+            setOfficialTournaments((prev) => prev.filter((t) => t.id !== id));
+            setEditingApproved(null);
+          }}
+          insets={insets}
+          colors={colors}
+        />
+      )}
+
       {/* ── Series Detail ── */}
       <SeriesDetailModal
         visible={selectedSeries !== null}
@@ -976,6 +1192,8 @@ export default function CalendarScreen() {
         insets={insets}
         onAdded={refresh}
       />
+
+      </Animated.View>{/* end scrollable content */}
     </View>
   );
 }
@@ -999,7 +1217,7 @@ function CalendarSettingsModal({
 }) {
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={[stStyles.page, { backgroundColor: colors.bg.secondary }]}>
+      <View style={[stStyles.page, { backgroundColor: colors.bg.tertiary }]}>
 
         {/* Nav header */}
         <View style={[stStyles.navHeader, { paddingTop: 16, backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
@@ -1125,7 +1343,7 @@ function AddTournamentModal({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={[addStyles.page, { backgroundColor: colors.bg.secondary }]}>
+      <View style={[addStyles.page, { backgroundColor: colors.bg.tertiary }]}>
 
         {/* Nav header */}
         <View style={[addStyles.navHeader, { paddingTop: 16, backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
@@ -1354,9 +1572,9 @@ function makeEntry(): SeriesEntry {
   return { id: Math.random().toString(36).slice(2), name: "", date: "", buyIn: "", guarantee: "", time: "", lateReg: "", format: "", dateError: "" };
 }
 
-function PubField({ icon, children, borderColor, colors }: { icon: string; children: React.ReactNode; borderColor?: string; colors: any }) {
+function PubField({ icon, children, borderColor, colors, style }: { icon: string; children: React.ReactNode; borderColor?: string; colors: any; style?: any }) {
   return (
-    <View style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: borderColor ?? colors.border.default }]}>
+    <View style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: borderColor ?? colors.border.default }, style]}>
       <View style={pubStyles.fieldIcon}><Ionicons name={icon as any} size={16} color={borderColor ?? colors.text.tertiary} /></View>
       {children}
     </View>
@@ -1366,12 +1584,13 @@ function PubField({ icon, children, borderColor, colors }: { icon: string; child
 // ─── Pending Submission Card ──────────────────────────────────────────────────
 
 function PendingSubmissionCard({
-  tournament, colors, userId, onDeleted,
+  tournament, colors, userId, onDeleted, onEdit,
 }: {
   tournament: OfficialTournament;
   colors: any;
   userId: string;
   onDeleted: () => void;
+  onEdit?: () => void;
 }) {
   const [showSheet, setShowSheet] = useState(false);
 
@@ -1405,7 +1624,7 @@ function PendingSubmissionCard({
     try {
       const lines = [
         `🏆 ${tournament.name}`,
-        tournament.series ? `Part of ${tournament.series}` : null,
+        tournament.series_info?.name ? `Part of ${tournament.series_info.name}` : null,
         `📍 ${tournament.venue}${tournament.city ? `, ${tournament.city}` : ""}`,
         `📅 ${new Date(tournament.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "long" })}${tournament.tournament_time ? ` · ${fmt12h(tournament.tournament_time)}` : ""}`,
         tournament.buy_in ? `💰 Buy-in: $${tournament.buy_in}${tournament.guarantee ? ` · GTD $${tournament.guarantee.toLocaleString()}` : ""}` : null,
@@ -1434,7 +1653,7 @@ function PendingSubmissionCard({
             <Ionicons name="time-outline" size={18} color="#F59E0B" />
           </View>
           <View style={{ flex: 1 }}>
-            {tournament.series ? <Text style={[styles.officialSeries, { color: BRAND }]}>{tournament.series}</Text> : null}
+            {tournament.series_info?.name ? <Text style={[styles.officialSeries, { color: BRAND }]}>{tournament.series_info.name}</Text> : null}
             <Text style={[styles.officialName, { color: colors.text.primary }]} numberOfLines={2}>{tournament.name}</Text>
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -1444,7 +1663,7 @@ function PendingSubmissionCard({
             <TouchableOpacity
               onPress={() => setShowSheet(true)}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={[styles.iconBtn, { backgroundColor: colors.bg.secondary }]}
+              style={[styles.iconBtn, { backgroundColor: colors.bg.tertiary }]}
             >
               <Ionicons name="ellipsis-horizontal" size={18} color={colors.text.secondary} />
             </TouchableOpacity>
@@ -1474,6 +1693,15 @@ function PendingSubmissionCard({
         <View style={[styles.sheetContainer, { backgroundColor: colors.bg.primary }]}>
           <View style={[styles.sheetHandle, { backgroundColor: colors.border.default }]} />
           <Text style={[styles.sheetTitle, { color: colors.text.primary }]} numberOfLines={1}>{tournament.name}</Text>
+
+          {onEdit && (
+            <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(onEdit)}>
+              <View style={[styles.sheetIcon, { backgroundColor: PURPLE + "15" }]}>
+                <Ionicons name="create-outline" size={18} color={PURPLE} />
+              </View>
+              <Text style={[styles.sheetRowText, { color: colors.text.primary }]}>Edit Submission</Text>
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(() => handleShare("public"))}>
             <View style={[styles.sheetIcon, { backgroundColor: BRAND + "15" }]}>
@@ -1505,6 +1733,467 @@ function PendingSubmissionCard({
   );
 }
 
+// ─── Date Picker Modal ────────────────────────────────────────────────────────
+
+function DatePickerModal({
+  visible, onClose, onConfirm, initialIso, colors, insets,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onConfirm: (iso: string) => void;
+  initialIso?: string;
+  colors: any;
+  insets?: any;
+}) {
+  const todayJs = new Date();
+  const parseIso = (iso?: string) => iso ? new Date(iso + "T00:00:00") : todayJs;
+
+  const [viewYear,  setViewYear]  = useState(() => parseIso(initialIso).getFullYear());
+  const [viewMonth, setViewMonth] = useState(() => parseIso(initialIso).getMonth());
+  const [selIso,    setSelIso]    = useState<string | null>(initialIso ?? null);
+
+  useEffect(() => {
+    if (visible) {
+      const d = parseIso(initialIso);
+      setViewYear(d.getFullYear());
+      setViewMonth(d.getMonth());
+      setSelIso(initialIso ?? null);
+    }
+  }, [visible, initialIso]);
+
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDay    = new Date(viewYear, viewMonth, 1).getDay();
+  const cells: (number | null)[] = [
+    ...Array(firstDay).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  function prevMonth() {
+    if (viewMonth === 0) { setViewYear((y) => y - 1); setViewMonth(11); }
+    else setViewMonth((m) => m - 1);
+  }
+  function nextMonth() {
+    if (viewMonth === 11) { setViewYear((y) => y + 1); setViewMonth(0); }
+    else setViewMonth((m) => m + 1);
+  }
+
+  const todayIso = `${todayJs.getFullYear()}-${String(todayJs.getMonth() + 1).padStart(2, "0")}-${String(todayJs.getDate()).padStart(2, "0")}`;
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, justifyContent: "flex-end" }}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose}>
+          <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)" }} />
+        </TouchableOpacity>
+        <View style={{ backgroundColor: colors.bg.primary, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: (insets?.bottom ?? 0) + 24 }}>
+          {/* Header */}
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={{ color: colors.text.secondary, fontSize: 16 }}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={{ fontSize: 17, fontWeight: "800", color: colors.text.primary }}>Select Date</Text>
+            <TouchableOpacity
+              onPress={() => { if (selIso) { onConfirm(selIso); onClose(); } }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text style={{ color: selIso ? BRAND : colors.text.tertiary, fontSize: 16, fontWeight: "700" }}>Done</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Month navigation */}
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <TouchableOpacity onPress={prevMonth} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="chevron-back" size={22} color={BRAND} />
+            </TouchableOpacity>
+            <Text style={{ fontSize: 16, fontWeight: "700", color: colors.text.primary }}>
+              {MONTHS[viewMonth]} {viewYear}
+            </Text>
+            <TouchableOpacity onPress={nextMonth} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="chevron-forward" size={22} color={BRAND} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Day-of-week headers */}
+          <View style={{ flexDirection: "row", marginBottom: 4 }}>
+            {["S","M","T","W","T","F","S"].map((d, i) => (
+              <Text key={i} style={{ flex: 1, textAlign: "center", fontSize: 12, fontWeight: "600", color: colors.text.tertiary }}>{d}</Text>
+            ))}
+          </View>
+
+          {/* Calendar grid */}
+          <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+            {cells.map((day, idx) => {
+              const thisIso = day ? `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}` : null;
+              const isSelected = !!thisIso && thisIso === selIso;
+              const isToday    = thisIso === todayIso;
+              return (
+                <TouchableOpacity
+                  key={idx}
+                  style={{ width: "14.2857%", alignItems: "center", justifyContent: "center", paddingVertical: 3 }}
+                  onPress={() => { if (thisIso) setSelIso(thisIso); }}
+                  disabled={!day}
+                  activeOpacity={0.7}
+                >
+                  <View style={{
+                    width: 36, height: 36, borderRadius: 18,
+                    backgroundColor: isSelected ? BRAND : "transparent",
+                    alignItems: "center", justifyContent: "center",
+                    borderWidth: isToday && !isSelected ? 1.5 : 0,
+                    borderColor: BRAND,
+                  }}>
+                    <Text style={{
+                      fontSize: 14,
+                      fontWeight: isSelected || isToday ? "700" : "400",
+                      color: isSelected ? "#fff" : day ? colors.text.primary : "transparent",
+                    }}>
+                      {day ?? ""}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Edit Submission Modal ────────────────────────────────────────────────────
+
+function EditSubmissionModal({
+  visible, onClose, tournament, userId, onUpdated, onDeleted, insets, colors,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  tournament: OfficialTournament;
+  userId: string;
+  onUpdated: (t: OfficialTournament) => void;
+  onDeleted: (id: string) => void;
+  insets: any;
+  colors: any;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [name,    setName]    = useState(tournament.name);
+  const [date,    setDate]    = useState(tournament.tournament_date);
+  const [venue,   setVenue]   = useState(tournament.venue ?? "");
+  const [city,    setCity]    = useState(tournament.city ?? "");
+  const [iState,  setIState]  = useState(tournament.state ?? "");
+  const [buyIn,   setBuyIn]   = useState(tournament.buy_in != null ? String(tournament.buy_in) : "");
+  const [guarantee, setGuarantee] = useState(tournament.guarantee != null ? String(tournament.guarantee) : "");
+  const [time,    setTime]    = useState(tournament.tournament_time ?? "");
+  const [format,  setFormat]  = useState(tournament.format ?? "");
+  const [website, setWebsite] = useState(tournament.website_url ?? "");
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // Venue picker state
+  const [allVenues,      setAllVenues]      = useState<VenueInfo[]>([]);
+  const [showVenuePicker, setShowVenuePicker] = useState(false);
+  const [venueSearch,    setVenueSearch]    = useState("");
+  const [venueId,        setVenueId]        = useState<string | null>(tournament.venue_id);
+  const [venueIsCustom,  setVenueIsCustom]  = useState(!tournament.venue_id);
+
+  useEffect(() => {
+    if (visible && allVenues.length === 0) {
+      fetchVenues().then(setAllVenues).catch(() => {});
+    }
+  }, [visible]);
+
+  function parseMoney(s: string) {
+    const n = parseFloat(s.replace(/[^0-9.]/g, ""));
+    return isNaN(n) ? null : n;
+  }
+
+  async function handleSave() {
+    if (!name.trim() || !date || !venue.trim() || !city.trim()) return;
+    setSaving(true);
+    try {
+      const updated = await updateMyTournament(tournament.id, {
+        userId,
+        name: name.trim(), tournament_date: date,
+        venue: venue.trim(), city: city.trim(), state: iState,
+        venue_id: venueId,
+        buy_in: parseMoney(buyIn), guarantee: parseMoney(guarantee),
+        tournament_time: time.trim() || null,
+        format: format.trim() || null, website_url: website.trim() || null,
+      });
+      onUpdated(updated);
+    } catch (e: any) {
+      Alert.alert("Could not update", e?.message ?? "Please try again.");
+    } finally { setSaving(false); }
+  }
+
+  async function handleDelete() {
+    Alert.alert(
+      "Delete Submission",
+      `Remove "${tournament.name}" permanently?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete", style: "destructive", onPress: async () => {
+            try {
+              await deleteMySubmission(tournament.id);
+              onDeleted(tournament.id);
+            } catch (e: any) {
+              Alert.alert("Could not delete", e?.message ?? "Please try again.");
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  const canSave = !saving && name.trim().length > 0 && !!date && venue.trim().length > 0 && city.trim().length > 0;
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={[pubStyles.page, { backgroundColor: colors.bg.tertiary }]}>
+        {/* Nav header */}
+        <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <TouchableOpacity onPress={onClose} style={pubStyles.navSide} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Text style={[pubStyles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={[pubStyles.navTitle, { color: colors.text.primary }]}>Edit Submission</Text>
+          <TouchableOpacity onPress={handleSave} disabled={!canSave} style={[pubStyles.navSide, { alignItems: "flex-end" }]} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Text style={[pubStyles.navPublish, { color: canSave ? PURPLE : colors.text.tertiary }]}>
+              {saving ? "Saving…" : "Save"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 40, gap: 10 }}>
+
+              <View style={[pubStyles.infoBanner, { backgroundColor: "#F59E0B10", borderColor: "#F59E0B25" }]}>
+                <Ionicons name="information-circle-outline" size={15} color="#F59E0B" />
+                <Text style={[pubStyles.infoBannerText, { color: colors.text.secondary }]}>
+                  Editing will re-queue this submission for review.
+                </Text>
+              </View>
+
+              <PubField icon="trophy-outline" borderColor={PURPLE} colors={colors}>
+                <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                  placeholder="Tournament name *" placeholderTextColor={colors.text.tertiary}
+                  value={name} onChangeText={setName} returnKeyType="next" autoFocus />
+              </PubField>
+
+              {/* Date picker */}
+              <TouchableOpacity
+                onPress={() => setShowDatePicker(true)}
+                activeOpacity={0.75}
+                style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: date ? BRAND : colors.border.default }]}
+              >
+                <View style={pubStyles.fieldIcon}>
+                  <Ionicons name="calendar-outline" size={16} color={date ? BRAND : colors.text.tertiary} />
+                </View>
+                <Text style={{ flex: 1, fontSize: 15, color: date ? colors.text.primary : colors.text.tertiary }}>
+                  {date
+                    ? new Date(date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
+                    : "Select date *"}
+                </Text>
+                <View style={{ paddingRight: 14 }}>
+                  <Ionicons name="chevron-down" size={16} color={colors.text.tertiary} />
+                </View>
+              </TouchableOpacity>
+
+              {/* Venue picker */}
+              {!venueIsCustom ? (
+                <TouchableOpacity
+                  onPress={() => setShowVenuePicker(true)}
+                  activeOpacity={0.75}
+                  style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: venueId ? PURPLE : colors.border.default }]}
+                >
+                  <View style={pubStyles.fieldIcon}>
+                    <Ionicons name="business-outline" size={16} color={venueId ? PURPLE : colors.text.tertiary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    {venueId ? (
+                      <View>
+                        <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{venue}</Text>
+                        <Text style={{ color: colors.text.tertiary, fontSize: 12, marginTop: 1 }}>{city}, {iState}</Text>
+                      </View>
+                    ) : (
+                      <Text style={{ color: colors.text.tertiary, fontSize: 15 }}>Select venue / casino *</Text>
+                    )}
+                  </View>
+                  {venueId ? (
+                    <TouchableOpacity
+                      onPress={() => { setVenueId(null); setVenue(""); setCity(""); }}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      style={{ paddingRight: 14 }}
+                    >
+                      <Ionicons name="close-circle" size={18} color={colors.text.tertiary} />
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={{ paddingRight: 14 }}>
+                      <Ionicons name="chevron-down" size={16} color={colors.text.tertiary} />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <>
+                  <TouchableOpacity onPress={() => { setVenueIsCustom(false); setVenue(""); setCity(""); }} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <Ionicons name="arrow-back-outline" size={14} color={BRAND} />
+                    <Text style={{ color: BRAND, fontSize: 13, fontWeight: "600" }}>Back to venue list</Text>
+                  </TouchableOpacity>
+                  <PubField icon="business-outline" colors={colors}>
+                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                      placeholder="Venue / Casino *" placeholderTextColor={colors.text.tertiary}
+                      value={venue} onChangeText={setVenue} returnKeyType="next" />
+                  </PubField>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <PubField icon="location-outline" colors={colors} style={{ flex: 1 }}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                        placeholder="City *" placeholderTextColor={colors.text.tertiary}
+                        value={city} onChangeText={setCity} returnKeyType="next" />
+                    </PubField>
+                    <View style={[pubStyles.fieldWrap, { width: 90, backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                        placeholder="State" placeholderTextColor={colors.text.tertiary}
+                        value={iState} onChangeText={(t) => setIState(t.toUpperCase().slice(0, 3))}
+                        autoCapitalize="characters" maxLength={3} returnKeyType="next" />
+                    </View>
+                  </View>
+                </>
+              )}
+
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <PubField icon="cash-outline" colors={colors} style={{ flex: 1 }}>
+                  <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                    placeholder="Buy-in ($)" placeholderTextColor={colors.text.tertiary}
+                    value={buyIn} onChangeText={setBuyIn} keyboardType="numeric" returnKeyType="next" />
+                </PubField>
+                <PubField icon="trending-up-outline" colors={colors} style={{ flex: 1 }}>
+                  <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                    placeholder="GTD ($)" placeholderTextColor={colors.text.tertiary}
+                    value={guarantee} onChangeText={setGuarantee} keyboardType="numeric" returnKeyType="next" />
+                </PubField>
+              </View>
+
+              <PubField icon="time-outline" colors={colors}>
+                <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                  placeholder="Start time (HH:MM)" placeholderTextColor={colors.text.tertiary}
+                  value={time} onChangeText={setTime} keyboardType="numbers-and-punctuation" returnKeyType="next" />
+              </PubField>
+
+              <PubField icon="options-outline" colors={colors}>
+                <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                  placeholder="Format (NLH, PLO…)" placeholderTextColor={colors.text.tertiary}
+                  value={format} onChangeText={setFormat} returnKeyType="next" />
+              </PubField>
+
+              <PubField icon="globe-outline" colors={colors}>
+                <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                  placeholder="Website URL" placeholderTextColor={colors.text.tertiary}
+                  value={website} onChangeText={setWebsite} keyboardType="url" returnKeyType="done" autoCapitalize="none" />
+              </PubField>
+
+              {/* Delete */}
+              <TouchableOpacity
+                onPress={handleDelete}
+                style={[pubStyles.addEntryBtn, { borderColor: "#EF444440", backgroundColor: "#EF444408", marginTop: 8 }]}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                <Text style={{ fontSize: 14, fontWeight: "600", color: "#EF4444" }}>Delete Submission</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </View>
+
+      <DatePickerModal
+        visible={showDatePicker}
+        onClose={() => setShowDatePicker(false)}
+        onConfirm={(iso) => setDate(iso)}
+        initialIso={date || undefined}
+        colors={colors}
+        insets={insets}
+      />
+
+      {/* Venue picker modal */}
+      <Modal visible={showVenuePicker} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => { setShowVenuePicker(false); setVenueSearch(""); }}>
+        <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+          <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+            <TouchableOpacity onPress={() => { setShowVenuePicker(false); setVenueSearch(""); }} style={pubStyles.navSide} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={[pubStyles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={[pubStyles.navTitle, { color: colors.text.primary }]}>Select Venue</Text>
+            <View style={pubStyles.navSide} />
+          </View>
+          <View style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }}>
+            <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: colors.bg.secondary, borderRadius: 10, borderWidth: 1, borderColor: colors.border.default, paddingHorizontal: 12, gap: 8 }}>
+              <Ionicons name="search-outline" size={16} color={colors.text.tertiary} />
+              <TextInput
+                value={venueSearch} onChangeText={setVenueSearch}
+                placeholder="Search venues..." placeholderTextColor={colors.text.tertiary}
+                style={{ flex: 1, color: colors.text.primary, fontSize: 15, paddingVertical: 10 }}
+                autoFocus returnKeyType="search"
+              />
+              {venueSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setVenueSearch("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close-circle" size={16} color={colors.text.tertiary} />
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            {allVenues
+              .filter((v) => {
+                if (!venueSearch.trim()) return true;
+                const q = venueSearch.toLowerCase();
+                return v.name.toLowerCase().includes(q) || v.city.toLowerCase().includes(q) || v.state.toLowerCase().includes(q);
+              })
+              .map((v) => (
+                <TouchableOpacity
+                  key={v.id}
+                  onPress={() => {
+                    setVenueId(v.id); setVenue(v.name); setCity(v.city); setIState(v.state); setVenueIsCustom(false);
+                    setShowVenuePicker(false); setVenueSearch("");
+                  }}
+                  activeOpacity={0.7}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle }}
+                >
+                  <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: v.logo_url ? colors.bg.secondary : BRAND + "14", alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: 1, borderColor: colors.border.subtle }}>
+                    {v.logo_url ? (
+                      <Image source={{ uri: v.logo_url }} style={{ width: 40, height: 40 }} resizeMode="contain" />
+                    ) : (
+                      <Text style={{ color: BRAND, fontSize: 16, fontWeight: "800" }}>{v.name.charAt(0)}</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{v.name}</Text>
+                    <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{v.city} · {v.state}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+                </TouchableOpacity>
+              ))}
+            <TouchableOpacity
+              onPress={() => { setVenueId(null); setVenueIsCustom(true); setVenue(""); setCity(""); setShowVenuePicker(false); setVenueSearch(""); }}
+              activeOpacity={0.7}
+              style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 16, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle, marginTop: 8 }}
+            >
+              <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: colors.bg.secondary, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border.default }}>
+                <Ionicons name="pencil-outline" size={20} color={colors.text.secondary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>Other</Text>
+                <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>Enter venue name manually</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </Modal>
+    </Modal>
+  );
+}
+
+// ─── Publish Tournament Modal ─────────────────────────────────────────────────
+
 function PublishTournamentModal({
   visible, onClose, userId, onSubmitted, insets, colors,
 }: {
@@ -1518,26 +2207,53 @@ function PublishTournamentModal({
   const [mode,      setMode]      = useState<"individual" | "series">("individual");
   const [posting,   setPosting]   = useState(false);
 
-  // ── Individual fields ──
-  const [name,      setName]      = useState("");
-  const [date,      setDate]      = useState("");
-  const [venue,     setVenue]     = useState("");
-  const [city,      setCity]      = useState("");
-  const [iState,    setIState]    = useState("NSW");
-  const [buyIn,     setBuyIn]     = useState("");
-  const [guarantee, setGuarantee] = useState("");
-  const [time,      setTime]      = useState("");
-  const [lateReg,   setLateReg]   = useState("");
-  const [format,    setFormat]    = useState("");
-  const [website,   setWebsite]   = useState("");
-  const [dateError, setDateError] = useState("");
+  // ── Venue picker ──
+  const [allVenues,       setAllVenues]       = useState<VenueInfo[]>([]);
+  const [venuePickerFor,  setVenuePickerFor]  = useState<"individual" | "series" | null>(null);
+  const [venueSearch,     setVenueSearch]     = useState("");
 
-  // ── Series fields ──
-  const [seriesName,  setSeriesName]  = useState("");
-  const [seriesVenue, setSeriesVenue] = useState("");
-  const [seriesCity,  setSeriesCity]  = useState("");
-  const [seriesState, setSeriesState] = useState("NSW");
-  const [entries,     setEntries]     = useState<SeriesEntry[]>([makeEntry()]);
+  // ── Series picker (for series mode) ──
+  const [allSeries,        setAllSeries]        = useState<SeriesInfo[]>([]);
+  const [showSeriesPicker, setShowSeriesPicker] = useState(false);
+  const [seriesPickerSearch, setSeriesPickerSearch] = useState("");
+  const [pickedSeriesId,   setPickedSeriesId]   = useState<string | null>(null);
+  const [pickedSeriesName, setPickedSeriesName] = useState("");
+
+  // ── Individual fields ──
+  const [name,              setName]              = useState("");
+  const [date,              setDate]              = useState("");
+  const [showDatePicker,    setShowDatePicker]    = useState(false);
+  const [recurrence,        setRecurrence]        = useState<"none"|"weekly"|"fortnightly"|"monthly">("none");
+  const [recEndDate,        setRecEndDate]        = useState("");
+  const [showRecEndPicker,  setShowRecEndPicker]  = useState(false);
+  const [showSeriesDateFor, setShowSeriesDateFor] = useState<string | null>(null);
+  const [venue,             setVenue]             = useState("");
+  const [city,              setCity]              = useState("");
+  const [iState,            setIState]            = useState("NSW");
+  const [venueId,           setVenueId]           = useState<string | null>(null);
+  const [venueIsCustom,     setVenueIsCustom]     = useState(false);
+  const [buyIn,             setBuyIn]             = useState("");
+  const [guarantee,         setGuarantee]         = useState("");
+  const [time,              setTime]              = useState("");
+  const [lateReg,           setLateReg]           = useState("");
+  const [format,            setFormat]            = useState("");
+  const [website,           setWebsite]           = useState("");
+
+  // ── Series-event fields ──
+  const [seriesVenue,       setSeriesVenue]       = useState("");
+  const [seriesCity,        setSeriesCity]        = useState("");
+  const [seriesState,       setSeriesState]       = useState("NSW");
+  const [seriesVenueId,     setSeriesVenueId]     = useState<string | null>(null);
+  const [seriesVenueIsCustom, setSeriesVenueIsCustom] = useState(false);
+  const [entries,           setEntries]           = useState<SeriesEntry[]>([makeEntry()]);
+
+  // Load venues + series once when modal opens
+  useEffect(() => {
+    if (visible) {
+      if (allVenues.length === 0) fetchVenues().then(setAllVenues).catch(() => {});
+      if (allSeries.length === 0) fetchSeries().then(setAllSeries).catch(() => {});
+    }
+  }, [visible]);
 
   function updateEntry(id: string, patch: Partial<SeriesEntry>) {
     setEntries((prev) => prev.map((e) => e.id === id ? { ...e, ...patch } : e));
@@ -1550,64 +2266,105 @@ function PublishTournamentModal({
   function reset() {
     setMode("individual"); setPosting(false);
     setName(""); setDate(""); setVenue(""); setCity(""); setIState("NSW");
-    setBuyIn(""); setGuarantee(""); setTime(""); setLateReg(""); setFormat(""); setWebsite(""); setDateError("");
-    setSeriesName(""); setSeriesVenue(""); setSeriesCity(""); setSeriesState("NSW");
+    setVenueId(null); setVenueIsCustom(false);
+    setBuyIn(""); setGuarantee(""); setTime(""); setLateReg(""); setFormat(""); setWebsite("");
+    setRecurrence("none"); setRecEndDate(""); setShowDatePicker(false); setShowRecEndPicker(false); setShowSeriesDateFor(null);
+    setPickedSeriesId(null); setPickedSeriesName(""); setShowSeriesPicker(false); setSeriesPickerSearch("");
+    setSeriesVenue(""); setSeriesCity(""); setSeriesState("NSW");
+    setSeriesVenueId(null); setSeriesVenueIsCustom(false);
+    setVenueSearch(""); setVenuePickerFor(null);
     setEntries([makeEntry()]);
+  }
+
+  function handleVenuePick(v: VenueInfo | null) {
+    if (venuePickerFor === "individual") {
+      if (v) {
+        setVenueId(v.id); setVenue(v.name); setCity(v.city); setIState(v.state); setVenueIsCustom(false);
+      } else {
+        setVenueId(null); setVenueIsCustom(true); setVenue(""); setCity("");
+      }
+    } else {
+      if (v) {
+        setSeriesVenueId(v.id); setSeriesVenue(v.name); setSeriesCity(v.city); setSeriesState(v.state); setSeriesVenueIsCustom(false);
+      } else {
+        setSeriesVenueId(null); setSeriesVenueIsCustom(true); setSeriesVenue(""); setSeriesCity("");
+      }
+    }
+    setVenuePickerFor(null);
+    setVenueSearch("");
   }
 
   function handleClose() { reset(); onClose(); }
 
-  function validateDate(raw: string): string | null {
-    const ddmm = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (ddmm) return `${ddmm[3]}-${ddmm[2].padStart(2, "0")}-${ddmm[1].padStart(2, "0")}`;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-    return null;
-  }
 
   function parseMoney(s: string) {
     const n = parseFloat(s.replace(/[^0-9.]/g, ""));
     return isNaN(n) ? null : n;
   }
 
+  function generateRecurringDates(startIso: string, rec: string, endIso: string): string[] {
+    const dates: string[] = [startIso];
+    const end = new Date(endIso + "T00:00:00");
+    let current = new Date(startIso + "T00:00:00");
+    while (true) {
+      if (rec === "monthly") current.setMonth(current.getMonth() + 1);
+      else current.setDate(current.getDate() + (rec === "weekly" ? 7 : 14));
+      if (current > end || dates.length >= 52) break;
+      dates.push(current.toISOString().split("T")[0]);
+    }
+    return dates;
+  }
+
   async function handleSubmit() {
     setPosting(true);
     try {
       if (mode === "individual") {
-        const isoDate = validateDate(date.trim());
-        if (!isoDate) { setDateError("Enter date as DD/MM/YYYY"); setPosting(false); return; }
-        setDateError("");
-        const t = await submitTournamentToDirectory({
-          userId, name: name.trim(), tournament_date: isoDate,
-          venue: venue.trim(), city: city.trim(), state: iState,
-          buy_in: parseMoney(buyIn), guarantee: parseMoney(guarantee),
-          tournament_time: time.trim() || null, late_reg_end: lateReg.trim() || null,
-          format: format.trim() || null, website_url: website.trim() || null,
-        });
-        reset(); onSubmitted(t);
-        Alert.alert("Submitted for review!", "We'll approve your tournament shortly.");
+        if (!date) { setPosting(false); return; }
+        const allDates = recurrence !== "none" && recEndDate
+          ? generateRecurringDates(date, recurrence, recEndDate)
+          : [date];
+        const isRecurring = allDates.length > 1;
+        const tournType: TournamentType = isRecurring ? "weekly" : "regular";
+        const results = await Promise.all(allDates.map((d) =>
+          submitTournamentToDirectory({
+            userId, type: tournType,
+            name: name.trim(), tournament_date: d,
+            venue: venue.trim(), city: city.trim(), state: iState,
+            venue_id: venueId,
+            buy_in: parseMoney(buyIn), guarantee: parseMoney(guarantee),
+            tournament_time: time.trim() || null, late_reg_end: lateReg.trim() || null,
+            format: format.trim() || null, website_url: website.trim() || null,
+            recurrence: recurrence !== "none" ? recurrence : null,
+          })
+        ));
+        reset(); onSubmitted(results[0]);
+        Alert.alert(
+          "Submitted for review!",
+          isRecurring
+            ? `${results.length} occurrence${results.length > 1 ? "s" : ""} submitted. We'll approve shortly.`
+            : "We'll approve your tournament shortly."
+        );
       } else {
         // Validate entries
-        let hasError = false;
-        const validated = entries.map((e) => {
-          const iso = validateDate(e.date.trim());
-          if (!iso || !e.name.trim()) { hasError = true; return { ...e, dateError: iso ? "" : "Enter DD/MM/YYYY" }; }
-          return { ...e, dateError: "" };
-        });
-        setEntries(validated);
-        if (hasError || !seriesName.trim() || !seriesVenue.trim() || !seriesCity.trim()) {
+        const hasError = entries.some((e) => !e.date || !e.name.trim());
+        if (hasError || !seriesVenue.trim() || !seriesCity.trim()) {
+          Alert.alert("Missing fields", "Please fill in name and date for every event.");
           setPosting(false); return;
         }
         const results = await Promise.all(entries.map((e) => submitTournamentToDirectory({
-          userId, name: e.name.trim(),
-          tournament_date: validateDate(e.date.trim())!,
+          userId, type: "series",
+          name: e.name.trim(),
+          tournament_date: e.date,
           venue: seriesVenue.trim(), city: seriesCity.trim(), state: seriesState,
-          series: seriesName.trim(),
+          venue_id: seriesVenueId,
+          series_id: pickedSeriesId,
           buy_in: parseMoney(e.buyIn), guarantee: parseMoney(e.guarantee),
           tournament_time: e.time.trim() || null, late_reg_end: e.lateReg.trim() || null,
           format: e.format.trim() || null,
         })));
         reset(); onSubmitted(results[0]);
-        Alert.alert("Submitted for review!", `${results.length} tournament${results.length > 1 ? "s" : ""} submitted under "${seriesName.trim()}".`);
+        const label = pickedSeriesName || "this series";
+        Alert.alert("Submitted for review!", `${results.length} tournament${results.length > 1 ? "s" : ""} submitted under "${label}".`);
       }
     } catch (e: any) {
       Alert.alert("Could not submit", e?.message || "Check your connection and try again.");
@@ -1616,13 +2373,13 @@ function PublishTournamentModal({
 
   const canSubmit = !posting && (
     mode === "individual"
-      ? name.trim().length > 0 && date.trim().length > 0 && venue.trim().length > 0 && city.trim().length > 0
-      : seriesName.trim().length > 0 && seriesVenue.trim().length > 0 && seriesCity.trim().length > 0 && entries.every((e) => e.name.trim().length > 0 && e.date.trim().length > 0)
+      ? name.trim().length > 0 && !!date && venue.trim().length > 0 && city.trim().length > 0
+      : seriesVenue.trim().length > 0 && seriesCity.trim().length > 0 && entries.every((e) => e.name.trim().length > 0 && !!e.date)
   );
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
-      <View style={[pubStyles.page, { backgroundColor: colors.bg.secondary }]}>
+      <View style={[pubStyles.page, { backgroundColor: colors.bg.tertiary }]}>
 
         {/* Nav header */}
         <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
@@ -1651,8 +2408,8 @@ function PublishTournamentModal({
               {/* Mode toggle */}
               <SegmentedControl
                 options={[
-                  { value: "individual", label: "Individual", icon: "trophy-outline" },
-                  { value: "series",     label: "Series",     icon: "layers-outline" },
+                  { value: "individual", label: "Regular", icon: "trophy-outline" },
+                  { value: "series",     label: "Series",  icon: "layers-outline" },
                 ]}
                 selected={mode}
                 onChange={(v) => setMode(v as "individual" | "series")}
@@ -1679,107 +2436,269 @@ function PublishTournamentModal({
                       value={name} onChangeText={setName} returnKeyType="next" autoFocus />
                   </PubField>
 
-                  <PubField icon="calendar-outline" borderColor={dateError ? "#EF4444" : undefined} colors={colors}>
-                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                      placeholder="Date (DD/MM/YYYY) *" placeholderTextColor={colors.text.tertiary}
-                      value={date} onChangeText={(t) => { setDate(t); if (dateError) setDateError(""); }}
-                      keyboardType="numbers-and-punctuation" returnKeyType="next" />
-                  </PubField>
-                  {dateError ? <Text style={pubStyles.fieldError}>{dateError}</Text> : null}
-
-                  <PubField icon="business-outline" colors={colors}>
-                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                      placeholder="Venue / Casino *" placeholderTextColor={colors.text.tertiary}
-                      value={venue} onChangeText={setVenue} returnKeyType="next" />
-                  </PubField>
-
-                  <View style={{ flexDirection: "row", gap: 8 }}>
-                    <PubField icon="location-outline" colors={colors}>
-                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
-                        placeholder="City *" placeholderTextColor={colors.text.tertiary}
-                        value={city} onChangeText={setCity} returnKeyType="next" />
-                    </PubField>
-                    <View style={[pubStyles.fieldWrap, { width: 90, backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                        placeholder="State" placeholderTextColor={colors.text.tertiary}
-                        value={iState} onChangeText={(t) => setIState(t.toUpperCase().slice(0, 3))}
-                        autoCapitalize="characters" maxLength={3} returnKeyType="next" />
+                  {/* Date picker */}
+                  <TouchableOpacity
+                    onPress={() => setShowDatePicker(true)}
+                    activeOpacity={0.75}
+                    style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: date ? BRAND : colors.border.default }]}
+                  >
+                    <View style={pubStyles.fieldIcon}>
+                      <Ionicons name="calendar-outline" size={16} color={date ? BRAND : colors.text.tertiary} />
                     </View>
-                  </View>
+                    <Text style={{ flex: 1, fontSize: 15, color: date ? colors.text.primary : colors.text.tertiary }}>
+                      {date
+                        ? new Date(date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "long", year: "numeric" })
+                        : "Select date *"}
+                    </Text>
+                    <View style={{ paddingRight: 14 }}>
+                      <Ionicons name="chevron-down" size={16} color={colors.text.tertiary} />
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Recurrence selector */}
+                  {date ? (
+                    <View style={{ gap: 8 }}>
+                      <Text style={[pubStyles.sectionLabel, { color: colors.text.tertiary }]}>RECURRENCE</Text>
+                      <View style={{ flexDirection: "row", gap: 6 }}>
+                        {(["none","weekly","fortnightly","monthly"] as const).map((opt) => (
+                          <TouchableOpacity
+                            key={opt}
+                            onPress={() => { setRecurrence(opt); if (opt === "none") setRecEndDate(""); }}
+                            style={{
+                              flex: 1, paddingVertical: 7, borderRadius: 8, borderWidth: 1.5, alignItems: "center",
+                              backgroundColor: recurrence === opt ? PURPLE + "15" : colors.bg.primary,
+                              borderColor: recurrence === opt ? PURPLE : colors.border.default,
+                            }}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: recurrence === opt ? "700" : "500", color: recurrence === opt ? PURPLE : colors.text.secondary }}>
+                              {opt === "none" ? "None" : opt === "weekly" ? "Weekly" : opt === "fortnightly" ? "Fortnightly" : "Monthly"}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                      {recurrence !== "none" && (
+                        <TouchableOpacity
+                          onPress={() => setShowRecEndPicker(true)}
+                          activeOpacity={0.75}
+                          style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: recEndDate ? PURPLE : colors.border.default }]}
+                        >
+                          <View style={pubStyles.fieldIcon}>
+                            <Ionicons name="repeat-outline" size={16} color={recEndDate ? PURPLE : colors.text.tertiary} />
+                          </View>
+                          <Text style={{ flex: 1, fontSize: 15, color: recEndDate ? colors.text.primary : colors.text.tertiary }}>
+                            {recEndDate
+                              ? `Repeat until: ${new Date(recEndDate + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" })}`
+                              : "Repeat until… (optional)"}
+                          </Text>
+                          {recEndDate ? (
+                            <TouchableOpacity onPress={() => setRecEndDate("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ paddingRight: 14 }}>
+                              <Ionicons name="close-circle" size={18} color={colors.text.tertiary} />
+                            </TouchableOpacity>
+                          ) : (
+                            <View style={{ paddingRight: 14 }}>
+                              <Ionicons name="chevron-down" size={16} color={colors.text.tertiary} />
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  ) : null}
+
+                  {/* Venue picker */}
+                  {!venueIsCustom ? (
+                    <TouchableOpacity
+                      onPress={() => setVenuePickerFor("individual")}
+                      activeOpacity={0.75}
+                      style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: venueId ? PURPLE : colors.border.default }]}
+                    >
+                      <View style={pubStyles.fieldIcon}>
+                        <Ionicons name="business-outline" size={16} color={venueId ? PURPLE : colors.text.tertiary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        {venueId ? (
+                          <View>
+                            <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{venue}</Text>
+                            <Text style={{ color: colors.text.tertiary, fontSize: 12, marginTop: 1 }}>{city}, {iState}</Text>
+                          </View>
+                        ) : (
+                          <Text style={{ color: colors.text.tertiary, fontSize: 15 }}>Select venue / casino *</Text>
+                        )}
+                      </View>
+                      {venueId ? (
+                        <TouchableOpacity
+                          onPress={() => { setVenueId(null); setVenue(""); setCity(""); }}
+                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          style={{ paddingRight: 14 }}
+                        >
+                          <Ionicons name="close-circle" size={18} color={colors.text.tertiary} />
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={{ paddingRight: 14 }}>
+                          <Ionicons name="chevron-down" size={16} color={colors.text.tertiary} />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  ) : (
+                    <>
+                      <TouchableOpacity onPress={() => { setVenueIsCustom(false); setVenue(""); setCity(""); }} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                        <Ionicons name="arrow-back-outline" size={14} color={BRAND} />
+                        <Text style={{ color: BRAND, fontSize: 13, fontWeight: "600" }}>Back to venue list</Text>
+                      </TouchableOpacity>
+                      <PubField icon="business-outline" colors={colors}>
+                        <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                          placeholder="Venue / Casino *" placeholderTextColor={colors.text.tertiary}
+                          value={venue} onChangeText={setVenue} returnKeyType="next" autoFocus />
+                      </PubField>
+                      <View style={{ flexDirection: "row", gap: 8 }}>
+                        <PubField icon="location-outline" colors={colors} style={{ flex: 1 }}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                            placeholder="City *" placeholderTextColor={colors.text.tertiary}
+                            value={city} onChangeText={setCity} returnKeyType="next" />
+                        </PubField>
+                        <View style={[pubStyles.fieldWrap, { width: 90, backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                            placeholder="State" placeholderTextColor={colors.text.tertiary}
+                            value={iState} onChangeText={(t) => setIState(t.toUpperCase().slice(0, 3))}
+                            autoCapitalize="characters" maxLength={3} returnKeyType="next" />
+                        </View>
+                      </View>
+                    </>
+                  )}
 
                   <Text style={[pubStyles.sectionLabel, { color: colors.text.tertiary, marginTop: 6 }]}>OPTIONAL</Text>
 
                   <View style={{ flexDirection: "row", gap: 8 }}>
-                    <PubField icon="cash-outline" colors={colors}>
-                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                    <PubField icon="cash-outline" colors={colors} style={{ flex: 1 }}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
                         placeholder="Buy-in ($)" placeholderTextColor={colors.text.tertiary}
                         value={buyIn} onChangeText={setBuyIn} keyboardType="numeric" returnKeyType="next" />
                     </PubField>
-                    <PubField icon="trending-up-outline" colors={colors}>
-                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                    <PubField icon="trending-up-outline" colors={colors} style={{ flex: 1 }}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
                         placeholder="GTD ($)" placeholderTextColor={colors.text.tertiary}
                         value={guarantee} onChangeText={setGuarantee} keyboardType="numeric" returnKeyType="next" />
                     </PubField>
                   </View>
 
                   <View style={{ flexDirection: "row", gap: 8 }}>
-                    <PubField icon="time-outline" colors={colors}>
-                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
-                        placeholder="Start (HH:MM)" placeholderTextColor={colors.text.tertiary}
+                    <PubField icon="time-outline" colors={colors} style={{ flex: 1 }}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                        placeholder="Start time (HH:MM)" placeholderTextColor={colors.text.tertiary}
                         value={time} onChangeText={setTime} keyboardType="numbers-and-punctuation" returnKeyType="next" />
                     </PubField>
-                    <PubField icon="hourglass-outline" colors={colors}>
-                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                    <PubField icon="hourglass-outline" colors={colors} style={{ flex: 1 }}>
+                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
                         placeholder="Late reg (HH:MM)" placeholderTextColor={colors.text.tertiary}
                         value={lateReg} onChangeText={setLateReg} keyboardType="numbers-and-punctuation" returnKeyType="next" />
                     </PubField>
                   </View>
 
-                  <View style={{ flexDirection: "row", gap: 8 }}>
-                    <PubField icon="options-outline" colors={colors}>
-                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
-                        placeholder="Format (NLH, PLO…)" placeholderTextColor={colors.text.tertiary}
-                        value={format} onChangeText={setFormat} returnKeyType="next" />
-                    </PubField>
-                    <PubField icon="globe-outline" colors={colors}>
-                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
-                        placeholder="Website URL" placeholderTextColor={colors.text.tertiary}
-                        value={website} onChangeText={setWebsite} keyboardType="url" returnKeyType="done" autoCapitalize="none" />
-                    </PubField>
-                  </View>
+                  <PubField icon="options-outline" colors={colors}>
+                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                      placeholder="Format (NLH, PLO…)" placeholderTextColor={colors.text.tertiary}
+                      value={format} onChangeText={setFormat} returnKeyType="next" />
+                  </PubField>
+
+                  <PubField icon="globe-outline" colors={colors}>
+                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                      placeholder="Website URL" placeholderTextColor={colors.text.tertiary}
+                      value={website} onChangeText={setWebsite} keyboardType="url" returnKeyType="done" autoCapitalize="none" />
+                  </PubField>
                 </>
               )}
 
               {/* ─── SERIES MODE ─── */}
               {mode === "series" && (
                 <>
-                  <Text style={[pubStyles.sectionLabel, { color: colors.text.tertiary }]}>SERIES INFO</Text>
+                  <Text style={[pubStyles.sectionLabel, { color: colors.text.tertiary }]}>SERIES</Text>
 
-                  <PubField icon="layers-outline" borderColor={PURPLE} colors={colors}>
-                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                      placeholder="Series name * (e.g. WSOP Circuit)" placeholderTextColor={colors.text.tertiary}
-                      value={seriesName} onChangeText={setSeriesName} returnKeyType="next" autoFocus />
-                  </PubField>
-
-                  <PubField icon="business-outline" colors={colors}>
-                    <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                      placeholder="Venue / Casino *" placeholderTextColor={colors.text.tertiary}
-                      value={seriesVenue} onChangeText={setSeriesVenue} returnKeyType="next" />
-                  </PubField>
-
-                  <View style={{ flexDirection: "row", gap: 8 }}>
-                    <PubField icon="location-outline" colors={colors}>
-                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
-                        placeholder="City *" placeholderTextColor={colors.text.tertiary}
-                        value={seriesCity} onChangeText={setSeriesCity} returnKeyType="next" />
-                    </PubField>
-                    <View style={[pubStyles.fieldWrap, { width: 90, backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                      <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                        placeholder="State" placeholderTextColor={colors.text.tertiary}
-                        value={seriesState} onChangeText={(t) => setSeriesState(t.toUpperCase().slice(0, 3))}
-                        autoCapitalize="characters" maxLength={3} returnKeyType="next" />
+                  {/* Series picker */}
+                  <TouchableOpacity
+                    onPress={() => setShowSeriesPicker(true)}
+                    activeOpacity={0.75}
+                    style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: pickedSeriesId ? PURPLE : colors.border.default }]}
+                  >
+                    <View style={pubStyles.fieldIcon}>
+                      <Ionicons name="layers-outline" size={16} color={pickedSeriesId ? PURPLE : colors.text.tertiary} />
                     </View>
-                  </View>
+                    <Text style={{ flex: 1, fontSize: 15, color: pickedSeriesId ? colors.text.primary : colors.text.tertiary }}>
+                      {pickedSeriesName || "Select series (optional)"}
+                    </Text>
+                    {pickedSeriesId ? (
+                      <TouchableOpacity
+                        onPress={() => { setPickedSeriesId(null); setPickedSeriesName(""); }}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        style={{ paddingRight: 14 }}
+                      >
+                        <Ionicons name="close-circle" size={18} color={colors.text.tertiary} />
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={{ paddingRight: 14 }}>
+                        <Ionicons name="chevron-down" size={16} color={colors.text.tertiary} />
+                      </View>
+                    )}
+                  </TouchableOpacity>
+
+                  {/* Series venue picker */}
+                  {!seriesVenueIsCustom ? (
+                    <TouchableOpacity
+                      onPress={() => setVenuePickerFor("series")}
+                      activeOpacity={0.75}
+                      style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: seriesVenueId ? PURPLE : colors.border.default }]}
+                    >
+                      <View style={pubStyles.fieldIcon}>
+                        <Ionicons name="business-outline" size={16} color={seriesVenueId ? PURPLE : colors.text.tertiary} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        {seriesVenueId ? (
+                          <View>
+                            <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{seriesVenue}</Text>
+                            <Text style={{ color: colors.text.tertiary, fontSize: 12, marginTop: 1 }}>{seriesCity}, {seriesState}</Text>
+                          </View>
+                        ) : (
+                          <Text style={{ color: colors.text.tertiary, fontSize: 15 }}>Select venue / casino *</Text>
+                        )}
+                      </View>
+                      {seriesVenueId ? (
+                        <TouchableOpacity
+                          onPress={() => { setSeriesVenueId(null); setSeriesVenue(""); setSeriesCity(""); }}
+                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          style={{ paddingRight: 14 }}
+                        >
+                          <Ionicons name="close-circle" size={18} color={colors.text.tertiary} />
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={{ paddingRight: 14 }}>
+                          <Ionicons name="chevron-down" size={16} color={colors.text.tertiary} />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  ) : (
+                    <>
+                      <TouchableOpacity onPress={() => { setSeriesVenueIsCustom(false); setSeriesVenue(""); setSeriesCity(""); }} style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                        <Ionicons name="arrow-back-outline" size={14} color={BRAND} />
+                        <Text style={{ color: BRAND, fontSize: 13, fontWeight: "600" }}>Back to venue list</Text>
+                      </TouchableOpacity>
+                      <PubField icon="business-outline" colors={colors}>
+                        <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                          placeholder="Venue / Casino *" placeholderTextColor={colors.text.tertiary}
+                          value={seriesVenue} onChangeText={setSeriesVenue} returnKeyType="next" autoFocus />
+                      </PubField>
+                      <View style={{ flexDirection: "row", gap: 8 }}>
+                        <PubField icon="location-outline" colors={colors} style={{ flex: 1 }}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                            placeholder="City *" placeholderTextColor={colors.text.tertiary}
+                            value={seriesCity} onChangeText={setSeriesCity} returnKeyType="next" />
+                        </PubField>
+                        <View style={[pubStyles.fieldWrap, { width: 90, backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
+                            placeholder="State" placeholderTextColor={colors.text.tertiary}
+                            value={seriesState} onChangeText={(t) => setSeriesState(t.toUpperCase().slice(0, 3))}
+                            autoCapitalize="characters" maxLength={3} returnKeyType="next" />
+                        </View>
+                      </View>
+                    </>
+                  )}
 
                   {/* Tournament entries */}
                   <Text style={[pubStyles.sectionLabel, { color: colors.text.tertiary, marginTop: 6 }]}>
@@ -1805,24 +2724,34 @@ function PublishTournamentModal({
 
                       <View style={{ height: 8 }} />
 
-                      <PubField icon="calendar-outline" borderColor={entry.dateError ? "#EF4444" : undefined} colors={colors}>
-                        <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
-                          placeholder="Date (DD/MM/YYYY) *" placeholderTextColor={colors.text.tertiary}
-                          value={entry.date} onChangeText={(t) => updateEntry(entry.id, { date: t, dateError: "" })}
-                          keyboardType="numbers-and-punctuation" returnKeyType="next" />
-                      </PubField>
-                      {entry.dateError ? <Text style={[pubStyles.fieldError, { marginTop: 2 }]}>{entry.dateError}</Text> : null}
+                      <TouchableOpacity
+                        onPress={() => setShowSeriesDateFor(entry.id)}
+                        activeOpacity={0.75}
+                        style={[pubStyles.fieldWrap, { backgroundColor: colors.bg.primary, borderColor: entry.date ? BRAND : colors.border.default }]}
+                      >
+                        <View style={pubStyles.fieldIcon}>
+                          <Ionicons name="calendar-outline" size={16} color={entry.date ? BRAND : colors.text.tertiary} />
+                        </View>
+                        <Text style={{ flex: 1, fontSize: 15, color: entry.date ? colors.text.primary : colors.text.tertiary }}>
+                          {entry.date
+                            ? new Date(entry.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric" })
+                            : "Select date *"}
+                        </Text>
+                        <View style={{ paddingRight: 14 }}>
+                          <Ionicons name="chevron-down" size={16} color={colors.text.tertiary} />
+                        </View>
+                      </TouchableOpacity>
 
                       <View style={{ height: 8 }} />
 
                       <View style={{ flexDirection: "row", gap: 8 }}>
-                        <PubField icon="cash-outline" colors={colors}>
-                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        <PubField icon="cash-outline" colors={colors} style={{ flex: 1 }}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
                             placeholder="Buy-in ($)" placeholderTextColor={colors.text.tertiary}
                             value={entry.buyIn} onChangeText={(t) => updateEntry(entry.id, { buyIn: t })} keyboardType="numeric" returnKeyType="next" />
                         </PubField>
-                        <PubField icon="trending-up-outline" colors={colors}>
-                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        <PubField icon="trending-up-outline" colors={colors} style={{ flex: 1 }}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
                             placeholder="GTD ($)" placeholderTextColor={colors.text.tertiary}
                             value={entry.guarantee} onChangeText={(t) => updateEntry(entry.id, { guarantee: t })} keyboardType="numeric" returnKeyType="next" />
                         </PubField>
@@ -1831,13 +2760,13 @@ function PublishTournamentModal({
                       <View style={{ height: 8 }} />
 
                       <View style={{ flexDirection: "row", gap: 8 }}>
-                        <PubField icon="time-outline" colors={colors}>
-                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        <PubField icon="time-outline" colors={colors} style={{ flex: 1 }}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
                             placeholder="Start (HH:MM)" placeholderTextColor={colors.text.tertiary}
                             value={entry.time} onChangeText={(t) => updateEntry(entry.id, { time: t })} keyboardType="numbers-and-punctuation" returnKeyType="next" />
                         </PubField>
-                        <PubField icon="hourglass-outline" colors={colors}>
-                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary, flex: 1 }]}
+                        <PubField icon="hourglass-outline" colors={colors} style={{ flex: 1 }}>
+                          <TextInput style={[pubStyles.fieldInput, { color: colors.text.primary }]}
                             placeholder="Late reg (HH:MM)" placeholderTextColor={colors.text.tertiary}
                             value={entry.lateReg} onChangeText={(t) => updateEntry(entry.id, { lateReg: t })} keyboardType="numbers-and-punctuation" returnKeyType="next" />
                         </PubField>
@@ -1879,6 +2808,197 @@ function PublishTournamentModal({
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </View>
+
+      {/* ─── Date Picker Modals ─── */}
+      <DatePickerModal
+        visible={showDatePicker}
+        onClose={() => setShowDatePicker(false)}
+        onConfirm={(iso) => setDate(iso)}
+        initialIso={date || undefined}
+        colors={colors}
+        insets={insets}
+      />
+      <DatePickerModal
+        visible={showRecEndPicker}
+        onClose={() => setShowRecEndPicker(false)}
+        onConfirm={(iso) => setRecEndDate(iso)}
+        initialIso={recEndDate || date || undefined}
+        colors={colors}
+        insets={insets}
+      />
+      <DatePickerModal
+        visible={!!showSeriesDateFor}
+        onClose={() => setShowSeriesDateFor(null)}
+        onConfirm={(iso) => {
+          if (showSeriesDateFor) { updateEntry(showSeriesDateFor, { date: iso }); setShowSeriesDateFor(null); }
+        }}
+        initialIso={entries.find((e) => e.id === showSeriesDateFor)?.date || undefined}
+        colors={colors}
+        insets={insets}
+      />
+
+      {/* ─── Series Picker Modal ─── */}
+      <Modal
+        visible={showSeriesPicker}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => { setShowSeriesPicker(false); setSeriesPickerSearch(""); }}
+      >
+        <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+          <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+            <TouchableOpacity onPress={() => { setShowSeriesPicker(false); setSeriesPickerSearch(""); }} style={pubStyles.navSide} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={[pubStyles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={[pubStyles.navTitle, { color: colors.text.primary }]}>Select Series</Text>
+            <View style={pubStyles.navSide} />
+          </View>
+          <View style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }}>
+            <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: colors.bg.secondary, borderRadius: 10, borderWidth: 1, borderColor: colors.border.default, paddingHorizontal: 12, gap: 8 }}>
+              <Ionicons name="search-outline" size={16} color={colors.text.tertiary} />
+              <TextInput
+                value={seriesPickerSearch} onChangeText={setSeriesPickerSearch}
+                placeholder="Search series..." placeholderTextColor={colors.text.tertiary}
+                style={{ flex: 1, color: colors.text.primary, fontSize: 15, paddingVertical: 10 }}
+                autoFocus returnKeyType="search"
+              />
+              {seriesPickerSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setSeriesPickerSearch("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close-circle" size={16} color={colors.text.tertiary} />
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            {allSeries.length === 0 ? (
+              <View style={{ alignItems: "center", paddingVertical: 40, gap: 12 }}>
+                <Ionicons name="layers-outline" size={36} color={colors.text.tertiary} />
+                <Text style={{ color: colors.text.tertiary, fontSize: 14 }}>No series in the directory yet</Text>
+              </View>
+            ) : allSeries
+              .filter((s) => {
+                if (!seriesPickerSearch.trim()) return true;
+                const q = seriesPickerSearch.toLowerCase();
+                return s.name.toLowerCase().includes(q) || (s.organiser ?? "").toLowerCase().includes(q);
+              })
+              .map((s) => (
+                <TouchableOpacity
+                  key={s.id}
+                  onPress={() => {
+                    setPickedSeriesId(s.id);
+                    setPickedSeriesName(s.name);
+                    setShowSeriesPicker(false);
+                    setSeriesPickerSearch("");
+                  }}
+                  activeOpacity={0.7}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle }}
+                >
+                  <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: s.banner_url ? colors.bg.secondary : PURPLE + "14", alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: 1, borderColor: colors.border.subtle }}>
+                    {s.banner_url ? (
+                      <Image source={{ uri: s.banner_url }} style={{ width: 44, height: 44 }} resizeMode="cover" />
+                    ) : (
+                      <Text style={{ color: PURPLE, fontSize: 16, fontWeight: "800" }}>{s.name.charAt(0)}</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{s.name}</Text>
+                    {s.organiser ? <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{s.organiser}</Text> : null}
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+                </TouchableOpacity>
+              ))}
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* ─── Venue Picker Modal ─── */}
+      <Modal
+        visible={venuePickerFor !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => { setVenuePickerFor(null); setVenueSearch(""); }}
+      >
+        <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+          {/* Header */}
+          <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+            <TouchableOpacity onPress={() => { setVenuePickerFor(null); setVenueSearch(""); }} style={pubStyles.navSide} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={[pubStyles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={[pubStyles.navTitle, { color: colors.text.primary }]}>Select Venue</Text>
+            <View style={pubStyles.navSide} />
+          </View>
+
+          {/* Search */}
+          <View style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }}>
+            <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: colors.bg.secondary, borderRadius: 10, borderWidth: 1, borderColor: colors.border.default, paddingHorizontal: 12, gap: 8 }}>
+              <Ionicons name="search-outline" size={16} color={colors.text.tertiary} />
+              <TextInput
+                value={venueSearch}
+                onChangeText={setVenueSearch}
+                placeholder="Search venues..."
+                placeholderTextColor={colors.text.tertiary}
+                style={{ flex: 1, color: colors.text.primary, fontSize: 15, paddingVertical: 10 }}
+                autoFocus
+                returnKeyType="search"
+              />
+              {venueSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setVenueSearch("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close-circle" size={16} color={colors.text.tertiary} />
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            {allVenues
+              .filter((v) => {
+                if (!venueSearch.trim()) return true;
+                const q = venueSearch.toLowerCase();
+                return v.name.toLowerCase().includes(q) || v.city.toLowerCase().includes(q) || v.state.toLowerCase().includes(q);
+              })
+              .map((v) => (
+                <TouchableOpacity
+                  key={v.id}
+                  onPress={() => handleVenuePick(v)}
+                  activeOpacity={0.7}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle }}
+                >
+                  {/* Logo or initial */}
+                  <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: v.logo_url ? colors.bg.secondary : BRAND + "14", alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: 1, borderColor: colors.border.subtle }}>
+                    {v.logo_url ? (
+                      <Image source={{ uri: v.logo_url }} style={{ width: 40, height: 40 }} resizeMode="contain" />
+                    ) : (
+                      <Text style={{ color: BRAND, fontSize: 16, fontWeight: "800" }}>{v.name.charAt(0)}</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{v.name}</Text>
+                    <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{v.city} · {v.state}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+                </TouchableOpacity>
+              ))}
+
+            {/* Other option */}
+            <TouchableOpacity
+              onPress={() => handleVenuePick(null)}
+              activeOpacity={0.7}
+              style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 16, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle, marginTop: 8 }}
+            >
+              <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: colors.bg.secondary, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border.default }}>
+                <Ionicons name="pencil-outline" size={20} color={colors.text.secondary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>Other</Text>
+                <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>Enter venue name manually</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+            </TouchableOpacity>
+
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </View>
+      </Modal>
     </Modal>
   );
 }
@@ -1889,9 +3009,15 @@ const STAR_COLOR = "#F59E0B";
 
 type SeriesGroup = {
   name: string;
+  seriesId: string | null;
+  submittedBy: string | null;
   imageUrl: string | null;
   dateFrom: string;
   dateTo: string;
+  venue: string;
+  city: string;
+  venueLogoUrl: string | null;
+  venueWebsite: string | null;
   tournaments: OfficialTournament[];
 };
 
@@ -1899,43 +3025,163 @@ function fmtDateShort(dateStr: string) {
   return new Date(dateStr + "T00:00:00").toLocaleDateString("en-AU", { day: "numeric", month: "short" });
 }
 
-function SeriesCard({ group, colors, onPress }: { group: SeriesGroup; colors: any; onPress: () => void }) {
+// ─── iOS-style action sheet ────────────────────────────────────────────────────
+
+type SheetAction = {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+  destructive?: boolean;
+  iconColor?: string;
+};
+
+function CardActionsSheet({ visible, title, subtitle, onClose, actions }: {
+  visible: boolean;
+  title?: string;
+  subtitle?: string;
+  onClose: () => void;
+  actions: SheetAction[];
+}) {
+  const { colors } = usePokerTheme();
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.45)" }} activeOpacity={1} onPress={onClose} />
+      <View style={{ backgroundColor: colors.bg.primary, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: insets.bottom + 8 }}>
+        <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border.default, alignSelf: "center", marginTop: 10, marginBottom: 10 }} />
+        {(title || subtitle) && (
+          <View style={{ paddingHorizontal: 20, paddingBottom: 14 }}>
+            {title && <Text numberOfLines={1} style={{ color: colors.text.primary, fontSize: 15, fontWeight: "700" }}>{title}</Text>}
+            {subtitle && <Text numberOfLines={1} style={{ color: colors.text.tertiary, fontSize: 12, marginTop: 2 }}>{subtitle}</Text>}
+          </View>
+        )}
+        <View style={{ marginHorizontal: 16, borderRadius: 14, overflow: "hidden", borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border.default, backgroundColor: colors.bg.secondary }}>
+          {actions.map((action, i) => (
+            <View key={action.label}>
+              {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.subtle, marginLeft: 62 }} />}
+              <TouchableOpacity
+                onPress={() => { onClose(); setTimeout(action.onPress, 250); }}
+                activeOpacity={0.6}
+                style={{ flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 16, paddingVertical: 14 }}
+              >
+                <View style={{
+                  width: 34, height: 34, borderRadius: 9,
+                  backgroundColor: action.destructive ? "#EF444418" : (action.iconColor ? action.iconColor + "18" : colors.bg.tertiary),
+                  alignItems: "center", justifyContent: "center",
+                }}>
+                  <Ionicons name={action.icon} size={17} color={action.destructive ? "#EF4444" : (action.iconColor ?? colors.text.secondary)} />
+                </View>
+                <Text style={{ flex: 1, fontSize: 16, color: action.destructive ? "#EF4444" : colors.text.primary }}>{action.label}</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+        <TouchableOpacity
+          onPress={onClose}
+          activeOpacity={0.7}
+          style={{ marginHorizontal: 16, marginTop: 8, borderRadius: 14, paddingVertical: 16, alignItems: "center", backgroundColor: colors.bg.secondary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border.default }}
+        >
+          <Text style={{ fontSize: 17, fontWeight: "600", color: colors.text.primary }}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </Modal>
+  );
+}
+
+function SeriesCard({ group, colors, onPress, onEditSeries, onUnpublishSeries, onDeleteSeries }: {
+  group: SeriesGroup;
+  colors: any;
+  onPress: () => void;
+  onEditSeries?: () => void;
+  onUnpublishSeries?: () => void;
+  onDeleteSeries?: () => void;
+}) {
+  const [sheetVisible, setSheetVisible] = useState(false);
+  const isOwner = !!(onEditSeries || onUnpublishSeries || onDeleteSeries);
   const dateRange = group.dateFrom === group.dateTo
     ? fmtDateShort(group.dateFrom)
     : `${fmtDateShort(group.dateFrom)} – ${fmtDateShort(group.dateTo)}`;
 
   return (
+    <>
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.75}
       style={[styles.officialCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}
     >
-      {/* Full-width banner */}
-      {group.imageUrl ? (
-        <Image source={{ uri: group.imageUrl }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
-      ) : (
-        <View style={{ width: "100%", height: 60, backgroundColor: BRAND + "12", alignItems: "center", justifyContent: "center" }}>
-          <Ionicons name="trophy" size={26} color={BRAND} />
-        </View>
-      )}
+      {/* Banner */}
+      <View style={{ position: "relative" }}>
+        {group.imageUrl ? (
+          <Image source={{ uri: group.imageUrl }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+        ) : (
+          <View style={{ width: "100%", height: 72, backgroundColor: BRAND + "12", alignItems: "center", justifyContent: "center" }}>
+            <Ionicons name="trophy" size={28} color={BRAND} />
+          </View>
+        )}
+        {/* Venue logo badge — bottom-left of banner */}
+        {group.venueLogoUrl && (
+          <View style={{ position: "absolute", bottom: -16, left: 14, width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg.primary, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3, overflow: "hidden" }}>
+            <Image source={{ uri: group.venueLogoUrl }} style={{ width: 34, height: 34 }} resizeMode="contain" />
+          </View>
+        )}
+      </View>
 
       {/* Info row */}
-      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 12, gap: 10 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingTop: group.venueLogoUrl ? 22 : 12, paddingBottom: 12, gap: 10 }}>
         <View style={{ flex: 1, gap: 3 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <Text style={[styles.officialName, { color: colors.text.primary, flexShrink: 1 }]} numberOfLines={1}>{group.name}</Text>
             <View style={[styles.officialPill, { backgroundColor: BRAND + "12", paddingHorizontal: 6, paddingVertical: 2 }]}>
               <Text style={[styles.officialPillText, { color: BRAND, fontSize: 10 }]}>SERIES</Text>
             </View>
           </View>
-          <Text style={[styles.officialName, { color: colors.text.primary }]} numberOfLines={1}>{group.name}</Text>
           <Text style={[styles.officialDetailText, { color: colors.text.tertiary }]}>
             {group.tournaments.length} events · {dateRange}
           </Text>
+          {(group.venue || group.city) && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 3, marginTop: 2 }}>
+              <Ionicons name="location-outline" size={12} color={colors.text.tertiary} />
+              <Text style={[styles.officialDetailText, { color: colors.text.tertiary }]} numberOfLines={1}>
+                {[group.venue, group.city].filter(Boolean).join(", ")}
+              </Text>
+            </View>
+          )}
         </View>
-        <Ionicons name="chevron-forward" size={18} color={colors.text.tertiary} />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          {isOwner ? (
+            <TouchableOpacity
+              onPress={(e) => { e.stopPropagation(); setSheetVisible(true); }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={[styles.iconBtn, { backgroundColor: colors.bg.secondary }]}
+            >
+              <Ionicons name="ellipsis-horizontal" size={18} color={colors.text.secondary} />
+            </TouchableOpacity>
+          ) : (
+            <Ionicons name="chevron-forward" size={18} color={colors.text.tertiary} />
+          )}
+        </View>
       </View>
     </TouchableOpacity>
+    <CardActionsSheet
+      visible={sheetVisible}
+      title={group.name}
+      subtitle={`${group.tournaments.length} events · ${dateRange}`}
+      onClose={() => setSheetVisible(false)}
+      actions={[
+        ...(onEditSeries ? [{ icon: "create-outline" as const, label: "Edit Series", iconColor: BRAND, onPress: onEditSeries }] : []),
+        ...(onUnpublishSeries ? [{ icon: "eye-off-outline" as const, label: "Unpublish Series", iconColor: "#F97316", onPress: onUnpublishSeries }] : []),
+        ...(onDeleteSeries ? [{ icon: "trash-outline" as const, label: "Delete Series", destructive: true, onPress: onDeleteSeries }] : []),
+      ]}
+    />
+  </>
   );
+}
+
+type SeriesFilter = "all" | "games" | "satellites";
+
+function isSatellite(t: OfficialTournament) {
+  const haystack = `${t.name} ${t.format ?? ""} ${t.structure ?? ""}`.toLowerCase();
+  return haystack.includes("satellite") || haystack.includes("sat ");
 }
 
 function SeriesDetailModal({
@@ -1948,63 +3194,157 @@ function SeriesDetailModal({
   insets: any;
   onAdded: () => void;
 }) {
+  const { user: modalUser } = useAuth();
+  const [filter, setFilter] = useState<SeriesFilter>("all");
+  const [localTournaments, setLocalTournaments] = useState<OfficialTournament[]>([]);
+  const [editingTournament, setEditingTournament] = useState<OfficialTournament | null>(null);
+
+  // Sync local list whenever the group changes
+  useEffect(() => {
+    if (group) setLocalTournaments(group.tournaments);
+  }, [group]);
+
   if (!group) return null;
+
   const dateRange = group.dateFrom === group.dateTo
     ? fmtDateShort(group.dateFrom)
     : `${fmtDateShort(group.dateFrom)} – ${fmtDateShort(group.dateTo)}`;
+
+  const hasSatellites = localTournaments.some(isSatellite);
+
+  const filtered = filter === "satellites"
+    ? localTournaments.filter(isSatellite)
+    : filter === "games"
+    ? localTournaments.filter((t) => !isSatellite(t))
+    : localTournaments;
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
         {/* Header */}
-        <View style={[styles.header, { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default, paddingTop: 16 }]}>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-            <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
+        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ marginLeft: 4 }}>
+            <Ionicons name="close" size={24} color={colors.text.secondary} />
           </TouchableOpacity>
           <View style={{ flex: 1, alignItems: "center", gap: 2 }}>
-            <Text style={{ fontSize: 16, fontWeight: "700", color: colors.text.primary }} numberOfLines={1}>{group.name}</Text>
-            <Text style={[styles.officialDetailText, { color: colors.text.tertiary }]}>{group.tournaments.length} events · {dateRange}</Text>
+            <Text style={{ fontSize: 17, fontWeight: "600", color: colors.text.primary }} numberOfLines={1}>{group.name}</Text>
+            <Text style={[styles.officialDetailText, { color: colors.text.tertiary }]}>{filtered.length} of {group.tournaments.length} events · {dateRange}</Text>
           </View>
           <View style={{ width: 36 }} />
         </View>
 
         {/* Full-width series banner */}
         {group.imageUrl ? (
-          <Image
-            source={{ uri: group.imageUrl }}
-            style={{ width: "100%", height: 120 }}
-            resizeMode="cover"
-          />
+          <Image source={{ uri: group.imageUrl }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
         ) : null}
+
+        {/* Filter pills — only show if series has satellites */}
+        {hasSatellites && (
+          <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }}>
+            {(["all", "games", "satellites"] as SeriesFilter[]).map((opt) => {
+              const active = filter === opt;
+              const label = opt === "all" ? "All" : opt === "games" ? "Games" : "Satellites";
+              return (
+                <TouchableOpacity
+                  key={opt}
+                  onPress={() => setFilter(opt)}
+                  activeOpacity={0.75}
+                  style={{
+                    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1.5,
+                    backgroundColor: active ? BRAND : colors.bg.secondary,
+                    borderColor: active ? BRAND : colors.border.default,
+                  }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: active ? "#fff" : colors.text.secondary }}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
 
         <ScrollView
           contentContainerStyle={{ paddingTop: 12, paddingBottom: insets.bottom + 32, gap: 10 }}
           showsVerticalScrollIndicator={false}
         >
-          {group.tournaments.map((t) => (
+          {filtered.length === 0 ? (
+            <View style={{ alignItems: "center", paddingVertical: 48, gap: 10 }}>
+              <Ionicons name="trophy-outline" size={36} color={colors.text.tertiary} />
+              <Text style={{ color: colors.text.tertiary, fontSize: 14 }}>No {filter} found</Text>
+            </View>
+          ) : filtered.map((t) => (
             <OfficialTournamentCard
               key={t.id}
               tournament={t}
               colors={colors}
               onAdded={onAdded}
               hideBanner
+              onEditOwn={modalUser?.id && t.submitted_by === modalUser.id ? () => setEditingTournament(t) : undefined}
+              onUnpublishOwn={modalUser?.id && t.submitted_by === modalUser.id ? async () => {
+                try {
+                  await unpublishMyTournament(t.id);
+                  setLocalTournaments((prev) => prev.filter((x) => x.id !== t.id));
+                  onAdded();
+                } catch (e: any) {
+                  Alert.alert("Could not unpublish", e?.message ?? "Please try again.");
+                }
+              } : undefined}
+              onDeleteOwn={modalUser?.id && t.submitted_by === modalUser.id ? async () => {
+                try {
+                  await deleteMyTournament(t.id);
+                  setLocalTournaments((prev) => prev.filter((x) => x.id !== t.id));
+                  onAdded();
+                } catch (e: any) {
+                  Alert.alert("Could not delete", e?.message ?? "Please try again.");
+                }
+              } : undefined}
             />
           ))}
         </ScrollView>
       </View>
+
+      {editingTournament && modalUser?.id && (
+        <EditSubmissionModal
+          visible={!!editingTournament}
+          onClose={() => setEditingTournament(null)}
+          tournament={editingTournament}
+          userId={modalUser.id}
+          onUpdated={(updated) => {
+            setLocalTournaments((prev) => prev.filter((x) => x.id !== updated.id));
+            setEditingTournament(null);
+            onAdded();
+          }}
+          onDeleted={(id) => {
+            setLocalTournaments((prev) => prev.filter((x) => x.id !== id));
+            setEditingTournament(null);
+            onAdded();
+          }}
+          insets={insets}
+          colors={colors}
+        />
+      )}
     </Modal>
   );
 }
 
 function OfficialTournamentCard({
-  tournament, colors, onAdded, hideBanner = false,
+  tournament, colors, onAdded, hideBanner = false, onEditOwn, onDeleteOwn, onUnpublishOwn,
 }: {
   tournament: OfficialTournament;
   colors: any;
   onAdded: () => void;
   hideBanner?: boolean;
+  onEditOwn?: () => void;
+  onDeleteOwn?: () => void;
+  onUnpublishOwn?: () => void;
 }) {
+  const { user: cardUser } = useAuth();
   const [starred, setStarred] = useState(false);
+  const [savedEventId, setSavedEventId] = useState<number | null>(null);
+  const [ownerSheetVisible, setOwnerSheetVisible] = useState(false);
+  const [starSignInVisible, setStarSignInVisible] = useState(false);
+  const isOwner = !!cardUser?.id && tournament.submitted_by === cardUser.id;
 
   const dateLabel = tournament.tournament_date
     ? new Date(tournament.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })
@@ -2013,8 +3353,18 @@ function OfficialTournamentCard({
   const lateReg   = tournament.late_reg_end ? `Late reg until ${fmt12h(tournament.late_reg_end)}` : null;
 
   function handleStar() {
-    if (starred) return;
-    addTournamentEvent({
+    if (!cardUser?.id) {
+      setStarSignInVisible(true);
+      return;
+    }
+    if (starred && savedEventId != null) {
+      deleteTournamentEvent(savedEventId);
+      if (cardUser?.id) deleteEventFromCloud(cardUser.id, savedEventId).catch(console.error);
+      setSavedEventId(null);
+      setStarred(false);
+      return;
+    }
+    const eventId = addTournamentEvent({
       name:      tournament.name,
       date:      tournament.tournament_date,
       venue:     [tournament.venue, tournament.city].filter(Boolean).join(", "),
@@ -2024,42 +3374,82 @@ function OfficialTournamentCard({
         tournament.guarantee != null ? `GTD $${tournament.guarantee.toLocaleString()}` : null,
         timeLabel ? `Starts ${timeLabel}` : null,
       ].filter(Boolean).join(" · "),
-      image_url: tournament.series_image_url ?? "",
+      image_url: tournament.series_info?.banner_url ?? tournament.banner_url ?? "",
       source:    "directory",
     });
+    if (cardUser?.id) syncEventToCloud(cardUser.id, eventId).catch(console.error);
+    setSavedEventId(eventId);
     setStarred(true);
     onAdded();
   }
 
-  const hasBanner = !!tournament.series_image_url && !hideBanner;
+  const bannerUrl = tournament.series_info?.banner_url ?? tournament.banner_url ?? null;
+  const hasBanner = !!bannerUrl && !hideBanner;
+  const logoUrl = tournament.series_info?.organiser_logo_url ?? tournament.venue_info?.logo_url ?? null;
 
   return (
+    <>
     <View style={[styles.officialCard, { backgroundColor: colors.bg.primary, borderColor: starred ? STAR_COLOR + "60" : colors.border.default }]}>
-      {/* Full-width banner image */}
+      {/* Full-width banner image with optional venue/organiser logo badge */}
       {hasBanner && (
-        <Image source={{ uri: tournament.series_image_url! }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+        <View style={{ position: "relative" }}>
+          <Image source={{ uri: bannerUrl! }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+          {logoUrl && (
+            <View style={{ position: "absolute", bottom: -16, left: 14, width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg.primary, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3, overflow: "hidden" }}>
+              <Image source={{ uri: logoUrl }} style={{ width: 34, height: 34 }} resizeMode="contain" />
+            </View>
+          )}
+        </View>
       )}
 
       {/* Name row */}
-      <View style={[styles.officialCardTop, !hasBanner && { paddingTop: 14 }]}>
+      <View style={[styles.officialCardTop, !hasBanner && { paddingTop: 14 }, hasBanner && { paddingTop: logoUrl ? 22 : 12 }]}>
         {!hasBanner && (
-          <View style={[styles.seriesLogoPlaceholder, { backgroundColor: BRAND + "18" }]}>
-            <Ionicons name="trophy" size={18} color={BRAND} />
+          <View style={[styles.seriesLogoPlaceholder, {
+            backgroundColor: (tournament.series_info?.organiser_logo_url || tournament.venue_info?.logo_url) ? colors.bg.secondary : BRAND + "18",
+            overflow: "hidden",
+          }]}>
+            {tournament.series_info?.organiser_logo_url ? (
+              <Image source={{ uri: tournament.series_info.organiser_logo_url }} style={{ width: 36, height: 36 }} resizeMode="contain" />
+            ) : tournament.venue_info?.logo_url ? (
+              <Image source={{ uri: tournament.venue_info.logo_url }} style={{ width: 36, height: 36 }} resizeMode="contain" />
+            ) : (
+              <Ionicons name="trophy" size={18} color={BRAND} />
+            )}
           </View>
         )}
         <View style={{ flex: 1 }}>
-          {tournament.series ? (
-            <Text style={[styles.officialSeries, { color: BRAND }]}>{tournament.series}</Text>
+          {tournament.series_info?.organiser ? (
+            <Text style={[styles.officialSeries, { color: colors.text.tertiary, fontSize: 11 }]}>{tournament.series_info.organiser.toUpperCase()}</Text>
+          ) : null}
+          {tournament.series_info?.name ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+              <Text style={[styles.officialSeries, { color: BRAND }]}>{tournament.series_info.name}</Text>
+              <View style={{ backgroundColor: BRAND + "15", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
+                <Text style={{ fontSize: 9, fontWeight: "700", color: BRAND, letterSpacing: 0.4 }}>SERIES</Text>
+              </View>
+            </View>
           ) : null}
           <Text style={[styles.officialName, { color: colors.text.primary }]} numberOfLines={2}>{tournament.name}</Text>
         </View>
-        <TouchableOpacity
-          onPress={handleStar}
-          style={[styles.officialStarBtn, starred && { backgroundColor: STAR_COLOR + "18" }]}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name={starred ? "star" : "star-outline"} size={22} color={starred ? STAR_COLOR : colors.text.tertiary} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          {isOwner && (onEditOwn || onUnpublishOwn || onDeleteOwn) && (
+            <TouchableOpacity
+              onPress={() => setOwnerSheetVisible(true)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={[styles.iconBtn, { backgroundColor: colors.bg.secondary }]}
+            >
+              <Ionicons name="ellipsis-horizontal" size={18} color={colors.text.secondary} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            onPress={handleStar}
+            style={[styles.officialStarBtn, starred && { backgroundColor: STAR_COLOR + "18" }]}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name={starred ? "star" : "star-outline"} size={22} color={starred ? STAR_COLOR : colors.text.tertiary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={[styles.officialDivider, { backgroundColor: colors.border.subtle }]} />
@@ -2074,18 +3464,35 @@ function OfficialTournamentCard({
             </Text>
           </View>
         ) : null}
-        <View style={styles.officialDetailItem}>
-          <Ionicons name="location-outline" size={13} color={colors.text.tertiary} />
-          <Text style={[styles.officialDetailText, { color: colors.text.secondary }]} numberOfLines={1}>
-            {tournament.venue}{tournament.city ? `, ${tournament.city}` : ""}
+        <TouchableOpacity
+          activeOpacity={tournament.venue_info?.lat ? 0.6 : 1}
+          onPress={() => {
+            const v = tournament.venue_info;
+            if (!v?.lat || !v?.lng) return;
+            const label = encodeURIComponent(v.name);
+            const url = Platform.OS === "ios"
+              ? `maps://?q=${label}&ll=${v.lat},${v.lng}`
+              : `geo:${v.lat},${v.lng}?q=${label}`;
+            Linking.openURL(url).catch(() => {});
+          }}
+          style={styles.officialDetailItem}
+        >
+          <Ionicons name="location-outline" size={13} color={tournament.venue_info?.lat ? BRAND : colors.text.tertiary} />
+          <Text style={[styles.officialDetailText, { color: tournament.venue_info?.lat ? BRAND : colors.text.secondary }]} numberOfLines={1}>
+            {tournament.venue_info?.address
+              ? `${tournament.venue_info.address}, ${tournament.city}`
+              : `${tournament.venue}${tournament.city ? `, ${tournament.city}` : ""}`}
           </Text>
-        </View>
+          {tournament.venue_info?.lat && (
+            <Ionicons name="open-outline" size={11} color={BRAND} style={{ marginLeft: 2 }} />
+          )}
+        </TouchableOpacity>
       </View>
 
       {/* Pills */}
       <View style={styles.officialPillsRow}>
         {tournament.buy_in != null && (
-          <View style={[styles.officialPill, { backgroundColor: colors.bg.secondary }]}>
+          <View style={[styles.officialPill, { backgroundColor: colors.bg.tertiary }]}>
             <Text style={[styles.officialPillText, { color: colors.text.primary }]}>${tournament.buy_in.toLocaleString()} buy-in</Text>
           </View>
         )}
@@ -2095,7 +3502,7 @@ function OfficialTournamentCard({
           </View>
         )}
         {tournament.format ? (
-          <View style={[styles.officialPill, { backgroundColor: colors.bg.secondary }]}>
+          <View style={[styles.officialPill, { backgroundColor: colors.bg.tertiary }]}>
             <Text style={[styles.officialPillText, { color: colors.text.secondary }]}>{tournament.format}</Text>
           </View>
         ) : null}
@@ -2105,7 +3512,34 @@ function OfficialTournamentCard({
           </View>
         ) : null}
       </View>
+
     </View>
+    <CardActionsSheet
+      visible={ownerSheetVisible}
+      title={tournament.name}
+      onClose={() => setOwnerSheetVisible(false)}
+      actions={[
+        ...(onEditOwn ? [{ icon: "create-outline" as const, label: "Edit Tournament", iconColor: BRAND, onPress: onEditOwn }] : []),
+        ...(onUnpublishOwn ? [{ icon: "eye-off-outline" as const, label: "Unpublish", iconColor: "#F97316",
+          onPress: () => Alert.alert("Unpublish Tournament", `Move "${tournament.name}" back to pending? It will be removed from the public directory until re-approved.`, [
+            { text: "Cancel", style: "cancel" },
+            { text: "Unpublish", style: "destructive", onPress: onUnpublishOwn },
+          ]) }] : []),
+        ...(onDeleteOwn ? [{ icon: "trash-outline" as const, label: "Delete Tournament", destructive: true,
+          onPress: () => Alert.alert("Delete Tournament", `Remove "${tournament.name}"? This cannot be undone.`, [
+            { text: "Cancel", style: "cancel" },
+            { text: "Delete", style: "destructive", onPress: onDeleteOwn },
+          ]) }] : []),
+      ]}
+    />
+    <SignInSheet
+      visible={starSignInVisible}
+      onClose={() => setStarSignInVisible(false)}
+      icon="star-outline"
+      title="Save to Your Schedule"
+      description="Sign in to add tournaments to your schedule and track upcoming events."
+    />
+  </>
   );
 }
 
@@ -2379,12 +3813,12 @@ function CommunityTournamentCard({
                 </View>
               )}
               {stakeDeal.buyin && (
-                <View style={[styles.officialPill, { backgroundColor: colors.bg.secondary }]}>
+                <View style={[styles.officialPill, { backgroundColor: colors.bg.tertiary }]}>
                   <Text style={[styles.officialPillText, { color: colors.text.secondary }]}>Buy-in: {stakeDeal.buyin}</Text>
                 </View>
               )}
               {stakeDeal.price && (
-                <View style={[styles.officialPill, { backgroundColor: colors.bg.secondary }]}>
+                <View style={[styles.officialPill, { backgroundColor: colors.bg.tertiary }]}>
                   <Text style={[styles.officialPillText, { color: colors.text.secondary }]}>{stakeDeal.price}</Text>
                 </View>
               )}
@@ -2546,13 +3980,25 @@ function EventCard({
   showDate?: boolean;
   past?: boolean;
 }) {
-  const [showSheet, setShowSheet] = useState(false);
+  const { user: evtUser } = useAuth();
+  const [showShareSheet, setShowShareSheet] = useState(false);
+  const [stakeSignInVisible, setStakeSignInVisible] = useState(false);
   const hasImage      = !!event.image_url;
   const hasActiveDeal = !!event.stake_deal_id;
 
-  function handleAction(action: () => void) {
-    setShowSheet(false);
+  function handleShareAction(action: () => void) {
+    setShowShareSheet(false);
     setTimeout(action, 300);
+  }
+
+  function handleSellStakesGuarded() {
+    if (!evtUser?.id) { setStakeSignInVisible(true); return; }
+    onSellStakes();
+  }
+
+  function handleAdvertiseGuarded() {
+    if (!evtUser?.id) { setShowShareSheet(false); setTimeout(() => setStakeSignInVisible(true), 300); return; }
+    handleShareAction(onShareStake);
   }
 
   return (
@@ -2592,11 +4038,11 @@ function EventCard({
             )}
           </View>
 
-          {/* Right side: Sell Stakes chip + 3-dots */}
-          <View style={{ alignItems: "flex-end", gap: 8 }}>
-            {!past && (
+          {/* Right side: Sell Stakes chip + icons (bottom-aligned) */}
+          <View style={{ alignItems: "flex-end", justifyContent: "space-between", alignSelf: "stretch" }}>
+            {!past ? (
               <TouchableOpacity
-                onPress={onSellStakes}
+                onPress={handleSellStakesGuarded}
                 style={{
                   flexDirection: "row", alignItems: "center", gap: 4,
                   paddingHorizontal: 9, paddingVertical: 5,
@@ -2611,91 +4057,51 @@ function EventCard({
                   {hasActiveDeal ? "Manage Stakes" : "Sell Stakes"}
                 </Text>
               </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              onPress={() => setShowSheet(true)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={[styles.iconBtn, { backgroundColor: colors.bg.secondary }]}
-            >
-              <Ionicons name="ellipsis-horizontal" size={18} color={colors.text.secondary} />
-            </TouchableOpacity>
+            ) : <View />}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              {/* More actions */}
+              <TouchableOpacity
+                onPress={() => setShowShareSheet(true)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={[styles.iconBtn, { backgroundColor: colors.bg.secondary }]}
+              >
+                <Ionicons name="ellipsis-horizontal" size={16} color={colors.text.secondary} />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </View>
 
-      {/* Bottom sheet */}
-      <Modal visible={showSheet} transparent animationType="slide" onRequestClose={() => setShowSheet(false)}>
-        <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setShowSheet(false)} />
-        <View style={[styles.sheetContainer, { backgroundColor: colors.bg.primary }]}>
-          <View style={[styles.sheetHandle, { backgroundColor: colors.border.default }]} />
-          <Text style={[styles.sheetTitle, { color: colors.text.primary }]} numberOfLines={1}>{event.name}</Text>
-
-          {!past && (
-            <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(onShare)}>
-              <View style={[styles.sheetIcon, { backgroundColor: BRAND + "15" }]}>
-                <Ionicons name="share-social-outline" size={18} color={BRAND} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.sheetRowText, { color: colors.text.primary }]}>Share Tournament</Text>
-                <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 1 }}>Post to the community feed</Text>
-              </View>
-            </TouchableOpacity>
-          )}
-
-          {!past && hasActiveDeal && (
-            <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(onShareStake)}>
-              <View style={[styles.sheetIcon, { backgroundColor: "#7C3AED15" }]}>
-                <Ionicons name="people-outline" size={18} color="#7C3AED" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.sheetRowText, { color: colors.text.primary }]}>Advertise Stake Deal</Text>
-                <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 1 }}>Let the community know you're selling action</Text>
-              </View>
-            </TouchableOpacity>
-          )}
-
-          {!past && (
-            <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(onCalendarSync)}>
-              <View style={[styles.sheetIcon, { backgroundColor: "#22C55E15" }]}>
-                <Ionicons name="calendar-outline" size={18} color="#22C55E" />
-              </View>
-              <Text style={[styles.sheetRowText, { color: colors.text.primary }]}>Add to Device Calendar</Text>
-            </TouchableOpacity>
-          )}
-
-          {event.source === "directory" ? (
-            <TouchableOpacity style={styles.sheetRow} onPress={() => handleAction(onDelete)}>
-              <View style={[styles.sheetIcon, { backgroundColor: "#EF444415" }]}>
-                <Ionicons name="star-outline" size={18} color="#EF4444" />
-              </View>
-              <Text style={[styles.sheetRowText, { color: "#EF4444" }]}>Remove from Schedule</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity style={styles.sheetRow} onPress={() => {
-              setShowSheet(false);
-              setTimeout(() => {
-                Alert.alert(
-                  "Delete Tournament",
-                  `Are you sure you want to delete "${event.name}"? This cannot be undone.`,
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Delete", style: "destructive", onPress: onDelete },
-                  ]
-                );
-              }, 300);
-            }}>
-              <View style={[styles.sheetIcon, { backgroundColor: "#EF444415" }]}>
-                <Ionicons name="trash-outline" size={18} color="#EF4444" />
-              </View>
-              <Text style={[styles.sheetRowText, { color: "#EF4444" }]}>Delete Tournament</Text>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity style={[styles.sheetCancel, { borderColor: colors.border.default }]} onPress={() => setShowSheet(false)}>
-            <Text style={[styles.sheetCancelText, { color: colors.text.secondary }]}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
+      <SignInSheet
+        visible={stakeSignInVisible}
+        onClose={() => setStakeSignInVisible(false)}
+        icon="trending-up-outline"
+        title="Staking Marketplace"
+        description="Sign in to sell poker action and advertise stake deals to the community."
+      />
+      <CardActionsSheet
+        visible={showShareSheet}
+        title={event.name}
+        onClose={() => setShowShareSheet(false)}
+        actions={[
+          ...(!past ? [{ icon: "calendar-outline" as const, label: "Add to Calendar", iconColor: "#22C55E", onPress: onCalendarSync }] : []),
+          ...(!past ? [{ icon: "people-outline" as const, label: "Advertise Stake Deal", iconColor: PURPLE, onPress: handleAdvertiseGuarded }] : []),
+          ...(!past ? [{ icon: "share-social-outline" as const, label: "Post to Community", iconColor: BRAND, onPress: onShare }] : []),
+          {
+            icon: "star-outline" as const,
+            label: event.source === "directory" ? "Remove from Schedule" : "Delete",
+            destructive: true,
+            onPress: () => Alert.alert(
+              event.source === "directory" ? "Remove from Schedule" : "Delete Tournament",
+              event.source === "directory" ? "Remove this tournament from your schedule?" : `Delete "${event.name}"? This cannot be undone.`,
+              [
+                { text: "Cancel", style: "cancel" },
+                { text: event.source === "directory" ? "Remove" : "Delete", style: "destructive", onPress: onDelete },
+              ]
+            ),
+          },
+        ]}
+      />
     </>
   );
 }
@@ -2733,6 +4139,7 @@ function ShareTournamentModal({
         venue: event.venue || null,
         amount_label: event.buyin || null,
         content,
+        stake_deal_id: event.stake_deal_id || null,
         visibility: friendsOnly ? "friends" : "public",
       });
       Alert.alert(
@@ -2756,7 +4163,7 @@ function ShareTournamentModal({
               <View style={styles.modalTitleRow}>
                 <Text style={[styles.modalTitle, { color: colors.text.primary }]}>Share to Community</Text>
                 <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                  <View style={[styles.closeBtn, { backgroundColor: colors.bg.secondary }]}>
+                  <View style={[styles.closeBtn, { backgroundColor: colors.bg.tertiary }]}>
                     <Ionicons name="close" size={16} color={colors.text.secondary} />
                   </View>
                 </TouchableOpacity>
@@ -2824,6 +4231,7 @@ function ShareTournamentModal({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  animHeader: { position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 },
 
   header: {
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -3113,7 +4521,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 9,
   },
   searchInput: { flex: 1, fontSize: 14 },
-  stateChipsScroll: { borderBottomWidth: StyleSheet.hairlineWidth, flexGrow: 0, flexShrink: 0, height: 46 },
+  stateChipsAbsolute: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 5,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
   stateChipsRow: { paddingHorizontal: 16, paddingVertical: 7, alignItems: "center", gap: 8, flexDirection: "row" },
   stateChip: {
     paddingHorizontal: 14, paddingVertical: 6,
@@ -3291,7 +4706,9 @@ const addStyles = StyleSheet.create({
   imageHint: { fontSize: 11, textAlign: "center", marginTop: 6, marginHorizontal: 16 },
   fieldWrap: {
     flexDirection: "row", alignItems: "center",
-    borderRadius: 12, borderWidth: 1, overflow: "hidden",
+    borderRadius: 12, borderWidth: 1.5, overflow: "hidden",
+    shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 4, shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
   fieldWrapMulti: { alignItems: "flex-start" },
   fieldIcon: {
@@ -3358,7 +4775,9 @@ const pubStyles = StyleSheet.create({
   },
   fieldWrap: {
     flexDirection: "row", alignItems: "center",
-    borderRadius: 12, borderWidth: 1, overflow: "hidden",
+    borderRadius: 12, borderWidth: 1.5, overflow: "hidden",
+    shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 4, shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   },
   fieldWrapMulti: { alignItems: "flex-start" },
   fieldIcon: {

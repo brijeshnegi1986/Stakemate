@@ -1,10 +1,11 @@
 import { SessionFAB } from "@/components/SessionFAB";
+import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Dimensions,
   Modal,
   ScrollView,
@@ -24,7 +25,11 @@ import {
 
 type Filter = "all" | SessionType;
 
-const BRAND = "#155DFC";
+const BRAND  = "#155DFC";
+const GREEN  = "#22C55E";
+const RED    = "#EF4444";
+const ORANGE = "#F97316";
+const PURPLE = "#7C3AED";
 
 const CURRENCY_META: Record<string, { flag: string; symbol: string }> = {
   AUD: { flag: "🇦🇺", symbol: "$" },
@@ -35,30 +40,33 @@ const CURRENCY_META: Record<string, { flag: string; symbol: string }> = {
 
 const SCREEN_W = Dimensions.get("window").width;
 
-// ── Inline line chart ──────────────────────────────────────────────────────────
-function LineSegment({ x1, y1, x2, y2, color }: { x1: number; y1: number; x2: number; y2: number; color: string }) {
+// ── Chart ──────────────────────────────────────────────────────────────────────
+
+function LineSegment({ x1, y1, x2, y2, color }: {
+  x1: number; y1: number; x2: number; y2: number; color: string;
+}) {
   const dx = x2 - x1, dy = y2 - y1;
   const length = Math.sqrt(dx * dx + dy * dy);
-  const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+  const angle  = Math.atan2(dy, dx) * (180 / Math.PI);
   const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
   return (
-    <View
-      style={{
-        position: "absolute",
-        left: cx - length / 2,
-        top: cy - 1,
-        width: length,
-        height: 2.5,
-        backgroundColor: color,
-        transform: [{ rotate: `${angle}deg` }],
-      }}
-    />
+    <View style={{
+      position: "absolute",
+      left: cx - length / 2,
+      top: cy - 1.5,
+      width: length,
+      height: 3,
+      backgroundColor: color,
+      borderRadius: 2,
+      transform: [{ rotate: `${angle}deg` }],
+    }} />
   );
 }
 
 function ProfitChart({ sessions, colors, symbol }: { sessions: Session[]; colors: any; symbol: string }) {
-  const CHART_H = 110;
-  const chartW  = SCREEN_W - 80;
+  const CHART_H = 140;
+  const LABEL_W = 56;
+  const chartW  = SCREEN_W - 64 - LABEL_W;
 
   const sorted = useMemo(
     () => [...sessions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
@@ -81,7 +89,15 @@ function ProfitChart({ sessions, colors, symbol }: { sessions: Session[]; colors
   }));
 
   const last      = cumulative[cumulative.length - 1] ?? 0;
-  const lineColor = last >= 0 ? "#22C55E" : "#EF4444";
+  const lineColor = last >= 0 ? GREEN : RED;
+
+  const fmtY = (v: number) => {
+    const abs = Math.abs(v);
+    const sign = v >= 0 ? "+" : "-";
+    if (abs >= 10000) return `${sign}${symbol}${(abs / 1000).toFixed(0)}k`;
+    if (abs >= 1000)  return `${sign}${symbol}${(abs / 1000).toFixed(1)}k`;
+    return `${sign}${symbol}${abs.toFixed(0)}`;
+  };
 
   const firstDate = sorted.length
     ? new Date(sorted[0].date).toLocaleDateString("en-AU", { day: "2-digit", month: "short" })
@@ -90,51 +106,126 @@ function ProfitChart({ sessions, colors, symbol }: { sessions: Session[]; colors
     ? new Date(sorted[sorted.length - 1].date).toLocaleDateString("en-AU", { day: "2-digit", month: "short" })
     : "—";
 
+  const zeroY = hasData && minVal < 0 && maxVal > 0
+    ? CHART_H - ((0 - minVal) / range) * CHART_H
+    : null;
+
   return (
     <View style={[styles.chartCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
       <View style={styles.chartHeader}>
-        <Text style={[styles.chartTitle, { color: colors.text.primary }]}>Profit Over Time</Text>
-        <Text style={[styles.chartSub, { color: colors.text.tertiary }]}>
-          {hasData ? `${sessions.length} sessions` : "No data yet"}
-        </Text>
+        <Text style={[styles.chartTitle, { color: colors.text.primary }]}>Bankroll Curve</Text>
+        {hasData && (
+          <Text style={[styles.chartCurrentVal, { color: lineColor }]}>{fmtY(last)}</Text>
+        )}
       </View>
 
-      <View style={{ height: CHART_H, position: "relative" }}>
-        {hasData && minVal < 0 && maxVal > 0 && (
-          <View style={[styles.zeroLine, {
-            top: CHART_H - ((0 - minVal) / range) * CHART_H,
-            borderColor: colors.border.subtle,
-          }]} />
-        )}
-        {hasData ? (
-          points.slice(0, -1).map((pt, i) => (
-            <LineSegment key={i} x1={pt.x} y1={pt.y} x2={points[i + 1].x} y2={points[i + 1].y} color={lineColor} />
-          ))
-        ) : (
-          <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ color: colors.text.tertiary, fontSize: 13 }}>Log sessions to see your chart</Text>
+      <View style={{ flexDirection: "row" }}>
+        {/* Y-axis */}
+        {hasData && (
+          <View style={{ width: LABEL_W, height: CHART_H }}>
+            <Text style={[styles.chartAxisLabel, { color: colors.text.tertiary, position: "absolute", top: 0 }]}>
+              {fmtY(maxVal)}
+            </Text>
+            {zeroY !== null && (
+              <Text style={[styles.chartAxisLabel, { color: colors.text.tertiary, position: "absolute", top: zeroY - 8 }]}>
+                {symbol}0
+              </Text>
+            )}
+            <Text style={[styles.chartAxisLabel, { color: colors.text.tertiary, position: "absolute", bottom: 0 }]}>
+              {fmtY(minVal)}
+            </Text>
           </View>
         )}
+
+        {/* Chart area */}
+        <View style={{ flex: 1, height: CHART_H, position: "relative" }}>
+          {/* Zero baseline */}
+          {zeroY !== null && (
+            <View style={{
+              position: "absolute", left: 0, right: 0,
+              top: zeroY, height: StyleSheet.hairlineWidth,
+              backgroundColor: colors.border.subtle,
+            }} />
+          )}
+
+          {hasData ? (
+            <>
+              {points.slice(0, -1).map((pt, i) => (
+                <LineSegment key={i} x1={pt.x} y1={pt.y} x2={points[i + 1].x} y2={points[i + 1].y} color={lineColor} />
+              ))}
+              {/* End dot */}
+              <View style={{
+                position: "absolute",
+                left: points[points.length - 1].x - 5,
+                top:  points[points.length - 1].y - 5,
+                width: 10, height: 10, borderRadius: 5,
+                backgroundColor: lineColor,
+                shadowColor: lineColor,
+                shadowOpacity: 0.5,
+                shadowRadius: 4,
+                shadowOffset: { width: 0, height: 0 },
+              }} />
+              {/* Start dot */}
+              <View style={{
+                position: "absolute",
+                left: points[0].x - 4,
+                top:  points[0].y - 4,
+                width: 8, height: 8, borderRadius: 4,
+                backgroundColor: colors.bg.primary,
+                borderWidth: 2,
+                borderColor: lineColor,
+              }} />
+            </>
+          ) : (
+            <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <Ionicons name="trending-up-outline" size={32} color={colors.text.tertiary} />
+              <Text style={{ color: colors.text.tertiary, fontSize: 13 }}>Log sessions to see your curve</Text>
+            </View>
+          )}
+        </View>
       </View>
 
-      <View style={styles.chartFooter}>
-        <Text style={[styles.chartDate, { color: colors.text.tertiary }]}>{firstDate}</Text>
-        <Text style={[styles.chartDate, { color: colors.text.tertiary }]}>stakemate.app</Text>
-        <Text style={[styles.chartDate, { color: colors.text.tertiary }]}>{lastDate}</Text>
-      </View>
+      {hasData && (
+        <View style={styles.chartFooter}>
+          <Text style={[styles.chartDate, { color: colors.text.tertiary }]}>{firstDate}</Text>
+          <Text style={[styles.chartDate, { color: colors.text.tertiary }]}>{sessions.length} sessions</Text>
+          <Text style={[styles.chartDate, { color: colors.text.tertiary }]}>{lastDate}</Text>
+        </View>
+      )}
     </View>
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// ── Stat card (2×2 grid) ──────────────────────────────────────────────────────
+
+function StatCard({ label, value, sub, icon, iconColor, valueColor, colors }: {
+  label: string; value: string; sub?: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  iconColor: string; valueColor?: string; colors: any;
+}) {
+  return (
+    <View style={[styles.statCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+      <View style={[styles.statCardIcon, { backgroundColor: iconColor + "15" }]}>
+        <Ionicons name={icon} size={16} color={iconColor} />
+      </View>
+      <Text style={[styles.statCardValue, { color: valueColor ?? colors.text.primary }]}>{value}</Text>
+      <Text style={[styles.statCardLabel, { color: colors.text.tertiary }]}>{label}</Text>
+      {sub ? <Text style={[styles.statCardSub, { color: colors.text.tertiary }]}>{sub}</Text> : null}
+    </View>
+  );
+}
+
+// ── Main screen ───────────────────────────────────────────────────────────────
+
 export default function StatsScreen() {
   const { colors } = usePokerTheme();
+  const { isSyncing, user } = useAuth();
   const insets = useSafeAreaInsets();
 
-  const [sessions, setSessions]         = useState<Session[]>([]);
-  const [filter, setFilter]             = useState<Filter>("all");
-  const [currency, setCurrency]         = useState("AUD");
-  const [showAddSheet, setShowAddSheet] = useState(false);
+  const [sessions, setSessions]           = useState<Session[]>([]);
+  const [filter, setFilter]               = useState<Filter>("all");
+  const [currency, setCurrency]           = useState("AUD");
+  const [showAddSheet, setShowAddSheet]   = useState(false);
   const [balanceHidden, setBalanceHidden] = useState(false);
 
   useFocusEffect(
@@ -143,6 +234,14 @@ export default function StatsScreen() {
       setCurrency(getSetting("currency") ?? "AUD");
     }, [])
   );
+
+  // Reload from SQLite once cloud sync completes
+  useEffect(() => {
+    if (!isSyncing) {
+      setSessions(getSessions() || []);
+      setCurrency(getSetting("currency") ?? "AUD");
+    }
+  }, [isSyncing]);
 
   const meta = CURRENCY_META[currency] ?? CURRENCY_META.AUD;
 
@@ -163,6 +262,30 @@ export default function StatsScreen() {
   const winRate       = filtered.length > 0
     ? Math.round((filtered.filter((s) => s.profit >= 0).length / filtered.length) * 100)
     : null;
+  const roi = totalExpenses > 0 ? (totalProfit / totalExpenses) * 100 : null;
+
+  const bestSession  = filtered.length > 0
+    ? filtered.reduce((b, s) => s.profit > b.profit ? s : b)
+    : null;
+  const worstSession = filtered.length > 0
+    ? filtered.reduce((w, s) => s.profit < w.profit ? s : w)
+    : null;
+
+  const sorted = useMemo(
+    () => [...filtered].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+    [filtered]
+  );
+
+  const { streak, streakType } = useMemo(() => {
+    if (sorted.length === 0) return { streak: 0, streakType: "none" as const };
+    let count = 0;
+    const isWin = sorted[0].profit >= 0;
+    for (const s of sorted) {
+      if ((s.profit >= 0) === isWin) count++;
+      else break;
+    }
+    return { streak: count, streakType: isWin ? "win" as const : "loss" as const };
+  }, [sorted]);
 
   const fmtHours = (h: number) => {
     const hrs = Math.floor(h);
@@ -170,178 +293,257 @@ export default function StatsScreen() {
     return min > 0 ? `${hrs}h ${min}m` : `${hrs}h`;
   };
 
-  const fmtMoney = (n: number, decimals = 0) =>
-    `${n >= 0 ? "+" : "-"}${meta.symbol}${Math.abs(n).toLocaleString("en-AU", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+  const fmtMoney = (n: number, dec = 0) =>
+    `${n >= 0 ? "+" : "-"}${meta.symbol}${Math.abs(n).toLocaleString("en-AU", { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
 
   const profitIsPositive = totalProfit >= 0;
-  const sorted = useMemo(
-    () => [...filtered].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-    [filtered]
-  );
+
+  const sessionLabel = (s: Session) =>
+    s.type === "tournament" ? (s.tournamentName || "Tournament") : `${s.stakes} NLH`;
 
   return (
     <View style={[styles.root, { backgroundColor: colors.bg.secondary }]}>
-      {/* ── Sticky top bar ── */}
-      <View style={[styles.topBar, { backgroundColor: colors.bg.primary, paddingTop: insets.top + 10, borderBottomColor: colors.border.default }]}>
-        <View style={styles.topBarLeft}>
-          <Image source={require("@/assets/images/SM.svg")} style={styles.smIcon} contentFit="contain" />
-          <Text style={[styles.topBarTitle, { color: colors.text.primary }]}>Stats</Text>
-        </View>
-
-        {/* Filter chips */}
-        <View style={styles.filterChips}>
-          {(["all", "cash", "tournament"] as Filter[]).map((f) => (
-            <TouchableOpacity
-              key={f}
-              onPress={() => setFilter(f)}
-              style={[styles.chip, filter === f && { backgroundColor: BRAND }]}
-              activeOpacity={0.75}
-            >
-              <Text style={[styles.chipText, { color: filter === f ? "#fff" : colors.text.tertiary }]}>
-                {f === "all" ? "All" : f === "cash" ? "Cash" : "Tourney"}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
 
-        {/* ── P&L hero ── */}
-        <View style={[styles.plHero, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
-          <View style={styles.plRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.plLabel, { color: colors.text.tertiary }]}>
-                {filter === "all" ? "Total P&L" : filter === "cash" ? "Cash P&L" : "Tournament P&L"}
-              </Text>
-              {balanceHidden ? (
-                <Text style={[styles.plAmount, { color: colors.text.tertiary }]}>••••••</Text>
-              ) : (
-                <Text style={[styles.plAmount, { color: profitIsPositive ? "#22C55E" : "#EF4444" }]}>
-                  {profitIsPositive ? "+" : "-"}{meta.symbol}
-                  {Math.abs(totalProfit).toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </Text>
-              )}
-              <View style={styles.plCurrencyRow}>
-                <Text style={{ fontSize: 14 }}>{meta.flag}</Text>
-                <Text style={[styles.plCurrency, { color: colors.text.tertiary }]}>{currency}</Text>
-              </View>
-            </View>
-            <View style={styles.plRight}>
-              <View style={[styles.trendBadge, { backgroundColor: profitIsPositive ? "#22C55E18" : "#EF444418" }]}>
-                <Ionicons
-                  name={profitIsPositive ? "trending-up" : "trending-down"}
-                  size={16}
-                  color={profitIsPositive ? "#22C55E" : "#EF4444"}
-                />
-              </View>
-              <TouchableOpacity
-                onPress={() => setBalanceHidden((h) => !h)}
-                style={[styles.hideBtn, { backgroundColor: colors.bg.secondary }]}
-              >
-                <Ionicons name={balanceHidden ? "eye-outline" : "eye-off-outline"} size={15} color={colors.text.tertiary} />
-              </TouchableOpacity>
-            </View>
+        {/* ── Sync banner ── */}
+        {isSyncing && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: "#EFF6FF" }}>
+            <ActivityIndicator size="small" color={BRAND} />
+            <Text style={{ color: BRAND, fontSize: 13, fontWeight: "500" }}>Syncing your data…</Text>
           </View>
+        )}
 
-          {/* ── 4-stat strip ── */}
-          <View style={[styles.statStrip, { borderTopColor: colors.border.subtle }]}>
-            {[
-              { label: "Sessions", value: filtered.length.toString() },
-              { label: "Hours",    value: totalHours > 0 ? fmtHours(totalHours) : "—" },
-              { label: "Win Rate", value: winRate !== null ? `${winRate}%` : "—" },
-              {
-                label: "Avg/Hr",
-                value: avgPerHour !== null ? `${avgPerHour >= 0 ? "+" : "-"}${meta.symbol}${Math.abs(avgPerHour).toFixed(0)}` : "—",
-                color: avgPerHour !== null ? (avgPerHour >= 0 ? "#22C55E" : "#EF4444") : undefined,
-              },
-            ].map((stat, i, arr) => (
-              <View
-                key={stat.label}
-                style={[
-                  styles.statCell,
-                  i < arr.length - 1 && { borderRightWidth: 1, borderRightColor: colors.border.subtle },
-                ]}
-              >
-                <Text style={[styles.statValue, { color: stat.color ?? colors.text.primary }]}>{stat.value}</Text>
-                <Text style={[styles.statLabel, { color: colors.text.tertiary }]}>{stat.label}</Text>
-              </View>
-            ))}
+        {/* ── Guest nudge banner ── */}
+        {!user && !isSyncing && (
+          <TouchableOpacity
+            onPress={() => router.push("/welcome")}
+            activeOpacity={0.85}
+            style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "#FEF3C7", borderBottomWidth: 1, borderBottomColor: "#FDE68A" }}
+          >
+            <Ionicons name="cloud-offline-outline" size={18} color="#D97706" />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13, fontWeight: "600", color: "#92400E" }}>Your data is not being backed up</Text>
+              <Text style={{ fontSize: 12, color: "#B45309", marginTop: 1 }}>Sign in to save your sessions to the cloud</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={14} color="#D97706" />
+          </TouchableOpacity>
+        )}
+
+        {/* ── Blue header (inside ScrollView so negative-margin card can overlap it) ── */}
+        <View style={[styles.topBar, { backgroundColor: BRAND, paddingTop: insets.top + 10 }]}>
+          <View style={styles.topBarRow}>
+            <Text style={styles.topBarTitle}>Bankroll</Text>
+            <View style={styles.filterChips}>
+              {(["all", "cash", "tournament"] as Filter[]).map((f) => (
+                <TouchableOpacity
+                  key={f}
+                  onPress={() => setFilter(f)}
+                  style={[styles.chip, filter === f ? styles.chipActive : styles.chipInactive]}
+                  activeOpacity={0.75}
+                >
+                  <Text style={[styles.chipText, { color: filter === f ? BRAND : "rgba(255,255,255,0.75)" }]}>
+                    {f === "all" ? "All" : f === "cash" ? "Cash" : "Tourney"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
         </View>
 
-        <View style={styles.body}>
-          {/* ── Chart ── */}
-          <View style={styles.section}>
-            <ProfitChart sessions={filtered} colors={colors} symbol={meta.symbol} />
-          </View>
-
-          {/* ── Secondary stats ── */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Breakdown</Text>
-            <View style={[styles.breakdownCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-              {[
-                {
-                  label: "Avg. Profit / Session",
-                  icon: "analytics-outline" as const,
-                  iconColor: BRAND,
-                  value: avgPerSession !== null ? fmtMoney(avgPerSession, 2) : "—",
-                  valueColor: avgPerSession !== null ? (avgPerSession >= 0 ? "#22C55E" : "#EF4444") : undefined,
-                },
-                {
-                  label: "Profitable Sessions",
-                  icon: "checkmark-circle-outline" as const,
-                  iconColor: "#22C55E",
-                  value: winRate !== null ? `${winRate}%` : "—",
-                  valueColor: winRate !== null ? "#22C55E" : undefined,
-                },
-                {
-                  label: "Total Playing Hours",
-                  icon: "time-outline" as const,
-                  iconColor: "#F97316",
-                  value: totalHours > 0 ? fmtHours(totalHours) : "—",
-                },
-                {
-                  label: "Total Expenses (Buy-ins)",
-                  icon: "wallet-outline" as const,
-                  iconColor: "#EF4444",
-                  value: `${meta.symbol}${Math.abs(totalExpenses).toLocaleString("en-AU", { minimumFractionDigits: 0 })}`,
-                  valueColor: "#EF4444",
-                },
-              ].map((row, i, arr) => (
-                <View
-                  key={row.label}
-                  style={[
-                    styles.breakdownRow,
-                    i < arr.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
-                  ]}
+        {/* ── P&L floating card ── */}
+        <View style={styles.plCardWrap}>
+          <View style={[styles.plCard, { backgroundColor: colors.bg.primary, shadowColor: colors.text.primary }]}>
+            <View style={styles.plRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.plLabel, { color: colors.text.tertiary }]}>
+                  {filter === "all" ? "Total P&L" : filter === "cash" ? "Cash P&L" : "Tournament P&L"}
+                </Text>
+                {balanceHidden ? (
+                  <Text style={[styles.plAmount, { color: colors.text.tertiary }]}>••••••</Text>
+                ) : (
+                  <Text style={[styles.plAmount, { color: profitIsPositive ? GREEN : RED }]}>
+                    {profitIsPositive ? "+" : "-"}{meta.symbol}
+                    {Math.abs(totalProfit).toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </Text>
+                )}
+                <View style={styles.plMeta}>
+                  <Text style={{ fontSize: 14 }}>{meta.flag}</Text>
+                  <Text style={[styles.plCurrency, { color: colors.text.tertiary }]}>{currency}</Text>
+                  {streak >= 2 && (
+                    <View style={[styles.streakPill, { backgroundColor: streakType === "win" ? GREEN + "20" : RED + "20" }]}>
+                      <Ionicons
+                        name={streakType === "win" ? "flame" : "skull-outline"}
+                        size={10}
+                        color={streakType === "win" ? GREEN : RED}
+                      />
+                      <Text style={{ fontSize: 10, fontWeight: "700", color: streakType === "win" ? GREEN : RED }}>
+                        {streak} {streakType === "win" ? "win" : "loss"} streak
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+              <View style={styles.plActions}>
+                <View style={[styles.trendBadge, { backgroundColor: profitIsPositive ? GREEN + "18" : RED + "18" }]}>
+                  <Ionicons
+                    name={profitIsPositive ? "trending-up" : "trending-down"}
+                    size={16}
+                    color={profitIsPositive ? GREEN : RED}
+                  />
+                </View>
+                <TouchableOpacity
+                  onPress={() => setBalanceHidden((h) => !h)}
+                  style={[styles.hideBtn, { backgroundColor: colors.bg.secondary }]}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <View style={[styles.breakdownIcon, { backgroundColor: `${row.iconColor}18` }]}>
-                    <Ionicons name={row.icon} size={16} color={row.iconColor} />
-                  </View>
-                  <Text style={[styles.breakdownLabel, { color: colors.text.secondary }]} numberOfLines={1}>
-                    {row.label}
-                  </Text>
-                  <Text style={[styles.breakdownValue, { color: row.valueColor ?? colors.text.primary }]}>
-                    {row.value}
-                  </Text>
+                  <Ionicons name={balanceHidden ? "eye-outline" : "eye-off-outline"} size={15} color={colors.text.tertiary} />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Stat strip */}
+            <View style={[styles.statStrip, { borderTopColor: colors.border.subtle }]}>
+              {[
+                { label: "Sessions", value: filtered.length.toString() },
+                { label: "Hours",    value: totalHours > 0 ? fmtHours(totalHours) : "—" },
+                { label: "Win Rate", value: winRate !== null ? `${winRate}%` : "—", color: winRate !== null ? (winRate >= 50 ? GREEN : RED) : undefined },
+                {
+                  label: "Avg/Hr",
+                  value: avgPerHour !== null ? `${avgPerHour >= 0 ? "+" : "-"}${meta.symbol}${Math.abs(avgPerHour).toFixed(0)}` : "—",
+                  color: avgPerHour !== null ? (avgPerHour >= 0 ? GREEN : RED) : undefined,
+                },
+              ].map((stat, i, arr) => (
+                <View key={stat.label} style={[
+                  styles.statCell,
+                  i < arr.length - 1 && { borderRightWidth: 1, borderRightColor: colors.border.subtle },
+                ]}>
+                  <Text style={[styles.statValue, { color: stat.color ?? colors.text.primary }]}>{stat.value}</Text>
+                  <Text style={[styles.statLabel, { color: colors.text.tertiary }]}>{stat.label}</Text>
                 </View>
               ))}
             </View>
           </View>
+        </View>
+
+        <View style={styles.body}>
+
+          {/* ── Chart ── */}
+          <View style={styles.section}>
+            <View style={[styles.bankrollNudge, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+              <Ionicons name="bar-chart-outline" size={15} color={BRAND} />
+              <Text style={[styles.bankrollNudgeText, { color: colors.text.tertiary }]}>
+                {filtered.length === 0
+                  ? "Log your first session to start tracking your bankroll curve and performance over time."
+                  : "Every session logged is a data point. Consistent tracking reveals your true edge at the table."}
+              </Text>
+            </View>
+            <ProfitChart sessions={filtered} colors={colors} symbol={meta.symbol} />
+          </View>
+
+          {/* ── Performance grid ── */}
+          {filtered.length > 0 && (
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Performance</Text>
+              <View style={styles.statsGrid}>
+                <StatCard
+                  label="Avg / Session"
+                  value={avgPerSession !== null ? fmtMoney(avgPerSession) : "—"}
+                  icon="analytics-outline"
+                  iconColor={BRAND}
+                  valueColor={avgPerSession !== null ? (avgPerSession >= 0 ? GREEN : RED) : undefined}
+                  colors={colors}
+                />
+                <StatCard
+                  label="Avg / Hour"
+                  value={avgPerHour !== null ? fmtMoney(avgPerHour) : "—"}
+                  sub={totalHours > 0 ? `${fmtHours(totalHours)} played` : undefined}
+                  icon="time-outline"
+                  iconColor={ORANGE}
+                  valueColor={avgPerHour !== null ? (avgPerHour >= 0 ? GREEN : RED) : undefined}
+                  colors={colors}
+                />
+                <StatCard
+                  label="Win Rate"
+                  value={winRate !== null ? `${winRate}%` : "—"}
+                  sub={winRate !== null ? `${filtered.filter(s => s.profit >= 0).length} of ${filtered.length} sessions` : undefined}
+                  icon="checkmark-circle-outline"
+                  iconColor={GREEN}
+                  valueColor={winRate !== null ? (winRate >= 50 ? GREEN : RED) : undefined}
+                  colors={colors}
+                />
+                <StatCard
+                  label="ROI"
+                  value={roi !== null ? `${roi >= 0 ? "+" : ""}${roi.toFixed(1)}%` : "—"}
+                  sub={totalExpenses > 0 ? `${meta.symbol}${totalExpenses.toLocaleString("en-AU", { maximumFractionDigits: 0 })} invested` : undefined}
+                  icon="wallet-outline"
+                  iconColor={PURPLE}
+                  valueColor={roi !== null ? (roi >= 0 ? GREEN : RED) : undefined}
+                  colors={colors}
+                />
+              </View>
+            </View>
+          )}
+
+          {/* ── Best / Worst highlights ── */}
+          {bestSession && worstSession && bestSession.id !== worstSession.id && (
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Highlights</Text>
+              <View style={styles.highlightRow}>
+                <TouchableOpacity
+                  style={[styles.highlightCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}
+                  onPress={() => router.push({ pathname: "/session-detail", params: { session: JSON.stringify(bestSession) } })}
+                  activeOpacity={0.75}
+                >
+                  <View style={[styles.highlightBadge, { backgroundColor: GREEN + "18" }]}>
+                    <Ionicons name="arrow-up" size={14} color={GREEN} />
+                  </View>
+                  <Text style={[styles.highlightKicker, { color: colors.text.tertiary }]}>Best Session</Text>
+                  <Text style={[styles.highlightValue, { color: GREEN }]}>
+                    +{meta.symbol}{bestSession.profit.toLocaleString("en-AU", { maximumFractionDigits: 0 })}
+                  </Text>
+                  <Text style={[styles.highlightSub, { color: colors.text.tertiary }]} numberOfLines={1}>
+                    {sessionLabel(bestSession)}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.highlightCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}
+                  onPress={() => router.push({ pathname: "/session-detail", params: { session: JSON.stringify(worstSession) } })}
+                  activeOpacity={0.75}
+                >
+                  <View style={[styles.highlightBadge, { backgroundColor: RED + "18" }]}>
+                    <Ionicons name="arrow-down" size={14} color={RED} />
+                  </View>
+                  <Text style={[styles.highlightKicker, { color: colors.text.tertiary }]}>Worst Session</Text>
+                  <Text style={[styles.highlightValue, { color: RED }]}>
+                    {meta.symbol}{worstSession.profit.toLocaleString("en-AU", { maximumFractionDigits: 0 })}
+                  </Text>
+                  <Text style={[styles.highlightSub, { color: colors.text.tertiary }]} numberOfLines={1}>
+                    {sessionLabel(worstSession)}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
 
           {/* ── Session list ── */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Sessions</Text>
-              <Text style={[styles.sectionCount, { color: colors.text.tertiary }]}>{filtered.length}</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>All Sessions</Text>
+              {filtered.length > 0 && (
+                <Text style={[styles.sectionCount, { color: colors.text.tertiary }]}>{filtered.length}</Text>
+              )}
             </View>
 
             {sorted.length === 0 ? (
               <View style={[styles.emptyCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                <Ionicons name="time-outline" size={36} color={colors.text.tertiary} />
+                <Ionicons name="bar-chart-outline" size={40} color={colors.text.tertiary} />
+                <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No sessions yet</Text>
                 <Text style={[styles.emptyText, { color: colors.text.tertiary }]}>
-                  No sessions yet. Tap + to add one.
+                  {filter !== "all"
+                    ? `No ${filter} sessions recorded yet.`
+                    : "Start tracking your poker sessions to see your statistics here."}
                 </Text>
               </View>
             ) : (
@@ -352,7 +554,7 @@ export default function StatsScreen() {
                   const bb           = !isTournament && item.stakes?.includes("/")
                     ? parseFloat(item.stakes.split("/")[1])
                     : null;
-                  const bbVal        = bb && !isNaN(bb) && item.profit != null
+                  const bbVal = bb && !isNaN(bb) && item.profit != null
                     ? Math.round(item.profit / bb)
                     : null;
 
@@ -366,13 +568,13 @@ export default function StatsScreen() {
                         !isLast && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
                       ]}
                     >
-                      <View style={[styles.sessionIcon, { backgroundColor: isTournament ? "#8B5CF6" : "#F97316" }]}>
+                      <View style={[styles.sessionIcon, { backgroundColor: isTournament ? PURPLE : ORANGE }]}>
                         <Ionicons name={isTournament ? "trophy-outline" : "cash-outline"} size={16} color="#fff" />
                       </View>
 
                       <View style={styles.sessionBody}>
                         <Text style={[styles.sessionTitle, { color: colors.text.primary }]} numberOfLines={1}>
-                          {isTournament ? (item.tournamentName || "Tournament") : `${item.stakes} NLH`}
+                          {sessionLabel(item)}
                         </Text>
                         <View style={styles.sessionMetaRow}>
                           {item.venue ? (
@@ -387,21 +589,24 @@ export default function StatsScreen() {
                           <Text style={[styles.sessionMeta, { color: colors.text.tertiary }]}>
                             {new Date(item.date).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}
                           </Text>
+                          {item.duration ? (
+                            <>
+                              <Text style={[styles.sessionMeta, { color: colors.text.tertiary }]}>·</Text>
+                              <Ionicons name="time-outline" size={10} color={colors.text.tertiary} />
+                              <Text style={[styles.sessionMeta, { color: colors.text.tertiary }]}>{fmtHours(item.duration)}</Text>
+                            </>
+                          ) : null}
                         </View>
                       </View>
 
                       <View style={styles.sessionRight}>
-                        <Text style={[styles.sessionProfit, { color: item.profit >= 0 ? "#22C55E" : "#EF4444" }]}>
+                        <Text style={[styles.sessionProfit, { color: item.profit >= 0 ? GREEN : RED }]}>
                           {item.profit >= 0 ? "+" : ""}{meta.symbol}
                           {Math.abs(item.profit).toLocaleString("en-AU", { minimumFractionDigits: 0 })}
                         </Text>
                         {bbVal !== null ? (
                           <Text style={[styles.sessionBB, { color: colors.text.tertiary }]}>
                             {bbVal >= 0 ? "+" : ""}{bbVal} BB
-                          </Text>
-                        ) : item.duration ? (
-                          <Text style={[styles.sessionBB, { color: colors.text.tertiary }]}>
-                            {fmtHours(item.duration)}
                           </Text>
                         ) : null}
                       </View>
@@ -425,7 +630,7 @@ export default function StatsScreen() {
           <TouchableOpacity
             onPress={() => { setShowAddSheet(false); setTimeout(() => router.push("/live"), 150); }}
             activeOpacity={0.85}
-            style={[styles.sheetBtn, { backgroundColor: "#22C55E" }]}
+            style={[styles.sheetBtn, { backgroundColor: GREEN }]}
           >
             <View style={styles.sheetBtnIcon}><Ionicons name="timer-outline" size={22} color="#fff" /></View>
             <View style={{ flex: 1 }}>
@@ -435,7 +640,7 @@ export default function StatsScreen() {
             <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.7)" />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => { setShowAddSheet(false); setTimeout(() => router.push("/add"), 150); }}
+            onPress={() => { setShowAddSheet(false); setTimeout(() => router.push("/add-session"), 150); }}
             activeOpacity={0.85}
             style={[styles.sheetBtn, { backgroundColor: BRAND }]}
           >
@@ -452,61 +657,52 @@ export default function StatsScreen() {
   );
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   root: { flex: 1 },
 
-  // Top bar
+  // Header
   topBar: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  topBarRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: 10,
-  },
-  topBarLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  smIcon: {
-    width: 52,
-    height: 34,
   },
   topBarTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "800",
-    letterSpacing: -0.3,
+    color: "#fff",
   },
+  filterChips: { flexDirection: "row", gap: 6 },
+  chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 },
+  chipActive:   { backgroundColor: "#fff" },
+  chipInactive: { backgroundColor: "rgba(255,255,255,0.18)" },
+  chipText: { fontSize: 12, fontWeight: "600" },
 
-  // Filter chips
-  filterChips: {
-    flexDirection: "row",
-    gap: 6,
+  // P&L card
+  plCardWrap: {
+    paddingHorizontal: 16,
+    marginTop: -18,
+    marginBottom: 4,
   },
-  chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
-    backgroundColor: "rgba(0,0,0,0.06)",
-  },
-  chipText: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-
-  // P&L hero
-  plHero: {
-    backgroundColor: "#fff",
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+  plCard: {
+    borderRadius: 18,
+    overflow: "hidden",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 6,
   },
   plRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    marginBottom: 20,
+    gap: 12,
+    padding: 20,
+    paddingBottom: 16,
   },
   plLabel: {
     fontSize: 12,
@@ -521,79 +717,45 @@ const styles = StyleSheet.create({
     letterSpacing: -1,
     marginBottom: 6,
   },
-  plCurrencyRow: {
+  plMeta: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
   },
-  plCurrency: {
-    fontSize: 12,
-    fontWeight: "500",
-  },
-  plRight: {
-    gap: 8,
-    marginLeft: 12,
-    marginTop: 4,
-  },
-  trendBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 9,
+  plCurrency: { fontSize: 12, fontWeight: "500" },
+  streakPill: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    marginLeft: 2,
+  },
+  plActions: { gap: 8, marginLeft: 12, marginTop: 4 },
+  trendBadge: {
+    width: 32, height: 32, borderRadius: 9,
+    alignItems: "center", justifyContent: "center",
   },
   hideBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 32, height: 32, borderRadius: 9,
+    alignItems: "center", justifyContent: "center",
   },
 
   // Stat strip
-  statStrip: {
-    flexDirection: "row",
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  statCell: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 14,
-  },
-  statValue: {
-    fontSize: 15,
-    fontWeight: "700",
-    marginBottom: 3,
-  },
-  statLabel: {
-    fontSize: 11,
-    fontWeight: "500",
-  },
+  statStrip: { flexDirection: "row", borderTopWidth: StyleSheet.hairlineWidth },
+  statCell: { flex: 1, alignItems: "center", paddingVertical: 14 },
+  statValue: { fontSize: 15, fontWeight: "700", marginBottom: 3 },
+  statLabel: { fontSize: 11, fontWeight: "500" },
 
   // Body
-  body: {
-    paddingHorizontal: 16,
-    paddingTop: 20,
-  },
-  section: {
-    marginBottom: 24,
-  },
+  body: { paddingHorizontal: 16, paddingTop: 20 },
+  section: { marginBottom: 24 },
   sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 10,
+    flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10,
   },
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    marginBottom: 10,
-  },
-  sectionCount: {
-    fontSize: 14,
-    fontWeight: "500",
-    marginTop: -10,
-  },
+  sectionTitle: { fontSize: 17, fontWeight: "700", marginBottom: 10 },
+  sectionCount: { fontSize: 14, fontWeight: "500", marginTop: -10 },
 
   // Chart
   chartCard: {
@@ -607,157 +769,108 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 14,
   },
-  chartTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  chartSub: {
-    fontSize: 12,
-  },
-  zeroLine: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    height: 1,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderStyle: "dashed",
-  },
+  chartTitle: { fontSize: 15, fontWeight: "700" },
+  chartCurrentVal: { fontSize: 14, fontWeight: "700" },
+  chartAxisLabel: { fontSize: 10, fontWeight: "500" },
   chartFooter: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginTop: 10,
+    marginTop: 12,
   },
-  chartDate: {
-    fontSize: 11,
-  },
+  chartDate: { fontSize: 11 },
 
-  // Breakdown card
-  breakdownCard: {
+  // Stats grid
+  statsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  statCard: {
+    width: (SCREEN_W - 32 - 10) / 2,
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
-  },
-  breakdownRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
     padding: 14,
   },
-  breakdownIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
+  statCardIcon: {
+    width: 32, height: 32, borderRadius: 8,
+    alignItems: "center", justifyContent: "center",
+    marginBottom: 10,
   },
-  breakdownLabel: {
+  statCardValue: { fontSize: 20, fontWeight: "800", letterSpacing: -0.5, marginBottom: 2 },
+  statCardLabel: { fontSize: 12, fontWeight: "600" },
+  statCardSub:   { fontSize: 11, marginTop: 3 },
+
+  // Highlights
+  highlightRow: { flexDirection: "row", gap: 10 },
+  highlightCard: {
     flex: 1,
-    fontSize: 14,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 14,
   },
-  breakdownValue: {
-    fontSize: 14,
-    fontWeight: "700",
+  highlightBadge: {
+    width: 28, height: 28, borderRadius: 7,
+    alignItems: "center", justifyContent: "center",
+    marginBottom: 8,
   },
+  highlightKicker: { fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 },
+  highlightValue:  { fontSize: 18, fontWeight: "800", letterSpacing: -0.5, marginBottom: 2 },
+  highlightSub:    { fontSize: 12 },
 
   // Session list
   listCard: {
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
+    borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden",
   },
   emptyCard: {
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 28,
-    alignItems: "center",
-    gap: 10,
+    borderRadius: 16, borderWidth: StyleSheet.hairlineWidth,
+    padding: 32, alignItems: "center", gap: 8,
   },
-  emptyText: {
-    fontSize: 14,
-    textAlign: "center",
-    lineHeight: 20,
-  },
+  emptyTitle: { fontSize: 15, fontWeight: "700", marginTop: 4 },
+  emptyText:  { fontSize: 13, textAlign: "center", lineHeight: 19 },
   sessionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    padding: 14,
+    flexDirection: "row", alignItems: "center", gap: 12, padding: 14,
   },
   sessionIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 9,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 38, height: 38, borderRadius: 9,
+    alignItems: "center", justifyContent: "center",
   },
-  sessionBody: {
-    flex: 1,
-    gap: 3,
-  },
-  sessionTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
+  sessionBody: { flex: 1, gap: 3 },
+  sessionTitle: { fontSize: 14, fontWeight: "600" },
   sessionMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    flexWrap: "wrap",
+    flexDirection: "row", alignItems: "center", gap: 3, flexWrap: "wrap",
   },
-  sessionMeta: {
-    fontSize: 12,
-  },
-  sessionRight: {
-    alignItems: "flex-end",
-    gap: 2,
-  },
-  sessionProfit: {
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  sessionBB: {
-    fontSize: 11,
-  },
+  sessionMeta: { fontSize: 12 },
+  sessionRight: { alignItems: "flex-end", gap: 2 },
+  sessionProfit: { fontSize: 14, fontWeight: "700" },
+  sessionBB: { fontSize: 11 },
 
   // Sheet
-  backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-  },
+  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
   sheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 12,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingHorizontal: 20, paddingTop: 12,
   },
   sheetHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    alignSelf: "center",
-    marginBottom: 20,
+    width: 40, height: 4, borderRadius: 2,
+    alignSelf: "center", marginBottom: 20,
   },
-  sheetTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    marginBottom: 16,
-  },
+  sheetTitle: { fontSize: 18, fontWeight: "800", marginBottom: 16 },
   sheetBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    flexDirection: "row", alignItems: "center",
+    gap: 14, borderRadius: 16, padding: 16, marginBottom: 12,
   },
   sheetBtnIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: 40, height: 40, borderRadius: 12,
     backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: "center", justifyContent: "center",
   },
   sheetBtnTitle: { color: "#fff", fontSize: 16, fontWeight: "700" },
   sheetBtnSub:   { color: "rgba(255,255,255,0.75)", fontSize: 12, marginTop: 2 },
+
+  bankrollNudge: {
+    flexDirection: "row", alignItems: "flex-start", gap: 8,
+    borderRadius: 12, borderWidth: StyleSheet.hairlineWidth,
+    padding: 12, marginBottom: 10,
+  },
+  bankrollNudgeText: { flex: 1, fontSize: 12, lineHeight: 18 },
 });

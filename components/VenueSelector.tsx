@@ -5,6 +5,7 @@ import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 import { useRef, useState } from "react";
 import { ActivityIndicator, Alert, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { getSetting } from "@/db/database";
 
 const STATES = ["NSW", "VIC", "QLD", "WA", "SA", "ACT"];
 
@@ -73,11 +74,6 @@ export function VenueSelector({ stateRegion, setStateRegion, venue, setVenue }: 
   const handleDetectLocation = async () => {
     setDetecting(true);
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Location access denied", "Enable location in Settings to detect your state automatically.");
-        return;
-      }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const [geo] = await Location.reverseGeocodeAsync(pos.coords);
       const detectedState = REGION_TO_STATE[geo?.region ?? ""];
@@ -115,28 +111,30 @@ export function VenueSelector({ stateRegion, setStateRegion, venue, setVenue }: 
       {/* ── STATE CHIPS ── */}
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
         <Text style={[labelStyle, { marginBottom: 0 }]}>State</Text>
-        <TouchableOpacity
-          onPress={handleDetectLocation}
-          disabled={detecting}
-          activeOpacity={0.7}
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 4,
-            paddingHorizontal: 10,
-            paddingVertical: 4,
-            borderRadius: 20,
-            backgroundColor: colors.bg.brandLight,
-          }}
-        >
-          {detecting
-            ? <ActivityIndicator size="small" color={colors.text.brand} />
-            : <Ionicons name="location-outline" size={13} color={colors.text.brand} />
-          }
-          <Text style={{ color: colors.text.brand, fontSize: 12, fontWeight: "600" }}>
-            {detecting ? "Detecting…" : "Use My Location"}
-          </Text>
-        </TouchableOpacity>
+        {getSetting("locationEnabled") === "true" && (
+          <TouchableOpacity
+            onPress={handleDetectLocation}
+            disabled={detecting}
+            activeOpacity={0.7}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 4,
+              paddingHorizontal: 10,
+              paddingVertical: 4,
+              borderRadius: 20,
+              backgroundColor: colors.bg.brandLight,
+            }}
+          >
+            {detecting
+              ? <ActivityIndicator size="small" color={colors.text.brand} />
+              : <Ionicons name="location-outline" size={13} color={colors.text.brand} />
+            }
+            <Text style={{ color: colors.text.brand, fontSize: 12, fontWeight: "600" }}>
+              {detecting ? "Detecting…" : "Use My Location"}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing["2xl"] }}>
         {STATES.map((s) => (
