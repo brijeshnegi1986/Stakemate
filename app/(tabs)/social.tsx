@@ -33,7 +33,7 @@ import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
-import { router, useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -705,8 +705,25 @@ function StakeDealCard({
     ? Math.ceil((new Date(deal.tournament_date + "T00:00:00").getTime() - Date.now()) / 86400000)
     : null;
 
+  const pendingCount = isOwner ? (deal.claims?.filter((c: any) => c.status === "pending").length ?? 0) : 0;
+
   return (
-    <View style={[sDealStyles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+    <View style={[sDealStyles.card, { backgroundColor: colors.bg.primary, borderColor: pendingCount > 0 ? "#F97316" : colors.border.default }]}>
+
+      {/* Pending requests banner — seller only */}
+      {pendingCount > 0 && (
+        <TouchableOpacity
+          onPress={() => onBuy(deal)}
+          activeOpacity={0.85}
+          style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: "#F9731615", borderBottomWidth: 1, borderBottomColor: "#F9731630" }}
+        >
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#F97316" }} />
+          <Text style={{ flex: 1, fontSize: 13, fontWeight: "700", color: "#F97316" }}>
+            {pendingCount === 1 ? "1 pending request — tap to review" : `${pendingCount} pending requests — tap to review`}
+          </Text>
+          <Ionicons name="chevron-forward" size={14} color="#F97316" />
+        </TouchableOpacity>
+      )}
 
       {/* Seller strip */}
       {seller && (
@@ -742,6 +759,9 @@ function StakeDealCard({
           )}
         </View>
       )}
+
+      {/* Tappable card body — opens buy/manage modal */}
+      <TouchableOpacity onPress={() => onBuy(deal)} activeOpacity={0.75}>
 
       {/* Header row */}
       <View style={sDealStyles.header}>
@@ -838,6 +858,7 @@ function StakeDealCard({
           </Text>
         </TouchableOpacity>
       </View>
+      </TouchableOpacity>{/* end card body */}
     </View>
   );
 }
@@ -924,6 +945,7 @@ export default function SocialScreen() {
   const { colors } = usePokerTheme();
   const { user, profile } = useAuth();
   const insets = useSafeAreaInsets();
+  const { openDealId } = useLocalSearchParams<{ openDealId?: string }>();
 
   const [tab, setTab]                     = useState<Tab>("public");
   const [signInSheet, setSignInSheet]     = useState<{ title: string; description: string; icon?: any } | null>(null);
@@ -1007,6 +1029,14 @@ export default function SocialScreen() {
   }, [headerTranslateY, spacerHeightAnim]);
 
   const userId = user?.id ?? "";
+
+  // Auto-open deal modal when navigated from a notification with a dealId
+  useEffect(() => {
+    if (openDealId) {
+      setTab("stakes");
+      setBuyDealIdFromPost(openDealId);
+    }
+  }, [openDealId]);
 
   const loadData = useCallback(async (silent = false) => {
     if (!userId) { setLoading(false); return; }

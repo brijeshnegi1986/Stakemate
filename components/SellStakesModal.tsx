@@ -84,35 +84,79 @@ function ClaimRow({
   onReject: () => void;
   colors: any;
 }) {
-  const name = claim.buyer_profile?.display_name || claim.buyer_profile?.username || "Player";
-  const statusColor =
-    claim.status === "confirmed" ? GREEN :
-    claim.status === "rejected"  ? RED   : ORANGE;
+  const name   = claim.buyer_profile?.display_name || claim.buyer_profile?.username || "Player";
+  const handle = claim.buyer_profile?.username ? `@${claim.buyer_profile.username}` : null;
+  const isPending   = claim.status === "pending";
+  const isConfirmed = claim.status === "confirmed";
+  const statusColor = isConfirmed ? GREEN : claim.status === "rejected" ? RED : ORANGE;
+  const borderColor = isPending ? ORANGE + "50" : statusColor + "30";
 
   return (
-    <View style={[styles.claimRow, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
-      <View style={{ flex: 1 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <Text style={[styles.claimName, { color: colors.text.primary }]}>{name}</Text>
-          <View style={[styles.claimStatusPill, { backgroundColor: statusColor + "18" }]}>
-            <Text style={[styles.claimStatusText, { color: statusColor }]}>{claim.status}</Text>
-          </View>
+    <View style={[styles.claimRow, { backgroundColor: colors.bg.secondary, borderColor }]}>
+      {/* Pending indicator stripe */}
+      {isPending && (
+        <View style={{ height: 3, backgroundColor: ORANGE, borderRadius: 2, marginBottom: 12 }} />
+      )}
+
+      {/* Buyer identity row */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14 }}>
+        {/* Avatar initials */}
+        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: statusColor + "20", alignItems: "center", justifyContent: "center" }}>
+          {claim.buyer_profile?.avatar_url ? (
+            <Image source={{ uri: claim.buyer_profile.avatar_url }} style={{ width: 40, height: 40, borderRadius: 20 }} contentFit="cover" />
+          ) : (
+            <Text style={{ fontSize: 15, fontWeight: "800", color: statusColor }}>{name.charAt(0).toUpperCase()}</Text>
+          )}
         </View>
-        <Text style={[styles.claimDetail, { color: colors.text.tertiary }]}>
-          {claim.percent_claimed}%
-          {claim.amount_paid != null ? ` · $${claim.amount_paid.toFixed(2)}` : ""}
-        </Text>
-        {claim.message ? (
-          <Text style={[styles.claimMsg, { color: colors.text.secondary }]}>"{claim.message}"</Text>
-        ) : null}
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text.primary }}>{name}</Text>
+          {handle && <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 1 }}>{handle}</Text>}
+        </View>
+        <View style={{ backgroundColor: statusColor + "18", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 }}>
+          <Text style={{ fontSize: 11, fontWeight: "700", color: statusColor, textTransform: "capitalize" }}>{claim.status}</Text>
+        </View>
       </View>
-      {claim.status === "pending" && (
-        <View style={styles.claimActions}>
-          <TouchableOpacity onPress={onConfirm} style={[styles.claimActionBtn, { backgroundColor: GREEN + "18" }]}>
-            <Ionicons name="checkmark" size={16} color={GREEN} />
+
+      {/* Claim details */}
+      <View style={{ flexDirection: "row", gap: 8, marginTop: 10, paddingHorizontal: 14 }}>
+        <View style={{ flex: 1, backgroundColor: colors.bg.tertiary ?? colors.bg.primary, borderRadius: 10, padding: 10, alignItems: "center" }}>
+          <Text style={{ fontSize: 18, fontWeight: "900", color: colors.text.primary }}>{claim.percent_claimed}%</Text>
+          <Text style={{ fontSize: 11, color: colors.text.tertiary, marginTop: 2 }}>Action requested</Text>
+        </View>
+        {claim.amount_paid != null && (
+          <View style={{ flex: 1, backgroundColor: colors.bg.tertiary ?? colors.bg.primary, borderRadius: 10, padding: 10, alignItems: "center" }}>
+            <Text style={{ fontSize: 18, fontWeight: "900", color: colors.text.primary }}>${claim.amount_paid.toFixed(2)}</Text>
+            <Text style={{ fontSize: 11, color: colors.text.tertiary, marginTop: 2 }}>Amount to pay</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Buyer message */}
+      {claim.message ? (
+        <View style={{ marginTop: 10, marginHorizontal: 14, backgroundColor: colors.bg.primary, borderRadius: 10, padding: 10, borderLeftWidth: 3, borderLeftColor: ORANGE }}>
+          <Text style={{ fontSize: 12, color: colors.text.tertiary, fontWeight: "700", marginBottom: 3 }}>MESSAGE</Text>
+          <Text style={{ fontSize: 13, color: colors.text.secondary, lineHeight: 18 }}>"{claim.message}"</Text>
+        </View>
+      ) : null}
+
+      {/* Action buttons — only for pending */}
+      {isPending && (
+        <View style={{ flexDirection: "row", gap: 10, marginTop: 14, paddingHorizontal: 14, paddingBottom: 14 }}>
+          <TouchableOpacity
+            onPress={onReject}
+            activeOpacity={0.8}
+            style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderRadius: 12, backgroundColor: RED + "15", borderWidth: 1, borderColor: RED + "40" }}
+          >
+            <Ionicons name="close-circle-outline" size={18} color={RED} />
+            <Text style={{ fontSize: 14, fontWeight: "700", color: RED }}>Decline</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={onReject} style={[styles.claimActionBtn, { backgroundColor: RED + "18" }]}>
-            <Ionicons name="close" size={16} color={RED} />
+          <TouchableOpacity
+            onPress={onConfirm}
+            activeOpacity={0.8}
+            style={{ flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderRadius: 12, backgroundColor: GREEN }}
+          >
+            <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
+            <Text style={{ fontSize: 14, fontWeight: "700", color: "#fff" }}>Confirm Deal</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -246,36 +290,50 @@ function PackageForm({
 
         <View style={[styles.cardDivider, { backgroundColor: colors.border.subtle }]} />
 
-        {/* Price per % */}
+        {/* Price per % — read-only auto-calculated field */}
         <View style={styles.cardFieldBlock}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <Text style={[styles.cardFieldLabel, { color: colors.text.tertiary }]}>Price per 1%</Text>
-            {parsedBuyIn && (
-              <View style={[styles.autoBadge, { backgroundColor: PURPLE + "15" }]}>
-                <Ionicons name="flash-outline" size={10} color={PURPLE} />
-                <Text style={{ fontSize: 10, fontWeight: "700", color: PURPLE }}>Auto</Text>
-              </View>
-            )}
-          </View>
-          <View style={[styles.priceDisplay, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-            <Text style={[styles.priceDisplayCurrency, { color: colors.text.tertiary }]}>$</Text>
-            <Text style={[styles.priceDisplayValue, { color: pricePerPct ? colors.text.primary : colors.text.disabled }]}>
-              {pricePerPct || (parsedBuyIn ? (parsedBuyIn / 100).toFixed(2) : "—")}
-            </Text>
-            {mkpNum !== 1 && pricePerPct && (
-              <View style={[styles.markupPill, { backgroundColor: ORANGE + "18" }]}>
-                <Text style={{ fontSize: 11, fontWeight: "700", color: ORANGE }}>{mkpNum}×</Text>
-              </View>
-            )}
-          </View>
+          <Text style={[styles.cardFieldLabel, { color: colors.text.tertiary, marginBottom: 8 }]}>Price per 1%</Text>
+
           {parsedBuyIn ? (
-            <Text style={[styles.priceHint, { color: colors.text.tertiary }]}>
-              Based on {event.buyin} buy-in{mkpNum !== 1 ? ` · ${mkpNum}× markup applied` : " · face value"}
-            </Text>
+            /* ── Auto-calc mode: clearly disabled, visually distinct ── */
+            <View style={[styles.calcBlock, { backgroundColor: PURPLE + "0A", borderColor: PURPLE + "25" }]}>
+              {/* Top strip: icon + "Auto-calculated" label */}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                <Ionicons name="flash-outline" size={13} color={PURPLE} />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: PURPLE, textTransform: "uppercase", letterSpacing: 0.6 }}>
+                  Auto-calculated
+                </Text>
+                <View style={{ flex: 1 }} />
+                <Ionicons name="lock-closed-outline" size={12} color={PURPLE + "80"} />
+              </View>
+              {/* Value row */}
+              <View style={{ flexDirection: "row", alignItems: "baseline", gap: 4 }}>
+                <Text style={{ fontSize: 13, fontWeight: "600", color: PURPLE + "90" }}>$</Text>
+                <Text style={{ fontSize: 26, fontWeight: "900", color: PURPLE, letterSpacing: -0.5 }}>
+                  {pricePerPct || (parsedBuyIn / 100).toFixed(2)}
+                </Text>
+                <Text style={{ fontSize: 13, color: PURPLE + "80", fontWeight: "600", marginLeft: 2 }}>per 1%</Text>
+                {mkpNum !== 1 && (
+                  <View style={{ marginLeft: 6, backgroundColor: ORANGE + "20", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 20 }}>
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: ORANGE }}>{mkpNum}× markup</Text>
+                  </View>
+                )}
+              </View>
+              {/* Hint */}
+              <Text style={{ fontSize: 11, color: PURPLE + "70", marginTop: 6, lineHeight: 15 }}>
+                {event.buyin} buy-in ÷ 100{mkpNum !== 1 ? ` × ${mkpNum}× markup` : ""}
+              </Text>
+            </View>
           ) : (
-            <Text style={[styles.priceHint, { color: colors.text.tertiary }]}>
-              Add a buy-in to your tournament to auto-calculate
-            </Text>
+            /* ── No buy-in: show placeholder hint, no faux-input ── */
+            <View style={[styles.calcBlock, { backgroundColor: colors.bg.primary, borderColor: colors.border.subtle, borderStyle: "dashed" }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Ionicons name="calculator-outline" size={15} color={colors.text.tertiary} />
+                <Text style={{ fontSize: 13, color: colors.text.tertiary, lineHeight: 18 }}>
+                  Add a buy-in to your tournament and the price will be calculated automatically.
+                </Text>
+              </View>
+            </View>
           )}
         </View>
 
@@ -725,7 +783,52 @@ function SellerDashView({
         </TouchableOpacity>
       )}
 
+      {/* ── Claims — shown FIRST so pending requests are impossible to miss ── */}
+      {(() => {
+        const pending   = deal.claims?.filter((c) => c.status === "pending")   ?? [];
+        const confirmed = deal.claims?.filter((c) => c.status === "confirmed") ?? [];
+        const rejected  = deal.claims?.filter((c) => c.status === "rejected")  ?? [];
+        const sorted    = [...pending, ...confirmed, ...rejected];
+        return (
+          <>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <Text style={[styles.sectionTitle, { color: colors.text.primary, marginBottom: 0 }]}>
+                Requests
+              </Text>
+              {pending.length > 0 && (
+                <View style={{ backgroundColor: ORANGE + "20", paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 }}>
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: ORANGE }}>
+                    {pending.length} pending
+                  </Text>
+                </View>
+              )}
+            </View>
+            {sorted.length === 0 ? (
+              <View style={[styles.emptyCard, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
+                <Ionicons name="people-outline" size={32} color={colors.text.tertiary} />
+                <Text style={[styles.emptyText, { color: colors.text.tertiary }]}>
+                  {isDraft ? "Publish your deal to start receiving requests." : "No requests yet. Share your deal to get backers!"}
+                </Text>
+              </View>
+            ) : (
+              <View style={{ gap: 10 }}>
+                {sorted.map((c) => (
+                  <ClaimRow
+                    key={c.id}
+                    claim={c}
+                    onConfirm={() => handleClaimAction(c, "confirmed")}
+                    onReject={() => handleClaimAction(c, "rejected")}
+                    colors={colors}
+                  />
+                ))}
+              </View>
+            )}
+          </>
+        );
+      })()}
+
       {/* Deal details card */}
+      <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Deal Details</Text>
       <View style={[styles.detailCard, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
         {[
           { icon: "trophy-outline",         label: "Tournament", value: deal.tournament_name },
@@ -744,31 +847,6 @@ function SellerDashView({
           </View>
         ))}
       </View>
-
-      {/* Claims */}
-      <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>
-        Claims {deal.claims && deal.claims.length > 0 ? `(${deal.claims.length})` : ""}
-      </Text>
-      {!deal.claims || deal.claims.length === 0 ? (
-        <View style={[styles.emptyCard, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
-          <Ionicons name="people-outline" size={32} color={colors.text.tertiary} />
-          <Text style={[styles.emptyText, { color: colors.text.tertiary }]}>
-            {isDraft ? "Publish your deal to start receiving claims." : "No claims yet. Share your deal to get backers!"}
-          </Text>
-        </View>
-      ) : (
-        <View style={{ gap: 8 }}>
-          {deal.claims.map((c) => (
-            <ClaimRow
-              key={c.id}
-              claim={c}
-              onConfirm={() => handleClaimAction(c, "confirmed")}
-              onReject={() => handleClaimAction(c, "rejected")}
-              colors={colors}
-            />
-          ))}
-        </View>
-      )}
 
       {/* Danger zone */}
       {!isClosed && (
@@ -1423,19 +1501,11 @@ const styles = StyleSheet.create({
   cardInput:     { flex: 1, fontSize: 17, fontWeight: "600", padding: 0 },
   cardInputUnit: { fontSize: 15, fontWeight: "600" },
 
-  autoBadge: {
-    flexDirection: "row", alignItems: "center", gap: 3,
-    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 20,
+  calcBlock: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 12,
   },
-  priceDisplay: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    borderRadius: 10, borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 12, paddingVertical: 12,
-  },
-  priceDisplayCurrency: { fontSize: 15, fontWeight: "600" },
-  priceDisplayValue:    { flex: 1, fontSize: 22, fontWeight: "800", letterSpacing: -0.5 },
-  markupPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
-  priceHint:  { fontSize: 11, marginTop: 6 },
 
   visibilityRow:    { flexDirection: "row", gap: 10 },
   visibilityOption: {

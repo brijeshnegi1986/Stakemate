@@ -1,5 +1,5 @@
 import { SegmentedControl } from "@/components/SegmentedControl";
-import { VenueSelector } from "@/components/VenueSelector";
+import { BuyInSheet, FieldRow, StakesSheet, VenueSheet } from "@/components/SessionPickers";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
@@ -9,25 +9,20 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { getTotalSessionCount, getSetting, SessionType, startLiveSession, startLiveTournament } from "../../db/database";
 
-const STAKES       = ["1/1", "1/2", "2/3", "5/5", "10/10"];
-const QUICK_BUYINS = [100, 200, 300, 500, 1000, 2000, 5000];
+import { getSetting, SessionType, startLiveSession, startLiveTournament } from "../../db/database";
 
 function getAvailableTypes(): SessionType[] {
   return ["cash", "tournament"];
 }
 
 export default function StartSessionScreen() {
-  const { colors, spacing, radius, typography, inputTypo } = usePokerTheme();
-  const insets = useSafeAreaInsets();
+  const { colors, spacing, typography, inputTypo } = usePokerTheme();
   const availableTypes  = getAvailableTypes();
   const showTypeToggle  = availableTypes.length > 1;
 
@@ -43,6 +38,10 @@ export default function StartSessionScreen() {
   const [venue, setVenue]                   = useState(() => getSetting("defaultVenue") ?? "");
   const [tournamentName, setTournamentName] = useState("");
   const [entries, setEntries]               = useState("");
+
+  const [buyInOpen,  setBuyInOpen]  = useState(false);
+  const [stakesOpen, setStakesOpen] = useState(false);
+  const [venueOpen,  setVenueOpen]  = useState(false);
 
   const enterAnim = useRef(new Animated.Value(0)).current;
 
@@ -157,74 +156,38 @@ export default function StartSessionScreen() {
             </>
           )}
 
-          {/* ── Buy-in ── */}
-          <Text style={labelStyle}>Buy-in</Text>
-          <View style={{
-            ...inputCard,
-            borderColor: buyIn !== "" && parseFloat(buyIn) > 0 ? colors.border.brand : colors.border.default,
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: spacing.lg,
-            marginBottom: spacing.sm,
-          }}>
-            <Text style={{ color: colors.text.disabled, ...typography.heading3, marginRight: spacing.xs }}>$</Text>
-            <TextInput
-              keyboardType="decimal-pad"
-              placeholder="0.00"
-              placeholderTextColor={colors.text.disabled}
-              value={buyIn}
-              onChangeText={setBuyIn}
-              returnKeyType="done"
-              style={{
-                flex: 1,
-                color: colors.text.primary,
-                paddingVertical: spacing.lg,
-                ...typography.heading2,
-                fontWeight: "700",
-                textAlign: "right",
-              }}
+          {/* ── Session detail fields ── */}
+          <View style={{ ...inputCard, marginBottom: spacing["2xl"] }}>
+            <FieldRow
+              icon="cash-outline"
+              label="Buy-in"
+              value={buyIn ? `$${parseFloat(buyIn).toLocaleString()}` : ""}
+              placeholder="Set buy-in"
+              onPress={() => setBuyInOpen(true)}
+              colors={colors}
+            />
+            {type === "cash" && (
+              <FieldRow
+                icon="swap-horizontal-outline"
+                label="Stakes"
+                value={stakes}
+                placeholder="Choose stakes"
+                onPress={() => setStakesOpen(true)}
+                colors={colors}
+              />
+            )}
+            <FieldRow
+              icon="location-outline"
+              label="Venue"
+              value={venue || (stateRegion ? stateRegion : "")}
+              placeholder="Choose venue"
+              onPress={() => setVenueOpen(true)}
+              colors={colors}
+              isLast
             />
           </View>
 
-          {/* Quick buy-in chips */}
-          <View style={{
-            marginHorizontal: -spacing.lg,
-            paddingHorizontal: spacing.lg,
-            paddingVertical: spacing.md,
-            backgroundColor: colors.bg.primary,
-            borderTopWidth: StyleSheet.hairlineWidth,
-            borderBottomWidth: StyleSheet.hairlineWidth,
-            borderColor: colors.border.default,
-            marginBottom: spacing["2xl"],
-          }}>
-            <View style={{ flexDirection: "row", gap: spacing.sm }}>
-              {QUICK_BUYINS.map((amount) => (
-                <TouchableOpacity
-                  key={amount}
-                  onPress={() => setBuyIn(String(amount))}
-                  style={{
-                    flex: 1,
-                    paddingVertical: spacing.sm,
-                    borderRadius: radius.full,
-                    alignItems: "center",
-                    backgroundColor: buyIn === String(amount) ? colors.bg.brand : colors.bg.tertiary,
-                    borderWidth: 1,
-                    borderColor: buyIn === String(amount) ? colors.border.brand : colors.border.default,
-                  }}
-                >
-                  <Text style={{
-                    color: buyIn === String(amount) ? colors.text.onBrand : colors.text.secondary,
-                    ...typography.caption,
-                    fontWeight: "600",
-                  }}>
-                    ${amount}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* ── Entries + Sell Action (tournament only) ── */}
+          {/* ── Entries (tournament only) ── */}
           {type === "tournament" && (
             <>
               <Text style={labelStyle}>Total Entries (optional)</Text>
@@ -244,37 +207,18 @@ export default function StartSessionScreen() {
                   style={{ color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, textAlign: "right" }}
                 />
               </View>
-
             </>
           )}
 
-          {/* ── Stakes (cash only) ── */}
-          {type === "cash" && (
-            <>
-              <Text style={labelStyle}>Stakes</Text>
-              <View style={{
-                backgroundColor: colors.bg.tertiary,
-                borderRadius: 12,
-                borderWidth: 1.5,
-                borderColor: colors.border.default,
-                padding: spacing.md,
-                marginBottom: spacing["2xl"],
-              }}>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-                  {STAKES.map((s) => (
-                    <Chip key={s} label={s} selected={stakes === s} onPress={() => setStakes(s)}
-                      colors={colors} spacing={spacing} radius={radius} typography={typography} />
-                  ))}
-                </View>
-              </View>
-            </>
-          )}
-
-          <VenueSelector
-            stateRegion={stateRegion}
-            setStateRegion={setStateRegion}
+          <BuyInSheet visible={buyInOpen} value={buyIn} onChange={setBuyIn} onClose={() => setBuyInOpen(false)} />
+          <StakesSheet visible={stakesOpen} value={stakes} onChange={setStakes} onClose={() => setStakesOpen(false)} />
+          <VenueSheet
+            visible={venueOpen}
             venue={venue}
-            setVenue={setVenue}
+            state={stateRegion}
+            onChangeVenue={setVenue}
+            onChangeState={setStateRegion}
+            onClose={() => setVenueOpen(false)}
           />
         </ScrollView>
 
@@ -319,23 +263,3 @@ export default function StartSessionScreen() {
   );
 }
 
-function Chip({ label, selected, onPress, colors, spacing, radius, typography }: any) {
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.75}
-      style={{
-        paddingVertical: spacing.sm,
-        paddingHorizontal: spacing.lg,
-        borderRadius: radius.full,
-        backgroundColor: selected ? colors.bg.brand : colors.bg.tertiary,
-        borderWidth: 1,
-        borderColor: selected ? colors.border.brand : colors.border.default,
-      }}
-    >
-      <Text style={{ color: selected ? colors.text.onBrand : colors.text.primary, ...typography.label, fontWeight: selected ? "700" : "500" }}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
-}

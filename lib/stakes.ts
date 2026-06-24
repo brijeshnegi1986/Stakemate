@@ -146,9 +146,9 @@ export async function getStakeDeal(dealId: string): Promise<StakeDeal | null> {
     .from("stake_deals")
     .select(`*, stake_claims(id, deal_id, buyer_id, percent_claimed, amount_paid, status, message, created_at)`)
     .eq("id", dealId)
-    .single();
+    .maybeSingle();
 
-  if (error) return null;
+  if (error || !data) return null;
 
   const deal = data as any;
   const rawClaims: any[] = deal.stake_claims ?? [];

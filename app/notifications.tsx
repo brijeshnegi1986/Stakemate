@@ -79,17 +79,24 @@ export default function NotificationsScreen() {
   }, [profile?.id]);
 
   function handlePress(n: AppNotification) {
-    router.back();
     if (
       n.type === "stake_claim_pending" ||
       n.type === "stake_claim_confirmed" ||
-      n.type === "stake_claim_rejected" ||
-      n.type === "post_comment" ||
-      n.type === "tournament_post"
+      n.type === "stake_claim_rejected"
     ) {
-      router.push("/(tabs)/social" as any);
+      router.back();
+      setTimeout(() => {
+        if (n.data.dealId) {
+          router.push({ pathname: "/(tabs)/social", params: { openDealId: n.data.dealId } } as any);
+        } else {
+          router.push("/(tabs)/social" as any);
+        }
+      }, 300);
+    } else if (n.type === "post_comment" || n.type === "tournament_post") {
+      router.back();
+      setTimeout(() => router.push("/(tabs)/social" as any), 300);
     } else if (n.type === "new_follower" && n.data.followerId) {
-      router.push(`/profile/${n.data.followerId}` as any);
+      router.push({ pathname: "/user-profile", params: { userId: n.data.followerId } });
     }
   }
 

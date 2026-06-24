@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "deploymentTarget": "16.4",
       "bundleIdentifier": "com.stakemate.pokerroll",
-      "buildNumber": "58",
+      "buildNumber": "61",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }

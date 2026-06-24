@@ -1,5 +1,5 @@
 import { SegmentedControl } from "@/components/SegmentedControl";
-import { VenueSelector } from "@/components/VenueSelector";
+import { BuyInSheet, DurationSheet, FieldRow, StateSheet, StakesSheet, VenueSheet } from "@/components/SessionPickers";
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
@@ -10,14 +10,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { addSession, addTournament, getTotalSessionCount, getSetting, SessionType, updateSession } from "../../db/database";
+import { addSession, addTournament, getSetting, SessionType, updateSession } from "../../db/database";
+import { syncSessionToCloud } from "@/lib/sync";
 
 // ── Read type availability from settings (synchronous, stable for screen lifetime) ──
 function getAvailableTypes(): SessionType[] {
@@ -31,7 +31,7 @@ export default function AddSessionScreen() {
   const editing = session ? JSON.parse(session as string) : null;
 
   const { user } = useAuth();
-  const { colors, spacing, radius, typography, inputTypo } = usePokerTheme();
+  const { colors, spacing, typography, inputTypo } = usePokerTheme();
   const insets = useSafeAreaInsets();
   const cashOutRef = useRef<TextInput>(null);
 
@@ -53,6 +53,13 @@ export default function AddSessionScreen() {
   // ── Cash state ──
   const [cashOut, setCashOut] = useState(editing?.type !== "tournament" ? String(editing?.cashOut ?? "") : "");
   const [stakes, setStakes]   = useState<string>(editing?.stakes ?? (getSetting("defaultStakes") ?? "1/2"));
+
+  // ── Picker sheet visibility ──
+  const [buyInOpen,    setBuyInOpen]    = useState(false);
+  const [stakesOpen,   setStakesOpen]   = useState(false);
+  const [durationOpen, setDurationOpen] = useState(false);
+  const [stateOpen,    setStateOpen]    = useState(false);
+  const [venueOpen,    setVenueOpen]    = useState(false);
 
   // ── Tournament state ──
   const [tournamentName, setTournamentName] = useState(editing?.tournamentName ?? "");
@@ -132,8 +139,10 @@ export default function AddSessionScreen() {
             payout: payload.payout,
             notes: payload.notes,
           });
+          if (user?.id) syncSessionToCloud(user.id, editing.id).catch(console.error);
         } else {
-          addTournament(payload);
+          const newId = addTournament(payload);
+          if (user?.id && newId) syncSessionToCloud(user.id, newId).catch(console.error);
         }
         router.canGoBack() ? router.back() : router.navigate("/(tabs)");
       } catch (e) { console.log(e); }
@@ -152,8 +161,10 @@ export default function AddSessionScreen() {
       try {
         if (editing) {
           updateSession(editing.id, { type: "cash", ...payload });
+          if (user?.id) syncSessionToCloud(user.id, editing.id).catch(console.error);
         } else {
-          addSession(payload);
+          const newId = addSession(payload);
+          if (user?.id && newId) syncSessionToCloud(user.id, newId).catch(console.error);
         }
         router.canGoBack() ? router.back() : router.navigate("/(tabs)");
       } catch (e) { console.log(e); }
@@ -254,33 +265,29 @@ export default function AddSessionScreen() {
           {/* ═══ CASH FIELDS ═══ */}
           {type === "cash" && (
             <>
-              <SectionLabel label="Money" colors={colors} spacing={spacing} typography={typography} />
               <View style={{ ...inputCard, marginBottom: spacing["2xl"] }}>
-                <MoneyRow label="Buy-in" value={buyIn} onChange={setBuyIn}
-                  returnKeyType="next" onSubmit={() => cashOutRef.current?.focus()}
-                  colors={colors} spacing={spacing} typography={typography} inputTypo={inputTypo} />
+                <FieldRow
+                  icon="cash-outline"
+                  label="Buy-in"
+                  value={buyIn ? `$${parseFloat(buyIn).toLocaleString()}` : ""}
+                  placeholder="Set buy-in"
+                  onPress={() => setBuyInOpen(true)}
+                  colors={colors}
+                />
                 <View style={{ height: 1, backgroundColor: colors.border.subtle, marginHorizontal: spacing.lg }} />
                 <MoneyRow ref={cashOutRef} label="Cash-out" value={cashOut} onChange={setCashOut}
                   returnKeyType="done"
                   colors={colors} spacing={spacing} typography={typography} inputTypo={inputTypo} />
-              </View>
-
-              <SectionLabel label="Stakes" colors={colors} spacing={spacing} typography={typography} />
-              <View style={{
-                backgroundColor: colors.bg.tertiary,
-                borderRadius: 12,
-                borderWidth: 1.5,
-                borderColor: colors.border.default,
-                padding: spacing.md,
-                marginBottom: spacing["2xl"],
-              }}>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-                  {["1/1", "1/2", "2/3", "5/5", "10/10"].map((s) => (
-                    <Chip key={s} label={s} selected={stakes === s}
-                      onPress={() => setStakes(s)}
-                      colors={colors} spacing={spacing} radius={radius} typography={typography} />
-                  ))}
-                </View>
+                <View style={{ height: 1, backgroundColor: colors.border.subtle, marginHorizontal: spacing.lg }} />
+                <FieldRow
+                  icon="swap-horizontal-outline"
+                  label="Stakes"
+                  value={stakes}
+                  placeholder="Choose stakes"
+                  onPress={() => setStakesOpen(true)}
+                  colors={colors}
+                  isLast
+                />
               </View>
             </>
           )}
@@ -305,24 +312,15 @@ export default function AddSessionScreen() {
                 />
               </View>
 
-              <SectionLabel label="Buy-in" colors={colors} spacing={spacing} typography={typography} />
-              <View style={{
-                ...inputCard,
-                borderColor: buyIn.length > 0 ? colors.border.brand : colors.border.default,
-                flexDirection: "row",
-                alignItems: "center",
-                paddingHorizontal: spacing.lg,
-                marginBottom: spacing["2xl"],
-              }}>
-                <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: spacing.xs }}>$</Text>
-                <TextInput
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                  placeholderTextColor={colors.text.disabled}
-                  value={buyIn}
-                  onChangeText={setBuyIn}
-                  returnKeyType="next"
-                  style={{ flex: 1, color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
+              <View style={{ ...inputCard, marginBottom: spacing["2xl"] }}>
+                <FieldRow
+                  icon="cash-outline"
+                  label="Buy-in"
+                  value={buyIn ? `$${parseFloat(buyIn).toLocaleString()}` : ""}
+                  placeholder="Set buy-in"
+                  onPress={() => setBuyInOpen(true)}
+                  colors={colors}
+                  isLast
                 />
               </View>
 
@@ -380,32 +378,46 @@ export default function AddSessionScreen() {
             </>
           )}
 
-          {/* ── Duration (shared) ── */}
-          <SectionLabel label="Duration" colors={colors} spacing={spacing} typography={typography} />
-          <View style={{
-            backgroundColor: colors.bg.tertiary,
-            borderRadius: 12,
-            borderWidth: 1.5,
-            borderColor: colors.border.default,
-            padding: spacing.md,
-            marginBottom: spacing["2xl"],
-          }}>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
-              {[1, 2, 3, 4, 5, 6, 8].map((h) => (
-                <Chip key={h} label={h === 8 ? "8h+" : `${h}h`}
-                  selected={duration === h}
-                  onPress={() => setDuration(duration === h ? null : h)}
-                  colors={colors} spacing={spacing} radius={radius} typography={typography} />
-              ))}
-            </View>
+          {/* ── Duration, State, Venue (shared) ── */}
+          <View style={{ ...inputCard, marginBottom: spacing["2xl"] }}>
+            <FieldRow
+              icon="time-outline"
+              label="Duration"
+              value={duration ? (duration === 8 ? "8h+" : `${duration}h`) : ""}
+              placeholder="How long?"
+              onPress={() => setDurationOpen(true)}
+              colors={colors}
+            />
+            <FieldRow
+              icon="map-outline"
+              label="State"
+              value={stateRegion}
+              placeholder="Choose state"
+              onPress={() => setStateOpen(true)}
+              colors={colors}
+            />
+            <FieldRow
+              icon="location-outline"
+              label="Venue"
+              value={venue}
+              placeholder="Choose venue"
+              onPress={() => setVenueOpen(true)}
+              colors={colors}
+              isLast
+            />
           </View>
 
-          {/* ── Venue / State (shared) ── */}
-          <VenueSelector
-            stateRegion={stateRegion}
-            setStateRegion={setStateRegion}
+          <BuyInSheet visible={buyInOpen} value={buyIn} onChange={setBuyIn} onClose={() => setBuyInOpen(false)} />
+          <StakesSheet visible={stakesOpen} value={stakes} onChange={setStakes} onClose={() => setStakesOpen(false)} />
+          <DurationSheet visible={durationOpen} value={duration} onChange={setDuration} onClose={() => setDurationOpen(false)} />
+          <StateSheet visible={stateOpen} value={stateRegion} onChange={setStateRegion} onClose={() => setStateOpen(false)} />
+          <VenueSheet
+            visible={venueOpen}
             venue={venue}
-            setVenue={setVenue}
+            state={stateRegion}
+            onChangeVenue={setVenue}
+            onChangeState={setStateRegion}
+            onClose={() => setVenueOpen(false)}
           />
         </ScrollView>
 
@@ -486,23 +498,3 @@ const MoneyRow = require("react").forwardRef(function MoneyRow(
   );
 });
 
-function Chip({ label, selected, onPress, colors, spacing, radius, typography }: any) {
-  return (
-    <TouchableOpacity
-      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress(); }}
-      activeOpacity={0.75}
-      style={{
-        paddingVertical: spacing.sm,
-        paddingHorizontal: spacing.lg,
-        borderRadius: radius.full,
-        backgroundColor: selected ? colors.bg.brand : colors.bg.tertiary,
-        borderWidth: 1,
-        borderColor: selected ? colors.border.brand : colors.border.default,
-      }}
-    >
-      <Text style={{ color: selected ? colors.text.onBrand : colors.text.primary, ...typography.label, fontWeight: selected ? "700" : "500" }}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
-}
