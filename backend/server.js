@@ -1,15 +1,17 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const fetch = require("node-fetch");
+const Anthropic = require("@anthropic-ai/sdk");
 
-const app = express();
+const app  = express();
 const PORT = process.env.PORT || 3000;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 if (!ANTHROPIC_API_KEY) {
-  console.warn("WARNING: ANTHROPIC_API_KEY is not set. /api/analyze will return 500.");
+  console.warn("WARNING: ANTHROPIC_API_KEY is not set.");
 }
+
+const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -17,6 +19,8 @@ app.use(express.json({ limit: "50mb" }));
 app.get("/", (req, res) => {
   res.json({ status: "ok", service: "Stakemate AI Proxy", keySet: !!ANTHROPIC_API_KEY });
 });
+
+// ── Hand analysis ─────────────────────────────────────────────────────────────
 
 app.post("/api/analyze", async (req, res) => {
   if (!ANTHROPIC_API_KEY) {
@@ -33,46 +37,30 @@ app.post("/api/analyze", async (req, res) => {
 Only include streets that were actually played. Keep each field under 60 words. Grades: A = excellent, B = good, C = marginal, D = mistake.`;
 
   try {
-    console.log("Calling Anthropic API...");
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userMessage }],
-      }),
+    console.log("Calling Anthropic API (analyze)...");
+    const message = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
     });
 
-    const responseText = await response.text();
-    console.log("Anthropic status:", response.status);
-
-    if (!response.ok) {
-      console.error("Anthropic error body:", responseText);
-      let errMsg = `Anthropic API error ${response.status}`;
-      try { errMsg = JSON.parse(responseText)?.error?.message ?? errMsg; } catch (_) {}
-      return res.status(response.status).json({ error: errMsg });
-    }
-
-    const data = JSON.parse(responseText);
-    const text = data.content?.[0]?.text ?? "";
-    console.log("Anthropic response received, length:", text.length);
+    const text = message.content?.[0]?.text ?? "";
+    console.log("Analyze response length:", text.length);
     res.json({ text });
   } catch (err) {
-    console.error("Server error:", err.message);
+    console.error("analyze error:", err.message);
     res.status(500).json({ error: "Internal server error: " + err.message });
   }
 });
+
+// ── Hand compression ──────────────────────────────────────────────────────────
 
 app.post("/api/compress-hand", async (req, res) => {
   if (!ANTHROPIC_API_KEY) {
     return res.status(500).json({ error: "ANTHROPIC_API_KEY is not configured on the server." });
   }
+
   const { notes } = req.body;
   if (!notes || typeof notes !== "string") {
     return res.status(400).json({ error: "notes is required" });
@@ -102,34 +90,21 @@ RULES:
 - Return ONLY the compressed hand — no explanation, no preamble`;
 
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 512,
-        system: systemPrompt,
-        messages: [{ role: "user", content: notes }],
-      }),
+    const message = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 512,
+      system: systemPrompt,
+      messages: [{ role: "user", content: notes }],
     });
-    if (!response.ok) {
-      const errText = await response.text();
-      let errMsg = `Anthropic API error ${response.status}`;
-      try { errMsg = JSON.parse(errText)?.error?.message ?? errMsg; } catch (_) {}
-      return res.status(response.status).json({ error: errMsg });
-    }
-    const data = await response.json();
-    const compressed = data.content?.[0]?.text ?? notes;
+    const compressed = message.content?.[0]?.text ?? notes;
     res.json({ compressed });
   } catch (err) {
     console.error("compress-hand error:", err.message);
     res.status(500).json({ error: "Internal server error: " + err.message });
   }
 });
+
+// ── Brochure scan ─────────────────────────────────────────────────────────────
 
 app.post("/api/scan-brochure", async (req, res) => {
   if (!ANTHROPIC_API_KEY) {
@@ -143,7 +118,7 @@ app.post("/api/scan-brochure", async (req, res) => {
 
   const allowedImageTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
   const isPDF = mediaType === "application/pdf";
-  const type = isPDF ? "application/pdf" : (allowedImageTypes.includes(mediaType) ? mediaType : "image/jpeg");
+  const type  = isPDF ? "application/pdf" : (allowedImageTypes.includes(mediaType) ? mediaType : "image/jpeg");
 
   const systemPrompt = `You are a poker tournament data extraction assistant. The user will send you an image or PDF of a poker tournament brochure, schedule, or flyer. Extract every tournament listed and return ONLY a valid JSON array — no markdown, no explanation, nothing outside the JSON.
 
@@ -164,55 +139,33 @@ Rules:
 - Return [] if no tournaments are found`;
 
   try {
-    console.log("Scanning brochure image, type:", type);
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4096,
-        messages: [
-          {
-            role: "user",
-            content: [
-              isPDF
-                ? { type: "document", source: { type: "base64", media_type: type, data: imageBase64 } }
-                : { type: "image",    source: { type: "base64", media_type: type, data: imageBase64 } },
-              {
-                type: "text",
-                text: "Extract all poker tournaments from this brochure and return them as a JSON array.",
-              },
-            ],
-          },
-        ],
-        system: systemPrompt,
-      }),
+    console.log("Scanning brochure, type:", type);
+    const message = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [
+        {
+          role: "user",
+          content: [
+            isPDF
+              ? { type: "document", source: { type: "base64", media_type: type, data: imageBase64 } }
+              : { type: "image",    source: { type: "base64", media_type: type, data: imageBase64 } },
+            { type: "text", text: "Extract all poker tournaments from this brochure and return them as a JSON array." },
+          ],
+        },
+      ],
     });
 
-    const responseText = await response.text();
-    console.log("Claude vision status:", response.status);
-
-    if (!response.ok) {
-      let errMsg = `Anthropic API error ${response.status}`;
-      try { errMsg = JSON.parse(responseText)?.error?.message ?? errMsg; } catch (_) {}
-      return res.status(response.status).json({ error: errMsg });
-    }
-
-    const data = JSON.parse(responseText);
-    const text = (data.content?.[0]?.text ?? "").trim();
-
-    // Strip any accidental markdown fences
+    const text  = (message.content?.[0]?.text ?? "").trim();
     const clean = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+
     let tournaments;
     try {
       tournaments = JSON.parse(clean);
       if (!Array.isArray(tournaments)) tournaments = [];
     } catch (_) {
-      console.error("Failed to parse Claude response:", clean);
+      console.error("Failed to parse Claude response:", clean.slice(0, 200));
       return res.status(422).json({ error: "Could not parse tournament data from image. Try a clearer photo." });
     }
 
