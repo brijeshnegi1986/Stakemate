@@ -28,9 +28,9 @@ app.post("/api/analyze", async (req, res) => {
     return res.status(400).json({ error: "userMessage is required" });
   }
 
-  const systemPrompt = `You are an expert No-Limit Hold'em poker coach. Analyze the hand provided and return ONLY a valid JSON object with no markdown, no explanation outside the JSON. Use this exact shape:
+  const systemPrompt = `You are an expert No-Limit Hold'em poker coach. Analyze the hand provided and return ONLY a valid JSON object — no markdown fences, no text before or after the JSON. Use this exact shape:
 {"preflop":{"heroAction":"...","assessment":"...","suggestion":"...","reasoning":"...","grade":"A"},"flop":{"heroAction":"...","assessment":"...","suggestion":"...","reasoning":"...","grade":"B"},"turn":{"heroAction":"...","assessment":"...","suggestion":"...","reasoning":"...","grade":"C"},"river":{"heroAction":"...","assessment":"...","suggestion":"...","reasoning":"...","grade":"D"},"summary":"Overall hand summary in 2-3 sentences"}
-Only include streets that were actually played. Grades: A = excellent, B = good, C = marginal, D = mistake.`;
+Only include streets that were actually played. Keep each field under 60 words. Grades: A = excellent, B = good, C = marginal, D = mistake.`;
 
   try {
     console.log("Calling Anthropic API...");
@@ -42,8 +42,8 @@ Only include streets that were actually played. Grades: A = excellent, B = good,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 4096,
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1024,
         system: systemPrompt,
         messages: [{ role: "user", content: userMessage }],
       }),
