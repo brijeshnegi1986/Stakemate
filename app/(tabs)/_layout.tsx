@@ -87,7 +87,6 @@ export default function TabLayout() {
       <Tabs.Screen name="notes"   options={{ href: null }} />
       <Tabs.Screen name="profile" options={{ href: null }} />
       <Tabs.Screen name="live"    options={{ href: null }} />
-      <Tabs.Screen name="add"     options={{ href: null }} />
     </Tabs>
     </View>
   );

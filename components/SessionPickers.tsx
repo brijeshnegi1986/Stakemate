@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -61,9 +62,9 @@ export function FieldRow({
   );
 }
 
-// ─── Sheet wrapper ────────────────────────────────────────────────────────────
+// ─── Page sheet wrapper ───────────────────────────────────────────────────────
 
-function Sheet({
+function PageSheet({
   visible, title, onClose, children,
 }: {
   visible: boolean;
@@ -72,27 +73,56 @@ function Sheet({
   children: React.ReactNode;
 }) {
   const { colors } = usePokerTheme();
-  const insets = useSafeAreaInsets();
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <TouchableOpacity
-          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)" }}
-          activeOpacity={1}
-          onPress={onClose}
-        />
-        <View style={[styles.sheet, { backgroundColor: colors.bg.primary, paddingBottom: insets.bottom + 16 }]}>
-          <View style={[styles.sheetHandle, { backgroundColor: colors.border.default }]} />
-          <View style={styles.sheetHeader}>
-            <Text style={[styles.sheetTitle, { color: colors.text.primary }]}>{title}</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-              <Ionicons name="close" size={22} color={colors.text.secondary} />
-            </TouchableOpacity>
-          </View>
-          {children}
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+        {/* Navigation bar */}
+        <View style={[styles.navBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default, paddingTop: 12 }]}>
+          <View style={{ width: 60 }} />
+          <Text style={[styles.navTitle, { color: colors.text.primary }]}>{title}</Text>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 60, alignItems: "flex-end", paddingRight: 4 }}>
+            <Text style={[styles.navCancel, { color: BRAND }]}>Cancel</Text>
+          </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
+        {children}
+      </View>
     </Modal>
+  );
+}
+
+// ─── Shared list row ──────────────────────────────────────────────────────────
+
+function ListRow({
+  label, sublabel, selected, onPress, colors, isLast = false,
+}: {
+  label: string;
+  sublabel?: string;
+  selected: boolean;
+  onPress: () => void;
+  colors: any;
+  isLast?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.6}
+      style={[
+        styles.listRow,
+        { backgroundColor: colors.bg.primary },
+        !isLast && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
+      ]}
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.listRowLabel, { color: colors.text.primary }]}>{label}</Text>
+        {sublabel ? <Text style={[styles.listRowSub, { color: colors.text.tertiary }]}>{sublabel}</Text> : null}
+      </View>
+      {selected && <Ionicons name="checkmark" size={20} color={BRAND} />}
+    </TouchableOpacity>
   );
 }
 
@@ -107,6 +137,7 @@ export function BuyInSheet({
   onClose: () => void;
 }) {
   const { colors } = usePokerTheme();
+  const insets = useSafeAreaInsets();
   const [draft, setDraft]           = useState(value);
   const [showCustom, setShowCustom] = useState(false);
   const inputRef = useRef<TextInput>(null);
@@ -125,82 +156,72 @@ export function BuyInSheet({
     onClose();
   }
 
+  const isCustomSelected = showCustom && draft.length > 0 && !QUICK_BUYINS.some((q) => String(q) === draft);
+
   return (
-    <Sheet visible={visible} title="Buy-in" onClose={onClose}>
-      <View style={[styles.sheetBody, { borderColor: colors.border.default }]}>
-        {/* Quick-select chips */}
-        <View style={styles.chipGrid}>
-          {QUICK_BUYINS.map((amount) => {
+    <PageSheet visible={visible} title="Buy-in" onClose={onClose}>
+      <ScrollView
+        contentContainerStyle={{ paddingVertical: 24, paddingBottom: insets.bottom + 32 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Preset amounts */}
+        <Text style={[styles.listSectionHeader, { color: colors.text.tertiary }]}>Quick select</Text>
+        <View style={[styles.listGroup, { borderColor: colors.border.default }]}>
+          {QUICK_BUYINS.map((amount, i) => {
             const s = String(amount);
-            const selected = draft === s && !showCustom;
+            const selected = value === s && !isCustomSelected;
+            const label = amount >= 1000 ? `$${amount / 1000},000` : `$${amount}`;
             return (
-              <TouchableOpacity
+              <ListRow
                 key={amount}
+                label={label}
+                selected={selected}
                 onPress={() => { setShowCustom(false); confirm(s); }}
-                activeOpacity={0.75}
-                style={[
-                  styles.chip,
-                  { backgroundColor: selected ? BRAND : colors.bg.secondary, borderColor: selected ? BRAND : colors.border.default },
-                ]}
-              >
-                <Text style={[styles.chipText, { color: selected ? "#fff" : colors.text.primary }]}>
-                  ${amount >= 1000 ? `${amount / 1000}k` : amount}
-                </Text>
-              </TouchableOpacity>
+                colors={colors}
+                isLast={i === QUICK_BUYINS.length - 1}
+              />
             );
           })}
-          <TouchableOpacity
-            onPress={() => { setShowCustom(true); setDraft(""); setTimeout(() => inputRef.current?.focus(), 50); }}
-            activeOpacity={0.75}
-            style={[
-              styles.chip,
-              { backgroundColor: showCustom ? BRAND + "15" : colors.bg.secondary, borderColor: showCustom ? BRAND : colors.border.default },
-            ]}
-          >
-            <Text style={[styles.chipText, { color: showCustom ? BRAND : colors.text.secondary }]}>Custom</Text>
-          </TouchableOpacity>
         </View>
 
-        {/* Custom amount input — revealed only when Custom is tapped */}
-        {showCustom && (
-          <View style={[styles.buyInInputRow, { backgroundColor: colors.bg.secondary, borderColor: draft ? BRAND : colors.border.default, marginTop: 14 }]}>
+        {/* Custom amount */}
+        <Text style={[styles.listSectionHeader, { color: colors.text.tertiary }]}>Custom amount</Text>
+        <View style={[styles.listGroup, { borderColor: colors.border.default }]}>
+          <TouchableOpacity
+            onPress={() => { setShowCustom(true); setDraft(""); setTimeout(() => inputRef.current?.focus(), 80); }}
+            activeOpacity={0.6}
+            style={[styles.listRow, { backgroundColor: colors.bg.primary }]}
+          >
             <Text style={[styles.buyInCurrency, { color: colors.text.tertiary }]}>$</Text>
             <TextInput
               ref={inputRef}
-              value={draft}
-              onChangeText={setDraft}
+              value={showCustom ? draft : ""}
+              onChangeText={(t) => { setShowCustom(true); setDraft(t); }}
               keyboardType="decimal-pad"
               placeholder="Enter amount"
               placeholderTextColor={colors.text.disabled}
-              style={[styles.buyInInput, { color: colors.text.primary }]}
+              style={[styles.buyInInput, { color: colors.text.primary, flex: 1 }]}
               returnKeyType="done"
               onSubmitEditing={() => draft && parseFloat(draft) > 0 && confirm(draft)}
+              onFocus={() => setShowCustom(true)}
             />
-            {draft.length > 0 && (
-              <TouchableOpacity onPress={() => { setDraft(""); inputRef.current?.focus(); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close-circle" size={18} color={colors.text.tertiary} />
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-      </View>
+            {isCustomSelected && <Ionicons name="checkmark" size={20} color={BRAND} />}
+          </TouchableOpacity>
+        </View>
 
-      {showCustom && (
-        <TouchableOpacity
-          onPress={() => draft && parseFloat(draft) > 0 && confirm(draft)}
-          disabled={!draft || parseFloat(draft) <= 0}
-          activeOpacity={0.85}
-          style={[
-            styles.sheetConfirmBtn,
-            { backgroundColor: draft && parseFloat(draft) > 0 ? BRAND : colors.bg.secondary, marginHorizontal: 16 },
-          ]}
-        >
-          <Text style={[styles.sheetConfirmText, { color: draft && parseFloat(draft) > 0 ? "#fff" : colors.text.disabled }]}>
-            {draft && parseFloat(draft) > 0 ? `Set buy-in to $${parseFloat(draft).toLocaleString()}` : "Enter an amount"}
-          </Text>
-        </TouchableOpacity>
-      )}
-    </Sheet>
+        {/* Confirm button for custom */}
+        {showCustom && draft.length > 0 && parseFloat(draft) > 0 && (
+          <TouchableOpacity
+            onPress={() => confirm(draft)}
+            activeOpacity={0.85}
+            style={[styles.confirmBtn, { backgroundColor: BRAND, marginHorizontal: 16, marginTop: 8 }]}
+          >
+            <Text style={styles.confirmBtnText}>Set buy-in to ${parseFloat(draft).toLocaleString()}</Text>
+          </TouchableOpacity>
+        )}
+      </ScrollView>
+    </PageSheet>
   );
 }
 
@@ -215,8 +236,10 @@ export function StakesSheet({
   onClose: () => void;
 }) {
   const { colors } = usePokerTheme();
+  const insets = useSafeAreaInsets();
   const [custom, setCustom]         = useState("");
   const [showCustom, setShowCustom] = useState(false);
+  const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
     if (visible) {
@@ -232,70 +255,63 @@ export function StakesSheet({
     onClose();
   }
 
+  const isCustomSelected = showCustom && custom.length > 0 && !STAKES_OPTIONS.includes(value);
+
   return (
-    <Sheet visible={visible} title="Stakes" onClose={onClose}>
-      <View style={[styles.sheetBody, { borderColor: colors.border.default }]}>
-        <View style={styles.chipGrid}>
-          {STAKES_OPTIONS.map((s) => {
-            const selected = value === s && !showCustom;
-            return (
-              <TouchableOpacity
-                key={s}
-                onPress={() => { setShowCustom(false); pick(s); }}
-                activeOpacity={0.75}
-                style={[
-                  styles.chip,
-                  { backgroundColor: selected ? BRAND : colors.bg.secondary, borderColor: selected ? BRAND : colors.border.default },
-                ]}
-              >
-                <Text style={[styles.chipText, { color: selected ? "#fff" : colors.text.primary }]}>{s}</Text>
-              </TouchableOpacity>
-            );
-          })}
+    <PageSheet visible={visible} title="Stakes" onClose={onClose}>
+      <ScrollView
+        contentContainerStyle={{ paddingVertical: 24, paddingBottom: insets.bottom + 32 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={[styles.listSectionHeader, { color: colors.text.tertiary }]}>NL Hold'em</Text>
+        <View style={[styles.listGroup, { borderColor: colors.border.default }]}>
+          {STAKES_OPTIONS.map((s, i) => (
+            <ListRow
+              key={s}
+              label={`$${s}`}
+              sublabel={`$${s.split("/")[0]}/$${s.split("/")[1]} blinds`}
+              selected={value === s && !isCustomSelected}
+              onPress={() => { setShowCustom(false); pick(s); }}
+              colors={colors}
+              isLast={i === STAKES_OPTIONS.length - 1}
+            />
+          ))}
+        </View>
+
+        <Text style={[styles.listSectionHeader, { color: colors.text.tertiary }]}>Custom</Text>
+        <View style={[styles.listGroup, { borderColor: colors.border.default }]}>
           <TouchableOpacity
-            onPress={() => { setShowCustom(true); setCustom(""); }}
-            activeOpacity={0.75}
-            style={[
-              styles.chip,
-              { backgroundColor: showCustom ? BRAND + "15" : colors.bg.secondary, borderColor: showCustom ? BRAND : colors.border.default },
-            ]}
+            onPress={() => { setShowCustom(true); setCustom(""); setTimeout(() => inputRef.current?.focus(), 80); }}
+            activeOpacity={0.6}
+            style={[styles.listRow, { backgroundColor: colors.bg.primary }]}
           >
-            <Text style={[styles.chipText, { color: showCustom ? BRAND : colors.text.secondary }]}>Custom</Text>
+            <TextInput
+              ref={inputRef}
+              value={showCustom ? custom : ""}
+              onChangeText={(t) => { setShowCustom(true); setCustom(t); }}
+              placeholder="e.g. 2/5 or 5/10"
+              placeholderTextColor={colors.text.disabled}
+              style={[styles.buyInInput, { color: colors.text.primary, flex: 1, fontSize: 16 }]}
+              returnKeyType="done"
+              onSubmitEditing={() => custom.trim() && pick(custom.trim())}
+              onFocus={() => setShowCustom(true)}
+            />
+            {isCustomSelected && <Ionicons name="checkmark" size={20} color={BRAND} />}
           </TouchableOpacity>
         </View>
 
-        {showCustom && (
-          <View style={[styles.buyInInputRow, { backgroundColor: colors.bg.secondary, borderColor: custom ? BRAND : colors.border.default, marginTop: 14 }]}>
-            <TextInput
-              value={custom}
-              onChangeText={setCustom}
-              placeholder="e.g. 2/5 or 5/10"
-              placeholderTextColor={colors.text.disabled}
-              autoFocus
-              returnKeyType="done"
-              onSubmitEditing={() => custom.trim() && pick(custom.trim())}
-              style={[styles.buyInInput, { color: colors.text.primary, flex: 1 }]}
-            />
-          </View>
+        {showCustom && custom.trim().length > 0 && (
+          <TouchableOpacity
+            onPress={() => pick(custom.trim())}
+            activeOpacity={0.85}
+            style={[styles.confirmBtn, { backgroundColor: BRAND, marginHorizontal: 16, marginTop: 8 }]}
+          >
+            <Text style={styles.confirmBtnText}>Set stakes to {custom.trim()}</Text>
+          </TouchableOpacity>
         )}
-      </View>
-
-      {showCustom && (
-        <TouchableOpacity
-          onPress={() => custom.trim() && pick(custom.trim())}
-          disabled={!custom.trim()}
-          activeOpacity={0.85}
-          style={[
-            styles.sheetConfirmBtn,
-            { backgroundColor: custom.trim() ? BRAND : colors.bg.secondary, marginHorizontal: 16 },
-          ]}
-        >
-          <Text style={[styles.sheetConfirmText, { color: custom.trim() ? "#fff" : colors.text.disabled }]}>
-            {custom.trim() ? `Set stakes to ${custom.trim()}` : "Enter stakes"}
-          </Text>
-        </TouchableOpacity>
-      )}
-    </Sheet>
+      </ScrollView>
+    </PageSheet>
   );
 }
 
@@ -310,6 +326,7 @@ export function DurationSheet({
   onClose: () => void;
 }) {
   const { colors } = usePokerTheme();
+  const insets = useSafeAreaInsets();
 
   function pick(h: number) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -318,29 +335,26 @@ export function DurationSheet({
   }
 
   return (
-    <Sheet visible={visible} title="Duration" onClose={onClose}>
-      <View style={[styles.sheetBody, { borderColor: colors.border.default }]}>
-        <View style={styles.chipGrid}>
-          {DURATION_OPTIONS.map((h) => {
-            const selected = value === h;
-            const label = h === 8 ? "8h+" : `${h}h`;
-            return (
-              <TouchableOpacity
-                key={h}
-                onPress={() => pick(h)}
-                activeOpacity={0.75}
-                style={[
-                  styles.chip,
-                  { backgroundColor: selected ? BRAND : colors.bg.secondary, borderColor: selected ? BRAND : colors.border.default },
-                ]}
-              >
-                <Text style={[styles.chipText, { color: selected ? "#fff" : colors.text.primary }]}>{label}</Text>
-              </TouchableOpacity>
-            );
-          })}
+    <PageSheet visible={visible} title="Duration" onClose={onClose}>
+      <ScrollView
+        contentContainerStyle={{ paddingVertical: 24, paddingBottom: insets.bottom + 32 }}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={[styles.listSectionHeader, { color: colors.text.tertiary }]}>Session length</Text>
+        <View style={[styles.listGroup, { borderColor: colors.border.default }]}>
+          {DURATION_OPTIONS.map((h, i) => (
+            <ListRow
+              key={h}
+              label={h === 8 ? "8 hours or more" : `${h} hour${h > 1 ? "s" : ""}`}
+              selected={value === h}
+              onPress={() => pick(h)}
+              colors={colors}
+              isLast={i === DURATION_OPTIONS.length - 1}
+            />
+          ))}
         </View>
-      </View>
-    </Sheet>
+      </ScrollView>
+    </PageSheet>
   );
 }
 
@@ -355,6 +369,16 @@ export function StateSheet({
   onClose: () => void;
 }) {
   const { colors } = usePokerTheme();
+  const insets = useSafeAreaInsets();
+
+  const STATE_NAMES: Record<string, string> = {
+    NSW: "New South Wales",
+    VIC: "Victoria",
+    QLD: "Queensland",
+    WA:  "Western Australia",
+    SA:  "South Australia",
+    ACT: "Australian Capital Territory",
+  };
 
   function pick(s: string) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -363,36 +387,34 @@ export function StateSheet({
   }
 
   return (
-    <Sheet visible={visible} title="State" onClose={onClose}>
-      <View style={[styles.sheetBody, { borderColor: colors.border.default }]}>
-        <View style={styles.chipGrid}>
-          {STATES.map((s) => {
-            const selected = value === s;
-            return (
-              <TouchableOpacity
-                key={s}
-                onPress={() => pick(s)}
-                activeOpacity={0.75}
-                style={[
-                  styles.chip,
-                  styles.chipWide,
-                  { backgroundColor: selected ? BRAND : colors.bg.secondary, borderColor: selected ? BRAND : colors.border.default },
-                ]}
-              >
-                <Text style={[styles.chipText, { color: selected ? "#fff" : colors.text.primary }]}>{s}</Text>
-              </TouchableOpacity>
-            );
-          })}
+    <PageSheet visible={visible} title="State" onClose={onClose}>
+      <ScrollView
+        contentContainerStyle={{ paddingVertical: 24, paddingBottom: insets.bottom + 32 }}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={[styles.listSectionHeader, { color: colors.text.tertiary }]}>Australia</Text>
+        <View style={[styles.listGroup, { borderColor: colors.border.default }]}>
+          {STATES.map((s, i) => (
+            <ListRow
+              key={s}
+              label={STATE_NAMES[s] ?? s}
+              sublabel={s}
+              selected={value === s}
+              onPress={() => pick(s)}
+              colors={colors}
+              isLast={i === STATES.length - 1}
+            />
+          ))}
         </View>
-      </View>
-    </Sheet>
+      </ScrollView>
+    </PageSheet>
   );
 }
 
 // ─── Venue sheet ──────────────────────────────────────────────────────────────
 
 export function VenueSheet({
-  visible, venue, state, onChangeVenue, onChangeState, onClose,
+  visible, venue, state, onChangeVenue, onChangeState, onClose, hideStateChips = false,
 }: {
   visible: boolean;
   venue: string;
@@ -400,6 +422,7 @@ export function VenueSheet({
   onChangeVenue: (v: string) => void;
   onChangeState: (s: string) => void;
   onClose: () => void;
+  hideStateChips?: boolean;
 }) {
   const { colors } = usePokerTheme();
   const insets = useSafeAreaInsets();
@@ -454,150 +477,152 @@ export function VenueSheet({
     : supabaseVenues;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <TouchableOpacity
-          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)" }}
-          activeOpacity={1}
-          onPress={onClose}
-        />
-        <View style={[styles.venueSheet, { backgroundColor: colors.bg.primary, paddingBottom: insets.bottom + 8 }]}>
-          <View style={[styles.sheetHandle, { backgroundColor: colors.border.default }]} />
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg.secondary }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+        {/* Nav bar */}
+        <View style={[styles.navBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default, paddingTop: 12 }]}>
+          <View style={{ width: 60 }} />
+          <Text style={[styles.navTitle, { color: colors.text.primary }]}>Venue</Text>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 60, alignItems: "flex-end", paddingRight: 4 }}>
+            <Text style={[styles.navCancel, { color: BRAND }]}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
 
-          <View style={styles.sheetHeader}>
-            <Text style={[styles.sheetTitle, { color: colors.text.primary }]}>Venue</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-              <Ionicons name="close" size={22} color={colors.text.secondary} />
-            </TouchableOpacity>
-          </View>
-
-          {/* State chips */}
-          <View style={styles.statechips}>
-            {STATES.map((s) => (
-              <TouchableOpacity
-                key={s}
-                onPress={() => pickState(s)}
-                activeOpacity={0.75}
-                style={[
-                  styles.stateChip,
-                  { backgroundColor: selectedState === s ? BRAND : colors.bg.secondary, borderColor: selectedState === s ? BRAND : colors.border.default },
-                ]}
-              >
-                <Text style={[styles.stateChipText, { color: selectedState === s ? "#fff" : colors.text.secondary }]}>{s}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Search */}
-          <View style={[styles.venueSearch, { backgroundColor: colors.bg.secondary, borderColor: search ? BRAND : colors.border.default }]}>
-            <Ionicons name="search-outline" size={16} color={colors.text.tertiary} style={{ marginRight: 8 }} />
-            <TextInput
-              ref={searchRef}
-              value={search}
-              onChangeText={setSearch}
-              placeholder="Search venues…"
-              placeholderTextColor={colors.text.disabled}
-              style={[styles.venueSearchInput, { color: colors.text.primary }]}
-              returnKeyType="search"
-            />
-            {search.length > 0 && (
-              <TouchableOpacity onPress={() => setSearch("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close-circle" size={16} color={colors.text.tertiary} />
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Venue list */}
-          {loadingVenues ? (
-            <View style={{ alignItems: "center", paddingVertical: 32 }}>
-              <ActivityIndicator color={BRAND} />
-              <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 8 }}>Loading venues…</Text>
+        {/* State filter (when not hidden) */}
+        {!hideStateChips && (
+          <>
+            <Text style={[styles.listSectionHeader, { color: colors.text.tertiary, marginTop: 20 }]}>State</Text>
+            <View style={[styles.listGroup, { borderColor: colors.border.default, marginBottom: 0 }]}>
+              {STATES.map((s, i) => (
+                <TouchableOpacity
+                  key={s}
+                  onPress={() => pickState(s)}
+                  activeOpacity={0.6}
+                  style={[
+                    styles.listRow,
+                    { backgroundColor: colors.bg.primary },
+                    i < STATES.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
+                  ]}
+                >
+                  <Text style={[styles.listRowLabel, { color: colors.text.primary }]}>{s}</Text>
+                  {selectedState === s && <Ionicons name="checkmark" size={20} color={BRAND} />}
+                </TouchableOpacity>
+              ))}
             </View>
-          ) : (
-            <FlatList
-              data={filtered}
-              keyExtractor={(item, i) => item.name + i}
-              keyboardShouldPersistTaps="handled"
-              style={{ maxHeight: 280 }}
-              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 4 }}
-              ItemSeparatorComponent={() => <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.subtle }} />}
-              renderItem={({ item }) => {
-                const isSelected = venue === item.name;
-                const subtitle = [item.suburb, item.city].filter(Boolean).join(", ");
-                return (
-                  <TouchableOpacity
-                    onPress={() => pickVenue(item.name)}
-                    activeOpacity={0.7}
-                    style={[styles.venueRow, isSelected && { backgroundColor: BRAND + "08" }]}
-                  >
-                    <View style={[styles.venueIconWrap, { backgroundColor: isSelected ? BRAND + "18" : colors.bg.secondary }]}>
-                      <Ionicons name="business-outline" size={15} color={isSelected ? BRAND : colors.text.tertiary} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.venueName, { color: isSelected ? BRAND : colors.text.primary, fontWeight: isSelected ? "700" : "500" }]}>
-                        {item.name}
-                      </Text>
-                      {!!subtitle && (
-                        <Text style={[styles.venueSub, { color: colors.text.tertiary }]}>{subtitle}</Text>
-                      )}
-                    </View>
-                    {isSelected && <Ionicons name="checkmark-circle" size={18} color={BRAND} />}
-                  </TouchableOpacity>
-                );
-              }}
-              ListEmptyComponent={
-                <View style={{ alignItems: "center", paddingVertical: 20 }}>
-                  <Text style={{ color: colors.text.tertiary, fontSize: 13 }}>No venues found for {selectedState}.</Text>
-                </View>
-              }
-              ListFooterComponent={
-                <>
-                  <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.subtle }} />
-                  {/* Other / custom venue */}
-                  {showOtherInput ? (
-                    <View style={{ paddingVertical: 10 }}>
-                      <View style={[styles.buyInInputRow, { backgroundColor: colors.bg.secondary, borderColor: otherVenue ? BRAND : colors.border.default }]}>
-                        <Ionicons name="create-outline" size={16} color={colors.text.tertiary} />
-                        <TextInput
-                          ref={otherRef}
-                          value={otherVenue}
-                          onChangeText={setOtherVenue}
-                          placeholder="Type venue name…"
-                          placeholderTextColor={colors.text.disabled}
-                          style={[styles.buyInInput, { color: colors.text.primary, flex: 1, fontSize: 15 }]}
-                          autoFocus
-                          returnKeyType="done"
-                          onSubmitEditing={() => otherVenue.trim() && pickVenue(otherVenue.trim())}
-                        />
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => otherVenue.trim() && pickVenue(otherVenue.trim())}
-                        disabled={!otherVenue.trim()}
-                        activeOpacity={0.85}
-                        style={[styles.sheetConfirmBtn, { backgroundColor: otherVenue.trim() ? BRAND : colors.bg.secondary, marginHorizontal: 0, marginTop: 8 }]}
-                      >
-                        <Text style={[styles.sheetConfirmText, { color: otherVenue.trim() ? "#fff" : colors.text.disabled }]}>
-                          {otherVenue.trim() ? `Use "${otherVenue.trim()}"` : "Type a venue name"}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      onPress={() => { setShowOtherInput(true); setTimeout(() => otherRef.current?.focus(), 100); }}
-                      activeOpacity={0.7}
-                      style={styles.venueRow}
-                    >
-                      <View style={[styles.venueIconWrap, { backgroundColor: colors.bg.secondary }]}>
-                        <Ionicons name="add-outline" size={15} color={colors.text.tertiary} />
-                      </View>
-                      <Text style={[styles.venueName, { color: colors.text.secondary }]}>Other / Not in list</Text>
-                    </TouchableOpacity>
-                  )}
-                </>
-              }
-            />
+            <Text style={[styles.listSectionHeader, { color: colors.text.tertiary }]}>Venues in {selectedState}</Text>
+          </>
+        )}
+
+        {/* Search bar */}
+        {!hideStateChips
+          ? null
+          : <View style={{ height: 20 }} />
+        }
+        <View style={[styles.venueSearch, { backgroundColor: colors.bg.primary, borderColor: search ? BRAND : colors.border.default }]}>
+          <Ionicons name="search-outline" size={16} color={colors.text.tertiary} style={{ marginRight: 8 }} />
+          <TextInput
+            ref={searchRef}
+            value={search}
+            onChangeText={setSearch}
+            placeholder={`Search venues in ${selectedState}…`}
+            placeholderTextColor={colors.text.disabled}
+            style={[styles.venueSearchInput, { color: colors.text.primary }]}
+            returnKeyType="search"
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => setSearch("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close-circle" size={16} color={colors.text.tertiary} />
+            </TouchableOpacity>
           )}
         </View>
+
+        {/* Venue list */}
+        {loadingVenues ? (
+          <View style={{ alignItems: "center", paddingVertical: 48 }}>
+            <ActivityIndicator color={BRAND} />
+            <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 10 }}>Loading venues…</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={filtered}
+            keyExtractor={(item, i) => item.name + i}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
+            ItemSeparatorComponent={() => <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.subtle }} />}
+            style={{ backgroundColor: colors.bg.primary }}
+            renderItem={({ item }) => {
+              const isSelected = venue === item.name;
+              const subtitle = [item.suburb, item.city].filter(Boolean).join(", ");
+              return (
+                <TouchableOpacity
+                  onPress={() => pickVenue(item.name)}
+                  activeOpacity={0.6}
+                  style={[styles.listRow, { backgroundColor: colors.bg.primary }]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.listRowLabel, { color: isSelected ? BRAND : colors.text.primary, fontWeight: isSelected ? "700" : "500" }]}>
+                      {item.name}
+                    </Text>
+                    {!!subtitle && <Text style={[styles.listRowSub, { color: colors.text.tertiary }]}>{subtitle}</Text>}
+                  </View>
+                  {isSelected && <Ionicons name="checkmark" size={20} color={BRAND} />}
+                </TouchableOpacity>
+              );
+            }}
+            ListEmptyComponent={
+              <View style={{ alignItems: "center", paddingVertical: 40 }}>
+                <Text style={{ color: colors.text.tertiary, fontSize: 14 }}>No venues found in {selectedState}.</Text>
+              </View>
+            }
+            ListFooterComponent={
+              <>
+                <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.subtle }} />
+                {showOtherInput ? (
+                  <View style={{ backgroundColor: colors.bg.primary, padding: 16, gap: 10 }}>
+                    <View style={[styles.venueSearch, { backgroundColor: colors.bg.secondary, borderColor: otherVenue ? BRAND : colors.border.default, marginHorizontal: 0 }]}>
+                      <Ionicons name="create-outline" size={16} color={colors.text.tertiary} style={{ marginRight: 8 }} />
+                      <TextInput
+                        ref={otherRef}
+                        value={otherVenue}
+                        onChangeText={setOtherVenue}
+                        placeholder="Type venue name…"
+                        placeholderTextColor={colors.text.disabled}
+                        style={[styles.venueSearchInput, { color: colors.text.primary }]}
+                        autoFocus
+                        returnKeyType="done"
+                        onSubmitEditing={() => otherVenue.trim() && pickVenue(otherVenue.trim())}
+                      />
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => otherVenue.trim() && pickVenue(otherVenue.trim())}
+                      disabled={!otherVenue.trim()}
+                      activeOpacity={0.85}
+                      style={[styles.confirmBtn, { backgroundColor: otherVenue.trim() ? BRAND : colors.bg.secondary }]}
+                    >
+                      <Text style={[styles.confirmBtnText, { color: otherVenue.trim() ? "#fff" : colors.text.disabled }]}>
+                        {otherVenue.trim() ? `Use "${otherVenue.trim()}"` : "Type a venue name"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={() => { setShowOtherInput(true); setTimeout(() => otherRef.current?.focus(), 100); }}
+                    activeOpacity={0.6}
+                    style={[styles.listRow, { backgroundColor: colors.bg.primary }]}
+                  >
+                    <Text style={[styles.listRowLabel, { color: colors.text.tertiary }]}>Other / Not in list</Text>
+                    <Ionicons name="add-circle-outline" size={20} color={colors.text.tertiary} />
+                  </TouchableOpacity>
+                )}
+              </>
+            }
+          />
+        )}
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -606,6 +631,7 @@ export function VenueSheet({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  // Field row (on the form card)
   fieldRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -623,107 +649,69 @@ const styles = StyleSheet.create({
   fieldLabel:  { fontSize: 14, fontWeight: "500", width: 70 },
   fieldValue:  { flex: 1, fontSize: 14, fontWeight: "600", textAlign: "right", marginRight: 4 },
 
-  sheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-  },
-  venueSheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-  },
-  sheetHandle: {
-    width: 36, height: 4, borderRadius: 2,
-    alignSelf: "center",
-    marginTop: 12, marginBottom: 4,
-  },
-  sheetHeader: {
+  // Page sheet nav bar
+  navBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-  },
-  sheetTitle:  { fontSize: 17, fontWeight: "800" },
-  sheetBody:   { borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 16, paddingVertical: 16 },
-
-  buyInInputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 12,
-    borderWidth: 1.5,
-    paddingHorizontal: 14,
-    paddingVertical: Platform.OS === "ios" ? 14 : 8,
-    gap: 8,
-  },
-  buyInCurrency: { fontSize: 18, fontWeight: "600" },
-  buyInInput:    { flex: 1, fontSize: 22, fontWeight: "700" },
-
-  chipGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  chip: {
-    paddingVertical: 9,
     paddingHorizontal: 16,
-    borderRadius: 24,
-    borderWidth: 1.5,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  chipWide: {
-    minWidth: 70,
-    alignItems: "center",
-  },
-  chipText: { fontSize: 14, fontWeight: "600" },
+  navTitle:  { fontSize: 17, fontWeight: "700" },
+  navCancel: { fontSize: 16, fontWeight: "500" },
 
-  sheetConfirmBtn: {
+  // iOS-style grouped list
+  listSectionHeader: {
+    fontSize: 12,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginHorizontal: 16,
+    marginBottom: 6,
+    marginTop: 20,
+  },
+  listGroup: {
+    marginHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
+  listRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 12,
+    minHeight: 52,
+  },
+  listRowLabel: { fontSize: 16, fontWeight: "500" },
+  listRowSub:   { fontSize: 12, marginTop: 2 },
+
+  // Buy-in custom input
+  buyInCurrency: { fontSize: 20, fontWeight: "600" },
+  buyInInput:    { fontSize: 20, fontWeight: "600" },
+
+  // Confirm button
+  confirmBtn: {
+    marginHorizontal: 16,
     marginTop: 12,
     paddingVertical: 15,
     borderRadius: 14,
     alignItems: "center",
-    marginBottom: 4,
   },
-  sheetConfirmText: { fontSize: 15, fontWeight: "700" },
+  confirmBtnText: { fontSize: 15, fontWeight: "700", color: "#fff" },
 
-  statechips: {
-    flexDirection: "row",
-    gap: 8,
-    paddingHorizontal: 16,
-    marginBottom: 12,
-  },
-  stateChip: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1.5,
-  },
-  stateChipText: { fontSize: 12, fontWeight: "700" },
-
+  // Venue search bar
   venueSearch: {
     flexDirection: "row",
     alignItems: "center",
     marginHorizontal: 16,
-    marginBottom: 10,
+    marginBottom: 8,
     borderRadius: 12,
     borderWidth: 1.5,
     paddingHorizontal: 12,
     paddingVertical: Platform.OS === "ios" ? 11 : 6,
   },
   venueSearchInput: { flex: 1, fontSize: 15 },
-
-  venueRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 11,
-    gap: 12,
-  },
-  venueIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  venueName: { fontSize: 14 },
-  venueSub:  { fontSize: 12, marginTop: 1 },
 });

@@ -30,6 +30,14 @@ export type SeriesInfo = {
   website_url: string | null;
 };
 
+export type OrganiserInfo = {
+  id: string;
+  name: string;
+  logo_url: string | null;
+  website_url: string | null;
+  state: string | null;
+};
+
 export type TournamentType = "series" | "regular" | "weekly";
 
 export type OfficialTournament = {
@@ -38,9 +46,11 @@ export type OfficialTournament = {
   name: string;
   series_id: string | null;
   series_info: SeriesInfo | null;
+  organiser_id: string | null;
+  organiser_info: OrganiserInfo | null;
   venue_id: string | null;
   venue_info: VenueInfo | null;
-  venue: string | null;
+  venue_name: string | null;
   city: string | null;
   state: string | null;
   tournament_date: string;
@@ -79,12 +89,24 @@ export async function fetchSeries(): Promise<SeriesInfo[]> {
   return (data ?? []) as SeriesInfo[];
 }
 
+export async function fetchTournamentsBySeries(seriesId: string): Promise<OfficialTournament[]> {
+  const { data, error } = await supabase
+    .from("tournaments")
+    .select(TOURNAMENT_SELECT)
+    .eq("series_id", seriesId)
+    .eq("status", "approved")
+    .order("tournament_date", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as unknown as OfficialTournament[];
+}
+
 // ─── Tournaments ──────────────────────────────────────────────────────────────
 
 const TOURNAMENT_SELECT = `
   *,
   venue_info:venues(id, name, slug, logo_url, address, suburb, city, state, postcode, lat, lng, website),
-  series_info:series(id, name, organiser, organiser_logo_url, banner_url, start_date, end_date, city, state, website_url)
+  series_info:series(id, name, organiser, organiser_logo_url, banner_url, start_date, end_date, city, state, website_url),
+  organiser_info:organisers(id, name, logo_url, website_url, state)
 `.trim();
 
 export async function fetchOfficialTournaments({
@@ -105,7 +127,7 @@ export async function fetchOfficialTournaments({
 
   if (search?.trim()) {
     const q = search.trim();
-    query = query.or(`name.ilike.%${q}%,venue.ilike.%${q}%,city.ilike.%${q}%`);
+    query = query.or(`name.ilike.%${q}%,city.ilike.%${q}%`);
   }
 
   const { data, error } = await query.limit(100);
@@ -136,7 +158,7 @@ export type SubmitTournamentInput = {
   tournament_date: string;
   series_id?: string | null;
   venue_id?: string | null;
-  venue?: string | null;
+  venue_name?: string | null;
   city?: string | null;
   state?: string | null;
   tournament_time?: string | null;
@@ -162,7 +184,7 @@ export async function submitTournamentToDirectory(
       tournament_date:  input.tournament_date,
       series_id:        input.series_id        ?? null,
       venue_id:         input.venue_id         ?? null,
-      venue:            input.venue            ?? null,
+      venue_name:       input.venue_name       ?? null,
       city:             input.city             ?? null,
       state:            input.state            ?? null,
       tournament_time:  input.tournament_time  ?? null,
@@ -195,7 +217,7 @@ export async function updateMyTournament(
   if (input.tournament_date  !== undefined) patch.tournament_date  = input.tournament_date;
   if (input.series_id        !== undefined) patch.series_id        = input.series_id;
   if (input.venue_id         !== undefined) patch.venue_id         = input.venue_id;
-  if (input.venue            !== undefined) patch.venue            = input.venue;
+  if (input.venue_name       !== undefined) patch.venue_name       = input.venue_name;
   if (input.city             !== undefined) patch.city             = input.city;
   if (input.state            !== undefined) patch.state            = input.state;
   if (input.tournament_time  !== undefined) patch.tournament_time  = input.tournament_time;

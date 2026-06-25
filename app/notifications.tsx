@@ -25,6 +25,27 @@ function timeAgo(iso: string): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+function isToday(iso: string): boolean {
+  const d = new Date(iso);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+}
+
+type NotifGroup = { label: string; items: AppNotification[] };
+
+function groupNotifications(notifications: AppNotification[]): NotifGroup[] {
+  const newItems     = notifications.filter((n) => !n.read);
+  const todayItems   = notifications.filter((n) => n.read && isToday(n.created_at));
+  const earlierItems = notifications.filter((n) => n.read && !isToday(n.created_at));
+  const groups: NotifGroup[] = [];
+  if (newItems.length)     groups.push({ label: "New",     items: newItems });
+  if (todayItems.length)   groups.push({ label: "Today",   items: todayItems });
+  if (earlierItems.length) groups.push({ label: "Earlier", items: earlierItems });
+  return groups;
+}
+
 function notifIcon(type: AppNotification["type"]): keyof typeof Ionicons.glyphMap {
   switch (type) {
     case "stake_claim_pending":   return "hand-left-outline";
@@ -137,44 +158,60 @@ export default function NotificationsScreen() {
           contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
           showsVerticalScrollIndicator={false}
         >
-          {notifications.map((n) => (
-            <TouchableOpacity
-              key={n.id}
-              onPress={() => handlePress(n)}
-              activeOpacity={0.7}
-              style={[
-                styles.row,
-                {
-                  backgroundColor: n.read ? colors.bg.primary : `${BRAND}08`,
-                  borderBottomColor: colors.border.subtle,
-                },
-              ]}
-            >
-              {/* Icon / avatar */}
-              <View style={[styles.iconWrap, { backgroundColor: notifIconBg(n.type) }]}>
-                {n.actor?.avatar_url ? (
-                  <Image
-                    source={{ uri: n.actor.avatar_url }}
-                    style={{ width: 44, height: 44, borderRadius: 22 }}
-                    contentFit="cover"
-                  />
-                ) : (
-                  <Ionicons name={notifIcon(n.type)} size={20} color={notifIconColor(n.type)} />
+          {groupNotifications(notifications).map((group) => (
+            <View key={group.label}>
+              {/* Section header */}
+              <View style={[styles.sectionHeader, { borderBottomColor: colors.border.subtle }]}>
+                <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>{group.label}</Text>
+                {group.label === "New" && (
+                  <View style={[styles.newBadge, { backgroundColor: BRAND }]}>
+                    <Text style={styles.newBadgeText}>{group.items.length}</Text>
+                  </View>
                 )}
               </View>
 
-              {/* Content */}
-              <View style={{ flex: 1, gap: 2 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <Text style={[styles.rowTitle, { color: colors.text.primary }]}>{n.title}</Text>
-                  {!n.read && <View style={[styles.unreadDot, { backgroundColor: BRAND }]} />}
-                </View>
-                <Text style={[styles.rowBody, { color: colors.text.secondary }]} numberOfLines={2}>{n.body}</Text>
-                <Text style={[styles.rowTime, { color: colors.text.tertiary }]}>{timeAgo(n.created_at)}</Text>
-              </View>
+              {group.items.map((n) => (
+                <TouchableOpacity
+                  key={n.id}
+                  onPress={() => handlePress(n)}
+                  activeOpacity={0.7}
+                  style={[
+                    styles.row,
+                    {
+                      backgroundColor: !n.read ? `${BRAND}0A` : colors.bg.primary,
+                      borderBottomColor: colors.border.subtle,
+                      borderLeftWidth: !n.read ? 3 : 0,
+                      borderLeftColor: BRAND,
+                    },
+                  ]}
+                >
+                  {/* Icon / avatar */}
+                  <View style={[styles.iconWrap, { backgroundColor: notifIconBg(n.type) }]}>
+                    {n.actor?.avatar_url ? (
+                      <Image
+                        source={{ uri: n.actor.avatar_url }}
+                        style={{ width: 44, height: 44, borderRadius: 22 }}
+                        contentFit="cover"
+                      />
+                    ) : (
+                      <Ionicons name={notifIcon(n.type)} size={20} color={notifIconColor(n.type)} />
+                    )}
+                  </View>
 
-              <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
-            </TouchableOpacity>
+                  {/* Content */}
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Text style={[styles.rowTitle, { color: colors.text.primary, fontWeight: !n.read ? "700" : "600" }]}>{n.title}</Text>
+                      {!n.read && <View style={[styles.unreadDot, { backgroundColor: BRAND }]} />}
+                    </View>
+                    <Text style={[styles.rowBody, { color: colors.text.secondary }]} numberOfLines={2}>{n.body}</Text>
+                    <Text style={[styles.rowTime, { color: colors.text.tertiary }]}>{timeAgo(n.created_at)}</Text>
+                  </View>
+
+                  <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+                </TouchableOpacity>
+              ))}
+            </View>
           ))}
         </ScrollView>
       )}
@@ -233,6 +270,30 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     lineHeight: 20,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  newBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  newBadgeText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
   },
   row: {
     flexDirection: "row",

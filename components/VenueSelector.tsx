@@ -3,9 +3,8 @@ import { VENUES_BY_STATE, VENUE_STATE_MAP } from "@/constants/venues";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { getSetting } from "@/db/database";
 
 const STATES = ["NSW", "VIC", "QLD", "WA", "SA", "ACT"];
 
@@ -31,6 +30,13 @@ export function VenueSelector({ stateRegion, setStateRegion, venue, setVenue }: 
   const { colors, spacing, radius, typography, inputTypo } = usePokerTheme();
   const inputRef = useRef<TextInput>(null);
   const [detecting, setDetecting] = useState(false);
+  const [locationGranted, setLocationGranted] = useState(false);
+
+  useEffect(() => {
+    Location.getForegroundPermissionsAsync()
+      .then(({ status }) => setLocationGranted(status === "granted"))
+      .catch(() => setLocationGranted(false));
+  }, []);
 
   // null    = no chip selected → input disabled, user must pick from chips below
   // "Other" = free-text mode  → input editable + focused
@@ -111,7 +117,7 @@ export function VenueSelector({ stateRegion, setStateRegion, venue, setVenue }: 
       {/* ── STATE CHIPS ── */}
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm }}>
         <Text style={[labelStyle, { marginBottom: 0 }]}>State</Text>
-        {getSetting("locationEnabled") === "true" && (
+        {locationGranted && (
           <TouchableOpacity
             onPress={handleDetectLocation}
             disabled={detecting}

@@ -1,4 +1,7 @@
+import { HandAnalysisModal } from "@/components/HandAnalysisModal";
 import { HandReviewLauncher } from "@/components/HandReviewLauncher";
+import { SeriesCarousel } from "@/components/SeriesCarousel";
+import { BACKEND_URL } from "@/constants/config";
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { fetchAppNotifications, getUnreadCount } from "@/lib/appNotifications";
@@ -19,11 +22,14 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getActiveSession,
+  getNoteHistory,
   getSessions,
   getSetting,
   getTournamentEvents,
+  NoteEntry,
   Session,
   TournamentEvent,
+  updateNoteEntry,
 } from "../../db/database";
 
 const BRAND = "#155DFC";
@@ -109,7 +115,10 @@ export default function HomeScreen() {
   const [myClaims, setMyClaims]           = useState<MyStakeClaim[]>([]);
   const [upcomingTourneys, setUpcomingTourneys] = useState<TournamentEvent[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [showHandReview, setShowHandReview] = useState(false);
+  const [showHandReview, setShowHandReview]   = useState(false);
+  const [recentNotes, setRecentNotes]         = useState<NoteEntry[]>([]);
+  const [handReviewNote, setHandReviewNote]   = useState<NoteEntry | null>(null);
+  const [improvingId, setImprovingId]         = useState<number | null>(null);
 
   const meta = CURRENCY_META[currency] ?? CURRENCY_META.AUD;
 
@@ -122,6 +131,7 @@ export default function HomeScreen() {
       const todayYMD = new Date().toISOString().split("T")[0];
       const allEvents = getTournamentEvents();
       setUpcomingTourneys(allEvents.filter((e) => e.date >= todayYMD).slice(0, 10));
+      setRecentNotes(getNoteHistory().slice(0, 3));
       const uid = profile?.id;
       if (uid) {
         const localEventIds = new Set(getTournamentEvents().map((e) => e.id));
@@ -148,8 +158,32 @@ export default function HomeScreen() {
       setActiveSession(getActiveSession());
       const todayYMD = new Date().toISOString().split("T")[0];
       setUpcomingTourneys(getTournamentEvents().filter((e) => e.date >= todayYMD).slice(0, 10));
+      setRecentNotes(getNoteHistory().slice(0, 3));
     }
   }, [isSyncing]);
+
+  function refreshNotes() { setRecentNotes(getNoteHistory().slice(0, 3)); }
+
+  async function handleImproveNote(note: NoteEntry) {
+    if (improvingId !== null) return;
+    setImprovingId(note.id);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/compress-hand`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: note.raw_notes }),
+      });
+      const json = await res.json();
+      if (json.compressed) {
+        updateNoteEntry(note.id, { enhancedNotes: json.compressed });
+        refreshNotes();
+      }
+    } catch {
+      // silently fail — user can try again from notes tab
+    } finally {
+      setImprovingId(null);
+    }
+  }
 
   const totalProfit = useMemo(
     () => sessions.reduce((s, x) => s + (x.profit || 0), 0),
@@ -213,7 +247,7 @@ export default function HomeScreen() {
             <View>
               <Text style={styles.topBarGreet}>{getGreeting()}</Text>
               <Text style={styles.topBarName} numberOfLines={1}>
-                {greetingName || "Player"}
+                {greetingName || "Staker"}
               </Text>
             </View>
           </View>
@@ -244,6 +278,17 @@ export default function HomeScreen() {
         {/* ── P&L card ── */}
         <View style={styles.plCardWrap}>
           <View style={[styles.plCard, { backgroundColor: colors.bg.primary, shadowColor: colors.text.primary }]}>
+            {sessions.length === 0 ? (
+              <TouchableOpacity
+                onPress={() => router.push("/add-session")}
+                activeOpacity={0.8}
+                style={{ paddingVertical: 20, paddingHorizontal: 4, alignItems: "center", gap: 6 }}
+              >
+                <Text style={[styles.plLabel, { color: colors.text.tertiary, textAlign: "center" }]}>Your bankroll starts here</Text>
+                <Text style={{ color: BRAND, fontSize: 15, fontWeight: "700" }}>Log your first session →</Text>
+              </TouchableOpacity>
+            ) : (
+            <>
             <View style={styles.plRow}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.plLabel, { color: colors.text.tertiary }]}>Total P&L</Text>
@@ -291,6 +336,8 @@ export default function HomeScreen() {
                 </View>
               ))}
             </View>
+            </>
+            )}
           </View>
         </View>
 
@@ -573,11 +620,15 @@ export default function HomeScreen() {
             </View>
 
             {recentSessions.length === 0 ? (
-              <View style={[styles.emptyCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                <Ionicons name="bar-chart-outline" size={36} color={colors.text.tertiary} />
-                <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No sessions yet</Text>
-                <Text style={[styles.emptyText, { color: colors.text.tertiary }]}>Use the buttons above to start or log a session.</Text>
-              </View>
+              <TouchableOpacity
+                onPress={() => router.push("/add-session")}
+                activeOpacity={0.8}
+                style={[styles.emptyCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}
+              >
+                <Ionicons name="add-circle-outline" size={36} color={BRAND} />
+                <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>Log your first session</Text>
+                <Text style={[styles.emptyText, { color: colors.text.tertiary }]}>Tap to record a result and start tracking your bankroll.</Text>
+              </TouchableOpacity>
             ) : (
               <View style={[styles.listCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
                 {recentSessions.map((item, i) => {
@@ -605,7 +656,7 @@ export default function HomeScreen() {
                       </View>
                       <View style={{ alignItems: "flex-end", gap: 2 }}>
                         <Text style={[styles.sessionProfit, { color: item.profit >= 0 ? "#22C55E" : "#EF4444" }]}>
-                          {item.profit >= 0 ? "+" : ""}{meta.symbol}{Math.abs(item.profit).toLocaleString("en-AU", { minimumFractionDigits: 0 })}
+                          {item.profit >= 0 ? "+" : "-"}{meta.symbol}{Math.abs(item.profit).toLocaleString("en-AU", { minimumFractionDigits: 0 })}
                         </Text>
                         {bbVal !== null && (
                           <Text style={[styles.sessionBB, { color: colors.text.tertiary }]}>
@@ -619,9 +670,98 @@ export default function HomeScreen() {
               </View>
             )}
           </View>
+
+          {/* ── Hand Notes (signed-in users only) ── */}
+          {profile && recentNotes.length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Hand Notes</Text>
+                <TouchableOpacity onPress={() => router.navigate("/(tabs)/notes")}>
+                  <Text style={[styles.seeAll, { color: BRAND }]}>See all</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={[styles.listCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                {recentNotes.map((note, i) => {
+                  const isLast = i === recentNotes.length - 1;
+                  const title = note.title || note.raw_notes?.split("\n")[0]?.slice(0, 60) || "Untitled note";
+                  const preview = (note.enhanced_notes || note.raw_notes || "").replace(/\n+/g, " ").slice(0, 80);
+                  const dateStr = note.session_date ? new Date(note.session_date).toLocaleDateString("en-AU", { day: "numeric", month: "short" }) : "";
+                  const isImproving = improvingId === note.id;
+                  return (
+                    <View
+                      key={note.id}
+                      style={[
+                        styles.noteCard,
+                        !isLast && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
+                      ]}
+                    >
+                      {/* Main row */}
+                      <TouchableOpacity
+                        onPress={() => router.navigate("/(tabs)/notes")}
+                        activeOpacity={0.7}
+                        style={styles.noteRow}
+                      >
+                        <View style={[styles.noteIcon, { backgroundColor: "#6366F1" + "22" }]}>
+                          <Ionicons name="document-text-outline" size={16} color="#6366F1" />
+                        </View>
+                        <View style={{ flex: 1, gap: 2 }}>
+                          <Text style={[styles.noteTitle, { color: colors.text.primary }]} numberOfLines={1}>{title}</Text>
+                          {preview ? (
+                            <Text style={[styles.noteMeta, { color: colors.text.tertiary }]} numberOfLines={2}>{preview}</Text>
+                          ) : null}
+                        </View>
+                        {dateStr ? (
+                          <Text style={[styles.noteDate, { color: colors.text.tertiary }]}>{dateStr}</Text>
+                        ) : null}
+                      </TouchableOpacity>
+
+                      {/* Action buttons */}
+                      <View style={[styles.noteActions, { borderTopColor: colors.border.subtle }]}>
+                        <TouchableOpacity
+                          onPress={() => handleImproveNote(note)}
+                          disabled={isImproving}
+                          activeOpacity={0.7}
+                          style={styles.noteActionBtn}
+                        >
+                          {isImproving ? (
+                            <ActivityIndicator size="small" color="#6366F1" />
+                          ) : (
+                            <Ionicons name="sparkles-outline" size={14} color="#6366F1" />
+                          )}
+                          <Text style={[styles.noteActionText, { color: "#6366F1" }]}>
+                            {isImproving ? "Improving…" : "Improve"}
+                          </Text>
+                        </TouchableOpacity>
+                        <View style={[styles.noteActionDivider, { backgroundColor: colors.border.subtle }]} />
+                        <TouchableOpacity
+                          onPress={() => setHandReviewNote(note)}
+                          activeOpacity={0.7}
+                          style={styles.noteActionBtn}
+                        >
+                          <Ionicons name="analytics-outline" size={14} color={BRAND} />
+                          <Text style={[styles.noteActionText, { color: BRAND }]}>Review with AI</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          {/* ── Series promotional banners ── */}
+          <SeriesCarousel />
         </View>
       </ScrollView>
 
+      <HandAnalysisModal
+        visible={!!handReviewNote}
+        notes={handReviewNote ? (handReviewNote.enhanced_notes ?? handReviewNote.raw_notes) : ""}
+        noteId={handReviewNote?.id}
+        savedAnalysis={handReviewNote?.hand_analysis}
+        onClose={() => setHandReviewNote(null)}
+        onSaved={refreshNotes}
+      />
       <HandReviewLauncher visible={showHandReview} onClose={() => setShowHandReview(false)} />
     </View>
   );
@@ -923,6 +1063,53 @@ const styles = StyleSheet.create({
   },
   sessionBB: {
     fontSize: 11,
+  },
+
+  // Note rows
+  noteCard: {},
+  noteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 14,
+  },
+  noteIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  noteTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  noteMeta: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  noteDate: {
+    fontSize: 11,
+    fontWeight: "500",
+  },
+  noteActions: {
+    flexDirection: "row",
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  noteActionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 10,
+  },
+  noteActionDivider: {
+    width: StyleSheet.hairlineWidth,
+  },
+  noteActionText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
 
   // Stakes section

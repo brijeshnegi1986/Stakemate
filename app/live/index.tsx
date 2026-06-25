@@ -1,5 +1,5 @@
 import { SegmentedControl } from "@/components/SegmentedControl";
-import { BuyInSheet, FieldRow, StakesSheet, VenueSheet } from "@/components/SessionPickers";
+import { BuyInSheet, FieldRow, StakesSheet, StateSheet, VenueSheet } from "@/components/SessionPickers";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
@@ -15,6 +15,7 @@ import {
   View,
 } from "react-native";
 
+import { detectStateFromLocation } from "@/lib/locationState";
 import { getSetting, SessionType, startLiveSession, startLiveTournament } from "../../db/database";
 
 function getAvailableTypes(): SessionType[] {
@@ -39,14 +40,18 @@ export default function StartSessionScreen() {
   const [tournamentName, setTournamentName] = useState("");
   const [entries, setEntries]               = useState("");
 
-  const [buyInOpen,  setBuyInOpen]  = useState(false);
-  const [stakesOpen, setStakesOpen] = useState(false);
-  const [venueOpen,  setVenueOpen]  = useState(false);
+  const [buyInOpen,   setBuyInOpen]   = useState(false);
+  const [stakesOpen,  setStakesOpen]  = useState(false);
+  const [stateOpen,   setStateOpen]   = useState(false);
+  const [venueOpen,   setVenueOpen]   = useState(false);
 
   const enterAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.spring(enterAnim, { toValue: 1, useNativeDriver: true, tension: 65, friction: 10 }).start();
+    detectStateFromLocation().then((state) => {
+      if (state) setStateRegion(state);
+    });
   }, []);
 
   const isReady = type === "cash"
@@ -177,9 +182,17 @@ export default function StartSessionScreen() {
               />
             )}
             <FieldRow
+              icon="map-outline"
+              label="State"
+              value={stateRegion}
+              placeholder="Choose state"
+              onPress={() => setStateOpen(true)}
+              colors={colors}
+            />
+            <FieldRow
               icon="location-outline"
               label="Venue"
-              value={venue || (stateRegion ? stateRegion : "")}
+              value={venue}
               placeholder="Choose venue"
               onPress={() => setVenueOpen(true)}
               colors={colors}
@@ -210,8 +223,9 @@ export default function StartSessionScreen() {
             </>
           )}
 
-          <BuyInSheet visible={buyInOpen} value={buyIn} onChange={setBuyIn} onClose={() => setBuyInOpen(false)} />
-          <StakesSheet visible={stakesOpen} value={stakes} onChange={setStakes} onClose={() => setStakesOpen(false)} />
+          <BuyInSheet  visible={buyInOpen}  value={buyIn}       onChange={setBuyIn}        onClose={() => setBuyInOpen(false)}  />
+          <StakesSheet visible={stakesOpen} value={stakes}      onChange={setStakes}       onClose={() => setStakesOpen(false)} />
+          <StateSheet  visible={stateOpen}  value={stateRegion} onChange={setStateRegion}  onClose={() => setStateOpen(false)}  />
           <VenueSheet
             visible={venueOpen}
             venue={venue}
@@ -219,6 +233,7 @@ export default function StartSessionScreen() {
             onChangeVenue={setVenue}
             onChangeState={setStateRegion}
             onClose={() => setVenueOpen(false)}
+            hideStateChips
           />
         </ScrollView>
 

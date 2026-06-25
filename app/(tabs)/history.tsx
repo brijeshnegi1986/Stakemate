@@ -601,7 +601,7 @@ export default function StatsScreen() {
 
                       <View style={styles.sessionRight}>
                         <Text style={[styles.sessionProfit, { color: item.profit >= 0 ? GREEN : RED }]}>
-                          {item.profit >= 0 ? "+" : ""}{meta.symbol}
+                          {item.profit >= 0 ? "+" : "-"}{meta.symbol}
                           {Math.abs(item.profit).toLocaleString("en-AU", { minimumFractionDigits: 0 })}
                         </Text>
                         {bbVal !== null ? (

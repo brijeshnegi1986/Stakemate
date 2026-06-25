@@ -29,7 +29,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Calendar from "expo-calendar";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -195,6 +195,7 @@ export default function CalendarScreen() {
   const insets = useSafeAreaInsets();
   const { user, profile, isSyncing } = useAuth();
   const { isPro, isElite } = useSubscription();
+  const { openSeries } = useLocalSearchParams<{ openSeries?: string }>();
 
   const today = new Date();
   const [calTab, setCalTab]                     = useState<CalTab>("schedule");
@@ -204,7 +205,6 @@ export default function CalendarScreen() {
   const [events, setEvents]                     = useState<TournamentEvent[]>([]);
   const [shareEvent, setShareEvent]             = useState<TournamentEvent | null>(null);
   const [stakeEvent, setStakeEvent]             = useState<TournamentEvent | null>(null);
-  const [showSettings, setShowSettings]         = useState(false);
   const [showPaywall, setShowPaywall]           = useState(false);
   const [showPublish, setShowPublish]           = useState(false);
   const [communityTournaments, setCommunityTournaments] = useState<SocialPost[]>([]);
@@ -220,8 +220,13 @@ export default function CalendarScreen() {
   const [searchQuery, setSearchQuery]           = useState("");
   const [showStateFilter, setShowStateFilter]   = useState(false);
   const [selectedSeries, setSelectedSeries]     = useState<string | null>(null);
+
+  // Auto-open series modal when navigated from the home screen carousel
+  useEffect(() => {
+    if (openSeries) setSelectedSeries(openSeries);
+  }, [openSeries]);
   const [scheduleView, setScheduleView]         = useState<"list" | "month">("list");
-  const [hidePastEvents, setHidePastEvents]     = useState(false);
+  const [hidePastEvents, setHidePastEvents]     = useState(() => getSetting("hidePastEvents") === "true");
   const [calAccessGranted, setCalAccessGranted] = useState<boolean | null>(null);
 
   // ── Header hide-on-scroll (Facebook style) ───────────────────────────────
@@ -315,6 +320,7 @@ export default function CalendarScreen() {
   useFocusEffect(
     useCallback(() => {
       setEvents(getTournamentEvents());
+      setHidePastEvents(getSetting("hidePastEvents") === "true");
       (async () => {
         try {
           const r = await Calendar.getCalendarPermissions();
@@ -436,7 +442,7 @@ export default function CalendarScreen() {
           imageUrl: tournaments[0].series_info?.banner_url ?? null,
           dateFrom: tournaments[0].tournament_date,
           dateTo: tournaments[tournaments.length - 1].tournament_date,
-          venue: tournaments[0].venue ?? "",
+          venue: tournaments[0].venue_info?.name ?? tournaments[0].venue_name ?? "",
           city: tournaments[0].city ?? "",
           venueLogoUrl: tournaments[0].venue_info?.logo_url ?? null,
           venueWebsite: tournaments[0].venue_info?.website ?? null,
@@ -606,14 +612,6 @@ export default function CalendarScreen() {
                   <Text style={styles.addHeaderBtnText}>Publish</Text>
                 </TouchableOpacity>
               )}
-              <TouchableOpacity
-                onPress={() => setShowSettings(true)}
-                style={[styles.iconBtn, { backgroundColor: "rgba(255,255,255,0.2)" }]}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="settings-outline" size={18} color="#fff" />
-              </TouchableOpacity>
             </View>
           </View>
 
@@ -1081,21 +1079,8 @@ export default function CalendarScreen() {
         </View>
       </Modal>
 
-      {/* ── Calendar Settings — full-screen modal ── */}
-      <CalendarSettingsModal
-        visible={showSettings}
-        onClose={() => setShowSettings(false)}
-        isPro={isPro}
-        calAccessGranted={calAccessGranted}
-        hidePastEvents={hidePastEvents}
-        onHidePastEventsChange={setHidePastEvents}
-        onRequestCalAccess={handleRequestCalAccess}
-        onOpenPaywall={() => { setShowSettings(false); setShowPaywall(true); }}
-        insets={insets}
-        colors={colors}
-      />
 
-      {/* ── Share Tournament Modal ── */}
+{/* ── Share Tournament Modal ── */}
       {shareEvent && (
         <ShareTournamentModal
           event={shareEvent}
@@ -1195,116 +1180,6 @@ export default function CalendarScreen() {
 
       </Animated.View>{/* end scrollable content */}
     </View>
-  );
-}
-
-// ─── Calendar Settings Modal ──────────────────────────────────────────────────
-
-function CalendarSettingsModal({
-  visible, onClose, isPro, calAccessGranted, hidePastEvents,
-  onHidePastEventsChange, onRequestCalAccess, onOpenPaywall, insets, colors,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  isPro: boolean;
-  calAccessGranted: boolean | null;
-  hidePastEvents: boolean;
-  onHidePastEventsChange: (v: boolean) => void;
-  onRequestCalAccess: () => void;
-  onOpenPaywall: () => void;
-  insets: any;
-  colors: any;
-}) {
-  return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={[stStyles.page, { backgroundColor: colors.bg.tertiary }]}>
-
-        {/* Nav header */}
-        <View style={[stStyles.navHeader, { paddingTop: 16, backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={stStyles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
-          </TouchableOpacity>
-          <Text style={[stStyles.navTitle, { color: colors.text.primary }]}>Calendar Settings</Text>
-          <View style={{ width: 38 }} />
-        </View>
-
-        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 32 }} showsVerticalScrollIndicator={false}>
-
-          {/* ── Section: Device Calendar ── */}
-          <Text style={[stStyles.sectionLabel, { color: colors.text.tertiary }]}>DEVICE CALENDAR</Text>
-
-          <View style={[stStyles.settingCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-            <View style={[stStyles.settingIconWrap, { backgroundColor: "#22C55E15" }]}>
-              <Ionicons name="calendar" size={18} color="#22C55E" />
-            </View>
-            <View style={{ flex: 1, gap: 3 }}>
-              <Text style={[stStyles.settingLabel, { color: colors.text.primary }]}>Calendar Access</Text>
-              <Text style={[stStyles.settingSub, { color: colors.text.tertiary }]}>
-                {calAccessGranted === true
-                  ? "Stakemate can read/write your calendar"
-                  : calAccessGranted === false
-                    ? "Tap to request access"
-                    : "Checking permission…"}
-              </Text>
-            </View>
-            <Switch
-              value={calAccessGranted === true}
-              onValueChange={(val) => {
-                if (val) {
-                  onRequestCalAccess();
-                } else {
-                  Alert.alert("Disable Calendar Access", "To revoke access, go to your device Settings → Privacy → Calendars.");
-                }
-              }}
-              trackColor={{ false: colors.border.default, true: "#22C55E55" }}
-              thumbColor={calAccessGranted ? "#22C55E" : colors.text.tertiary}
-            />
-          </View>
-
-          {/* ── Section: Display ── */}
-          <Text style={[stStyles.sectionLabel, { color: colors.text.tertiary, marginTop: 24 }]}>DISPLAY</Text>
-
-          <View style={[stStyles.settingCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-            <View style={[stStyles.settingIconWrap, { backgroundColor: "#F9731615" }]}>
-              <Ionicons name="eye-off-outline" size={18} color="#F97316" />
-            </View>
-            <View style={{ flex: 1, gap: 3 }}>
-              <Text style={[stStyles.settingLabel, { color: colors.text.primary }]}>Hide Past Events</Text>
-              <Text style={[stStyles.settingSub, { color: colors.text.tertiary }]}>
-                Only show upcoming tournaments in My Schedule
-              </Text>
-            </View>
-            <Switch
-              value={hidePastEvents}
-              onValueChange={onHidePastEventsChange}
-              trackColor={{ false: colors.border.default, true: `${BRAND}55` }}
-              thumbColor={hidePastEvents ? BRAND : colors.text.tertiary}
-            />
-          </View>
-
-          {/* ── Upgrade button (matches More page style) ── */}
-          {!isPro && (
-            <TouchableOpacity
-              onPress={onOpenPaywall}
-              activeOpacity={0.88}
-              style={[stStyles.upgradeBtn, { backgroundColor: colors.bg.brand }]}
-            >
-              <Ionicons name="trophy-outline" size={20} color="#fff" />
-              <Text style={stStyles.upgradeBtnText}>Upgrade to Pro / Elite</Text>
-              <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.7)" />
-            </TouchableOpacity>
-          )}
-
-          {isPro && (
-            <View style={[stStyles.proBanner, { backgroundColor: BRAND + "10", borderColor: BRAND + "30" }]}>
-              <Ionicons name="checkmark-circle" size={20} color={BRAND} />
-              <Text style={[stStyles.proBannerText, { color: colors.text.primary }]}>You're on Pro — all features unlocked</Text>
-            </View>
-          )}
-
-        </ScrollView>
-      </View>
-    </Modal>
   );
 }
 
@@ -1625,7 +1500,7 @@ function PendingSubmissionCard({
       const lines = [
         `🏆 ${tournament.name}`,
         tournament.series_info?.name ? `Part of ${tournament.series_info.name}` : null,
-        `📍 ${tournament.venue}${tournament.city ? `, ${tournament.city}` : ""}`,
+        `📍 ${tournament.venue_info?.name ?? tournament.venue_name ?? ""}${tournament.city ? `, ${tournament.city}` : ""}`,
         `📅 ${new Date(tournament.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "long" })}${tournament.tournament_time ? ` · ${fmt12h(tournament.tournament_time)}` : ""}`,
         tournament.buy_in ? `💰 Buy-in: $${tournament.buy_in}${tournament.guarantee ? ` · GTD $${tournament.guarantee.toLocaleString()}` : ""}` : null,
         "Just submitted this to the Stakemate tournament directory! 🃏",
@@ -1635,7 +1510,7 @@ function PendingSubmissionCard({
         user_id: userId,
         session_type: "tournament",
         session_name: tournament.name,
-        venue: tournament.venue,
+        venue: tournament.venue_info?.name ?? tournament.venue_name ?? null,
         content: lines,
         visibility,
       });
@@ -1681,7 +1556,7 @@ function PendingSubmissionCard({
           <View style={styles.officialDetailItem}>
             <Ionicons name="location-outline" size={13} color={colors.text.tertiary} />
             <Text style={[styles.officialDetailText, { color: colors.text.secondary }]} numberOfLines={1}>
-              {tournament.venue}{tournament.city ? `, ${tournament.city}` : ""}
+              {tournament.venue_info?.name ?? tournament.venue_name ?? ""}{tournament.city ? `, ${tournament.city}` : ""}
             </Text>
           </View>
         </View>
@@ -1877,7 +1752,7 @@ function EditSubmissionModal({
   const [saving, setSaving] = useState(false);
   const [name,    setName]    = useState(tournament.name);
   const [date,    setDate]    = useState(tournament.tournament_date);
-  const [venue,   setVenue]   = useState(tournament.venue ?? "");
+  const [venue,   setVenue]   = useState(tournament.venue_info?.name ?? tournament.venue_name ?? "");
   const [city,    setCity]    = useState(tournament.city ?? "");
   const [iState,  setIState]  = useState(tournament.state ?? "");
   const [buyIn,   setBuyIn]   = useState(tournament.buy_in != null ? String(tournament.buy_in) : "");
@@ -1912,8 +1787,9 @@ function EditSubmissionModal({
       const updated = await updateMyTournament(tournament.id, {
         userId,
         name: name.trim(), tournament_date: date,
-        venue: venue.trim(), city: city.trim(), state: iState,
+        city: city.trim(), state: iState,
         venue_id: venueId,
+        venue_name: !venueId && venue.trim() ? venue.trim() : null,
         buy_in: parseMoney(buyIn), guarantee: parseMoney(guarantee),
         tournament_time: time.trim() || null,
         format: format.trim() || null, website_url: website.trim() || null,
@@ -2329,8 +2205,9 @@ function PublishTournamentModal({
           submitTournamentToDirectory({
             userId, type: tournType,
             name: name.trim(), tournament_date: d,
-            venue: venue.trim(), city: city.trim(), state: iState,
+            city: city.trim(), state: iState,
             venue_id: venueId,
+            venue_name: !venueId && venue.trim() ? venue.trim() : null,
             buy_in: parseMoney(buyIn), guarantee: parseMoney(guarantee),
             tournament_time: time.trim() || null, late_reg_end: lateReg.trim() || null,
             format: format.trim() || null, website_url: website.trim() || null,
@@ -2355,8 +2232,9 @@ function PublishTournamentModal({
           userId, type: "series",
           name: e.name.trim(),
           tournament_date: e.date,
-          venue: seriesVenue.trim(), city: seriesCity.trim(), state: seriesState,
+          city: seriesCity.trim(), state: seriesState,
           venue_id: seriesVenueId,
+          venue_name: !seriesVenueId && seriesVenue.trim() ? seriesVenue.trim() : null,
           series_id: pickedSeriesId,
           buy_in: parseMoney(e.buyIn), guarantee: parseMoney(e.guarantee),
           tournament_time: e.time.trim() || null, late_reg_end: e.lateReg.trim() || null,
@@ -3367,7 +3245,7 @@ function OfficialTournamentCard({
     const eventId = addTournamentEvent({
       name:      tournament.name,
       date:      tournament.tournament_date,
-      venue:     [tournament.venue, tournament.city].filter(Boolean).join(", "),
+      venue:     [tournament.venue_info?.name, tournament.city].filter(Boolean).join(", "),
       buyin:     tournament.buy_in != null ? `$${tournament.buy_in.toLocaleString()}` : "",
       notes:     [
         tournament.format,
@@ -3385,42 +3263,66 @@ function OfficialTournamentCard({
 
   const bannerUrl = tournament.series_info?.banner_url ?? tournament.banner_url ?? null;
   const hasBanner = !!bannerUrl && !hideBanner;
-  const logoUrl = tournament.series_info?.organiser_logo_url ?? tournament.venue_info?.logo_url ?? null;
+
+  // Organiser logo: series organiser > standalone organiser
+  const organiserLogoUrl = tournament.series_info?.organiser_logo_url ?? tournament.organiser_info?.logo_url ?? null;
+  const organiserName    = tournament.series_info?.organiser ?? tournament.organiser_info?.name ?? null;
+  // Venue logo always from venue_info
+  const venueLogoUrl     = tournament.venue_info?.logo_url ?? null;
+  // For the banner overlay badge: show organiser logo if available, else venue
+  const bannerBadgeUrl   = organiserLogoUrl ?? venueLogoUrl;
 
   return (
     <>
     <View style={[styles.officialCard, { backgroundColor: colors.bg.primary, borderColor: starred ? STAR_COLOR + "60" : colors.border.default }]}>
-      {/* Full-width banner image with optional venue/organiser logo badge */}
+      {/* Full-width banner image with logo badges */}
       {hasBanner && (
         <View style={{ position: "relative" }}>
           <Image source={{ uri: bannerUrl! }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
-          {logoUrl && (
-            <View style={{ position: "absolute", bottom: -16, left: 14, width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg.primary, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3, overflow: "hidden" }}>
-              <Image source={{ uri: logoUrl }} style={{ width: 34, height: 34 }} resizeMode="contain" />
+          {/* Show both logos overlapping at bottom-left of banner */}
+          {(organiserLogoUrl || venueLogoUrl) && (
+            <View style={{ position: "absolute", bottom: -16, left: 14, flexDirection: "row" }}>
+              {organiserLogoUrl && (
+                <View style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg.primary, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3, overflow: "hidden" }}>
+                  <Image source={{ uri: organiserLogoUrl }} style={{ width: 34, height: 34 }} resizeMode="contain" />
+                </View>
+              )}
+              {venueLogoUrl && (
+                <View style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg.primary, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3, overflow: "hidden", marginLeft: organiserLogoUrl ? 6 : 0 }}>
+                  <Image source={{ uri: venueLogoUrl }} style={{ width: 34, height: 34 }} resizeMode="contain" />
+                </View>
+              )}
             </View>
           )}
         </View>
       )}
 
       {/* Name row */}
-      <View style={[styles.officialCardTop, !hasBanner && { paddingTop: 14 }, hasBanner && { paddingTop: logoUrl ? 22 : 12 }]}>
+      <View style={[styles.officialCardTop, !hasBanner && { paddingTop: 14 }, hasBanner && { paddingTop: (organiserLogoUrl || venueLogoUrl) ? 22 : 12 }]}>
         {!hasBanner && (
-          <View style={[styles.seriesLogoPlaceholder, {
-            backgroundColor: (tournament.series_info?.organiser_logo_url || tournament.venue_info?.logo_url) ? colors.bg.secondary : BRAND + "18",
-            overflow: "hidden",
-          }]}>
-            {tournament.series_info?.organiser_logo_url ? (
-              <Image source={{ uri: tournament.series_info.organiser_logo_url }} style={{ width: 36, height: 36 }} resizeMode="contain" />
-            ) : tournament.venue_info?.logo_url ? (
-              <Image source={{ uri: tournament.venue_info.logo_url }} style={{ width: 36, height: 36 }} resizeMode="contain" />
-            ) : (
-              <Ionicons name="trophy" size={18} color={BRAND} />
+          <View style={{ flexDirection: "row", gap: 6 }}>
+            {/* Organiser logo */}
+            <View style={[styles.seriesLogoPlaceholder, {
+              backgroundColor: organiserLogoUrl ? colors.bg.secondary : BRAND + "18",
+              overflow: "hidden",
+            }]}>
+              {organiserLogoUrl ? (
+                <Image source={{ uri: organiserLogoUrl }} style={{ width: 36, height: 36 }} resizeMode="contain" />
+              ) : (
+                <Ionicons name="trophy" size={18} color={BRAND} />
+              )}
+            </View>
+            {/* Venue logo — only show if different from organiser */}
+            {venueLogoUrl && (
+              <View style={[styles.seriesLogoPlaceholder, { backgroundColor: colors.bg.secondary, overflow: "hidden" }]}>
+                <Image source={{ uri: venueLogoUrl }} style={{ width: 36, height: 36 }} resizeMode="contain" />
+              </View>
             )}
           </View>
         )}
         <View style={{ flex: 1 }}>
-          {tournament.series_info?.organiser ? (
-            <Text style={[styles.officialSeries, { color: colors.text.tertiary, fontSize: 11 }]}>{tournament.series_info.organiser.toUpperCase()}</Text>
+          {organiserName ? (
+            <Text style={[styles.officialSeries, { color: colors.text.tertiary, fontSize: 11 }]}>{organiserName.toUpperCase()}</Text>
           ) : null}
           {tournament.series_info?.name ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
@@ -3481,7 +3383,7 @@ function OfficialTournamentCard({
           <Text style={[styles.officialDetailText, { color: tournament.venue_info?.lat ? BRAND : colors.text.secondary }]} numberOfLines={1}>
             {tournament.venue_info?.address
               ? `${tournament.venue_info.address}, ${tournament.city}`
-              : `${tournament.venue}${tournament.city ? `, ${tournament.city}` : ""}`}
+              : `${tournament.venue_info?.name ?? tournament.venue_name ?? ""}${tournament.city ? `, ${tournament.city}` : ""}`}
           </Text>
           {tournament.venue_info?.lat && (
             <Ionicons name="open-outline" size={11} color={BRAND} style={{ marginLeft: 2 }} />
@@ -4609,64 +4511,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
   },
   officialPillText: { fontSize: 11, fontWeight: "600" },
-});
-
-// Settings modal styles
-const stStyles = StyleSheet.create({
-  page: { flex: 1 },
-  navHeader: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  backBtn: { width: 38, alignItems: "flex-start" },
-  navTitle: { fontSize: 17, fontWeight: "700" },
-  sectionLabel: { fontSize: 11, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 },
-  settingCard: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 14, paddingVertical: 14, marginBottom: 8,
-  },
-  settingIconWrap: {
-    width: 40, height: 40, borderRadius: 10,
-    alignItems: "center", justifyContent: "center",
-  },
-  settingLabel: { fontSize: 14, fontWeight: "600" },
-  settingSub: { fontSize: 12, lineHeight: 17 },
-  proBadge: {
-    flexDirection: "row", alignItems: "center", gap: 3,
-    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6,
-  },
-  proBadgeText: { fontSize: 10, fontWeight: "800" },
-  connectedBadge: {
-    flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10,
-  },
-  connectedText: { fontSize: 12, fontWeight: "700" },
-  enableBtn: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
-  },
-  enableBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  upgradeBanner: {
-    borderRadius: 16, borderWidth: 1, padding: 16, marginTop: 24,
-  },
-  upgradeIconWrap: {
-    width: 38, height: 38, borderRadius: 10,
-    alignItems: "center", justifyContent: "center",
-  },
-  upgradeTitle: { fontSize: 15, fontWeight: "700" },
-  upgradeSub: { fontSize: 12 },
-  upgradeBtn: {
-    flexDirection: "row", alignItems: "center",
-    gap: 12, borderRadius: 14,
-    paddingVertical: 16, paddingHorizontal: 18,
-    marginTop: 24, marginBottom: 8,
-  },
-  upgradeBtnText: { flex: 1, color: "#fff", fontSize: 16, fontWeight: "700" },
-  proBanner: {
-    flexDirection: "row", alignItems: "center", gap: 10,
-    borderRadius: 14, borderWidth: 1, padding: 14, marginTop: 24,
-  },
-  proBannerText: { fontSize: 14, fontWeight: "600", flex: 1 },
 });
 
 // Add tournament modal styles
