@@ -8,6 +8,7 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
+  Linking,
   Modal,
   Platform,
   ScrollView,
@@ -15,10 +16,8 @@ import {
   Switch,
   Text,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   clearAllSessions,
   getSessions,
@@ -55,8 +54,6 @@ const THEME_OPTIONS: {
 export default function SettingsScreen() {
   const { colors, spacing, radius, typography } = usePokerTheme();
   const { preference: themePreference, setPreference: setThemePreference } = useThemeContext();
-  const insets = useSafeAreaInsets();
-
   const [defaultStakes, setDefaultStakes] = useState("1/2");
   const [defaultState, setDefaultState]   = useState("NSW");
   const [defaultView, setDefaultView]     = useState("all");
@@ -64,6 +61,7 @@ export default function SettingsScreen() {
   const [currency, setCurrency]           = useState("AUD");
   const [locationGranted, setLocationGranted]   = useState<boolean | null>(null);
   const [calAccessGranted, setCalAccessGranted] = useState<boolean | null>(null);
+  const [calPermStatus, setCalPermStatus]       = useState<string>("undetermined");
   const [hidePastEvents, setHidePastEvents]     = useState(false);
   const [currencyModalVisible, setCurrencyModalVisible] = useState(false);
   const [themeModalVisible, setThemeModalVisible]       = useState(false);
@@ -90,8 +88,8 @@ export default function SettingsScreen() {
       .then(({ status }) => setLocationGranted(status === "granted"))
       .catch(() => setLocationGranted(false));
     Calendar.getCalendarPermissionsAsync()
-      .then(({ status }) => setCalAccessGranted(status === "granted"))
-      .catch(() => setCalAccessGranted(false));
+      .then(({ status }) => { setCalAccessGranted(status === "granted"); setCalPermStatus(status); })
+      .catch(() => { setCalAccessGranted(false); setCalPermStatus("denied"); });
   }, []);
 
   const handleCurrencyChange = (c: string) => {
@@ -121,10 +119,31 @@ export default function SettingsScreen() {
   };
 
   const handleRequestCalAccess = async () => {
+    // If already denied, iOS won't show a dialog — go straight to Settings
+    if (calPermStatus === "denied") {
+      Alert.alert(
+        "Calendar Access Required",
+        "Calendar access was previously denied. Open iOS Settings to enable it for Stakemate.",
+        [
+          { text: "Not Now", style: "cancel" },
+          { text: "Open Settings", onPress: () => Linking.openURL("app-settings:") },
+        ]
+      );
+      return;
+    }
+    // First-time request — show the native iOS prompt
     const { status } = await Calendar.requestCalendarPermissionsAsync();
     setCalAccessGranted(status === "granted");
-    if (status !== "granted") {
-      Alert.alert("Calendar Access", "To enable calendar access, go to Settings → Privacy → Calendars and allow Stakemate.");
+    setCalPermStatus(status);
+    if (status === "denied") {
+      Alert.alert(
+        "Calendar Access Denied",
+        "You can enable calendar access in iOS Settings → Stakemate → Calendars.",
+        [
+          { text: "Not Now", style: "cancel" },
+          { text: "Open Settings", onPress: () => Linking.openURL("app-settings:") },
+        ]
+      );
     }
   };
 
@@ -357,7 +376,11 @@ export default function SettingsScreen() {
       <View style={card}>
 
         {/* Calendar Access */}
-        <View style={[styles.settingRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }]}>
+        <TouchableOpacity
+          style={[styles.settingRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }]}
+          onPress={calAccessGranted === true ? undefined : handleRequestCalAccess}
+          activeOpacity={calAccessGranted === true ? 1 : 0.7}
+        >
           <View style={[styles.settingIconWrap, { backgroundColor: "#22C55E15" }]}>
             <Ionicons name="calendar" size={18} color="#22C55E" />
           </View>
@@ -365,25 +388,26 @@ export default function SettingsScreen() {
             <Text style={{ color: colors.text.primary, fontSize: 14, fontWeight: "600" }}>Calendar Access</Text>
             <Text style={{ color: colors.text.tertiary, fontSize: 12, lineHeight: 17 }}>
               {calAccessGranted === true
-                ? "Stakemate can read/write your device calendar"
+                ? "Stakemate can sync tournaments to your device calendar"
                 : calAccessGranted === false
-                  ? "Tap to request access"
+                  ? "Tap to grant access"
                   : "Checking permission…"}
             </Text>
           </View>
-          <Switch
-            value={calAccessGranted === true}
-            onValueChange={(val) => {
-              if (val) {
-                handleRequestCalAccess();
-              } else {
-                Alert.alert("Disable Calendar Access", "To revoke access, go to iOS Settings → Privacy → Calendars.");
-              }
-            }}
-            trackColor={{ false: colors.border.default, true: "#22C55E55" }}
-            thumbColor={calAccessGranted ? "#22C55E" : colors.text.tertiary}
-          />
-        </View>
+          {calAccessGranted === true ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Ionicons name="checkmark-circle" size={18} color="#22C55E" />
+              <Text style={{ fontSize: 12, fontWeight: "600", color: "#22C55E" }}>Granted</Text>
+            </View>
+          ) : calAccessGranted === false ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Ionicons name="lock-closed-outline" size={16} color={colors.text.tertiary} />
+              <Text style={{ fontSize: 12, fontWeight: "600", color: colors.text.tertiary }}>Enable</Text>
+            </View>
+          ) : (
+            <Ionicons name="ellipsis-horizontal" size={16} color={colors.text.tertiary} />
+          )}
+        </TouchableOpacity>
 
         {/* Hide Past Events */}
         <View style={styles.settingRow}>
@@ -393,7 +417,7 @@ export default function SettingsScreen() {
           <View style={{ flex: 1, gap: 3 }}>
             <Text style={{ color: colors.text.primary, fontSize: 14, fontWeight: "600" }}>Hide Past Events</Text>
             <Text style={{ color: colors.text.tertiary, fontSize: 12, lineHeight: 17 }}>
-              Only show upcoming tournaments in My Schedule
+              Only show upcoming tournaments in My Tournaments
             </Text>
           </View>
           <Switch
@@ -462,117 +486,105 @@ export default function SettingsScreen() {
       />
 
       {/* ── CURRENCY MODAL ── */}
-      <Modal visible={currencyModalVisible} transparent animationType="slide" onRequestClose={() => setCurrencyModalVisible(false)}>
-        <TouchableWithoutFeedback onPress={() => setCurrencyModalVisible(false)}>
-          <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}>
-            <TouchableWithoutFeedback>
-              <View style={[styles.sheet, { backgroundColor: colors.bg.primary, paddingBottom: insets.bottom + 24 }]}>
-                <View style={[styles.sheetHandle, { backgroundColor: colors.border.strong }]} />
-                <View style={styles.sheetHeader}>
-                  <Text style={[styles.sheetTitle, { color: colors.text.primary }]}>Select Currency</Text>
-                  <TouchableOpacity onPress={() => setCurrencyModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <View style={[styles.closeBtn, { backgroundColor: colors.bg.secondary }]}><Ionicons name="close" size={16} color={colors.text.secondary} /></View>
+      <Modal visible={currencyModalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setCurrencyModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+          <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+            <TouchableOpacity onPress={() => setCurrencyModalVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
+              <Text style={[styles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={[styles.navTitle, { color: colors.text.primary }]}>Select Currency</Text>
+            <View style={styles.navSide} />
+          </View>
+          <View style={{ backgroundColor: colors.bg.primary, marginTop: 24, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border.default }}>
+            {CURRENCY_OPTIONS.map((opt, i) => {
+              const isSelected = currency === opt.value;
+              return (
+                <View key={opt.value}>
+                  {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.default, marginLeft: 72 }} />}
+                  <TouchableOpacity onPress={() => handleCurrencyChange(opt.value)} activeOpacity={0.7}
+                    style={{ flexDirection: "row", alignItems: "center", paddingVertical: 14, paddingHorizontal: 16, gap: 14 }}>
+                    <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: isSelected ? colors.bg.brandLight : colors.bg.secondary, borderWidth: StyleSheet.hairlineWidth, borderColor: isSelected ? colors.border.brand : colors.border.default, alignItems: "center", justifyContent: "center" }}>
+                      <Text style={{ fontSize: 22 }}>{opt.flag}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{opt.label}</Text>
+                      <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{opt.sublabel}</Text>
+                    </View>
+                    {isSelected && <Ionicons name="checkmark-circle" size={22} color={colors.bg.brand} />}
                   </TouchableOpacity>
                 </View>
-                {CURRENCY_OPTIONS.map((opt, i) => {
-                  const isSelected = currency === opt.value;
-                  return (
-                    <View key={opt.value}>
-                      {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.default, marginVertical: 2 }} />}
-                      <TouchableOpacity onPress={() => handleCurrencyChange(opt.value)} activeOpacity={0.7}
-                        style={{ flexDirection: "row", alignItems: "center", paddingVertical: 14, gap: 14 }}>
-                        <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: isSelected ? colors.bg.brandLight : colors.bg.secondary, borderWidth: StyleSheet.hairlineWidth, borderColor: isSelected ? colors.border.brand : colors.border.default, alignItems: "center", justifyContent: "center" }}>
-                          <Text style={{ fontSize: 22 }}>{opt.flag}</Text>
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{opt.label}</Text>
-                          <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{opt.sublabel}</Text>
-                        </View>
-                        {isSelected && <Ionicons name="checkmark-circle" size={22} color={colors.bg.brand} />}
-                      </TouchableOpacity>
-                    </View>
-                  );
-                })}
-              </View>
-            </TouchableWithoutFeedback>
+              );
+            })}
           </View>
-        </TouchableWithoutFeedback>
+        </View>
       </Modal>
 
       {/* ── THEME MODAL ── */}
-      <Modal visible={themeModalVisible} transparent animationType="slide" onRequestClose={() => setThemeModalVisible(false)}>
-        <TouchableWithoutFeedback onPress={() => setThemeModalVisible(false)}>
-          <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}>
-            <TouchableWithoutFeedback>
-              <View style={[styles.sheet, { backgroundColor: colors.bg.primary, paddingBottom: insets.bottom + 24 }]}>
-                <View style={[styles.sheetHandle, { backgroundColor: colors.border.strong }]} />
-                <View style={styles.sheetHeader}>
-                  <Text style={[styles.sheetTitle, { color: colors.text.primary }]}>Select Theme</Text>
-                  <TouchableOpacity onPress={() => setThemeModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <View style={[styles.closeBtn, { backgroundColor: colors.bg.secondary }]}><Ionicons name="close" size={16} color={colors.text.secondary} /></View>
+      <Modal visible={themeModalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setThemeModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+          <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+            <TouchableOpacity onPress={() => setThemeModalVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
+              <Text style={[styles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={[styles.navTitle, { color: colors.text.primary }]}>Select Theme</Text>
+            <View style={styles.navSide} />
+          </View>
+          <View style={{ backgroundColor: colors.bg.primary, marginTop: 24, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border.default }}>
+            {THEME_OPTIONS.map((opt, i) => {
+              const isSelected = themePreference === opt.value;
+              return (
+                <View key={opt.value}>
+                  {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.default, marginLeft: 72 }} />}
+                  <TouchableOpacity onPress={() => { setThemePreference(opt.value); setThemeModalVisible(false); }} activeOpacity={0.7}
+                    style={{ flexDirection: "row", alignItems: "center", paddingVertical: 14, paddingHorizontal: 16, gap: 14 }}>
+                    <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: isSelected ? colors.bg.brandLight : colors.bg.secondary, borderWidth: StyleSheet.hairlineWidth, borderColor: isSelected ? colors.border.brand : colors.border.default, alignItems: "center", justifyContent: "center" }}>
+                      <MaterialCommunityIcons name={opt.icon} size={22} color={isSelected ? colors.text.brand : colors.text.secondary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{opt.label}</Text>
+                      <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{opt.sublabel}</Text>
+                    </View>
+                    {isSelected && <Ionicons name="checkmark-circle" size={22} color={colors.bg.brand} />}
                   </TouchableOpacity>
                 </View>
-                {THEME_OPTIONS.map((opt, i) => {
-                  const isSelected = themePreference === opt.value;
-                  return (
-                    <View key={opt.value}>
-                      {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.default, marginVertical: 2 }} />}
-                      <TouchableOpacity onPress={() => { setThemePreference(opt.value); setThemeModalVisible(false); }} activeOpacity={0.7}
-                        style={{ flexDirection: "row", alignItems: "center", paddingVertical: 14, gap: 14 }}>
-                        <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: isSelected ? colors.bg.brandLight : colors.bg.secondary, borderWidth: StyleSheet.hairlineWidth, borderColor: isSelected ? colors.border.brand : colors.border.default, alignItems: "center", justifyContent: "center" }}>
-                          <MaterialCommunityIcons name={opt.icon} size={22} color={isSelected ? colors.text.brand : colors.text.secondary} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{opt.label}</Text>
-                          <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{opt.sublabel}</Text>
-                        </View>
-                        {isSelected && <Ionicons name="checkmark-circle" size={22} color={colors.bg.brand} />}
-                      </TouchableOpacity>
-                    </View>
-                  );
-                })}
-              </View>
-            </TouchableWithoutFeedback>
+              );
+            })}
           </View>
-        </TouchableWithoutFeedback>
+        </View>
       </Modal>
 
       {/* ── VIEW MODAL ── */}
-      <Modal visible={viewModalVisible} transparent animationType="slide" onRequestClose={() => setViewModalVisible(false)}>
-        <TouchableWithoutFeedback onPress={() => setViewModalVisible(false)}>
-          <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}>
-            <TouchableWithoutFeedback>
-              <View style={[styles.sheet, { backgroundColor: colors.bg.primary, paddingBottom: insets.bottom + 24 }]}>
-                <View style={[styles.sheetHandle, { backgroundColor: colors.border.strong }]} />
-                <View style={styles.sheetHeader}>
-                  <Text style={[styles.sheetTitle, { color: colors.text.primary }]}>Default Dashboard View</Text>
-                  <TouchableOpacity onPress={() => setViewModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <View style={[styles.closeBtn, { backgroundColor: colors.bg.secondary }]}><Ionicons name="close" size={16} color={colors.text.secondary} /></View>
+      <Modal visible={viewModalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setViewModalVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+          <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+            <TouchableOpacity onPress={() => setViewModalVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
+              <Text style={[styles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={[styles.navTitle, { color: colors.text.primary }]}>Default Dashboard View</Text>
+            <View style={styles.navSide} />
+          </View>
+          <View style={{ backgroundColor: colors.bg.primary, marginTop: 24, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border.default }}>
+            {VIEW_OPTIONS.map((opt, i) => {
+              const isSelected = defaultView === opt.value;
+              return (
+                <View key={opt.value}>
+                  {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.default, marginLeft: 72 }} />}
+                  <TouchableOpacity onPress={() => { handleViewChange(opt.value); setViewModalVisible(false); }} activeOpacity={0.7}
+                    style={{ flexDirection: "row", alignItems: "center", paddingVertical: 14, paddingHorizontal: 16, gap: 14 }}>
+                    <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: isSelected ? colors.bg.brandLight : colors.bg.secondary, borderWidth: StyleSheet.hairlineWidth, borderColor: isSelected ? colors.border.brand : colors.border.default, alignItems: "center", justifyContent: "center" }}>
+                      <Ionicons name={opt.icon} size={20} color={isSelected ? colors.text.brand : colors.text.secondary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{opt.label}</Text>
+                      <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{opt.sublabel}</Text>
+                    </View>
+                    {isSelected && <Ionicons name="checkmark-circle" size={22} color={colors.bg.brand} />}
                   </TouchableOpacity>
                 </View>
-                {VIEW_OPTIONS.map((opt, i) => {
-                  const isSelected = defaultView === opt.value;
-                  return (
-                    <View key={opt.value}>
-                      {i > 0 && <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.default, marginVertical: 2 }} />}
-                      <TouchableOpacity onPress={() => { handleViewChange(opt.value); setViewModalVisible(false); }} activeOpacity={0.7}
-                        style={{ flexDirection: "row", alignItems: "center", paddingVertical: 14, gap: 14 }}>
-                        <View style={{ width: 44, height: 44, borderRadius: 10, backgroundColor: isSelected ? colors.bg.brandLight : colors.bg.secondary, borderWidth: StyleSheet.hairlineWidth, borderColor: isSelected ? colors.border.brand : colors.border.default, alignItems: "center", justifyContent: "center" }}>
-                          <Ionicons name={opt.icon} size={20} color={isSelected ? colors.text.brand : colors.text.secondary} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ color: colors.text.primary, fontSize: 15, fontWeight: "600" }}>{opt.label}</Text>
-                          <Text style={{ color: colors.text.tertiary, fontSize: 13, marginTop: 1 }}>{opt.sublabel}</Text>
-                        </View>
-                        {isSelected && <Ionicons name="checkmark-circle" size={22} color={colors.bg.brand} />}
-                      </TouchableOpacity>
-                    </View>
-                  );
-                })}
-              </View>
-            </TouchableWithoutFeedback>
+              );
+            })}
           </View>
-        </TouchableWithoutFeedback>
+        </View>
       </Modal>
 
       {/* ── APP ── */}
@@ -607,36 +619,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
-  sheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-  },
-  sheetHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    alignSelf: "center",
-    marginBottom: 16,
-  },
-  sheetHeader: {
+  navHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 20,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  sheetTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  closeBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  navSide:   { width: 72 },
+  navTitle:  { fontSize: 17, fontWeight: "700" },
+  navCancel: { fontSize: 16 },
   settingRow: {
     flexDirection: "row",
     alignItems: "center",

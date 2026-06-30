@@ -8,6 +8,7 @@ import { createPost } from "@/lib/social";
 import { syncNoteToCloud, deleteNoteFromCloud } from "@/lib/sync";
 import { useAuth } from "@/context/AuthContext";
 import { HandAnalysisModal } from "@/components/HandAnalysisModal";
+import { SignInSheet } from "@/components/SignInSheet";
 import { CardText } from "@/components/CardText";
 import { CardRow } from "@/components/PlayingCard";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
@@ -15,7 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator, Alert, Animated, KeyboardAvoidingView, Modal,
@@ -144,6 +145,10 @@ export function NoteEditorModal({
 
   async function handleCompress() {
     if (!body.trim()) return;
+    if (!user) {
+      Alert.alert("Sign in required", "Sign in to use AI features.");
+      return;
+    }
     setCompressing(true);
     setCompressedPreview(null);
     try {
@@ -184,7 +189,7 @@ export function NoteEditorModal({
   }
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={{ flex: 1, backgroundColor: colors.bg.primary }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -192,7 +197,7 @@ export function NoteEditorModal({
         {/* Header */}
         <View style={{
           flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-          paddingHorizontal: 16, paddingTop: insets.top + 12, paddingBottom: 14,
+          paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14,
           borderBottomWidth: 1, borderColor: colors.border.default,
         }}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
@@ -388,7 +393,6 @@ function ShareNoteModal({
   colors: any;
   userId: string | undefined;
 }) {
-  const insets = useSafeAreaInsets();
   const [caption,     setCaption]     = useState("");
   const [friendsOnly, setFriendsOnly] = useState(false);
   const [posting,     setPosting]     = useState(false);
@@ -438,121 +442,93 @@ function ShareNoteModal({
   const preview = (entry.title || noteDisplayText(entry)).slice(0, 80);
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <View style={[shareStyles.sheet, { backgroundColor: colors.bg.primary, paddingBottom: insets.bottom + 20 }]}>
-            {/* Handle */}
-            <View style={[shareStyles.handle, { backgroundColor: colors.border.default }]} />
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+        {/* iOS nav header */}
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary }}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 72 }}>
+            <Text style={{ fontSize: 16, color: colors.text.secondary }}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={{ fontSize: 17, fontWeight: "700", color: colors.text.primary }}>Share Hand Note</Text>
+          <View style={{ width: 72 }} />
+        </View>
 
-            {/* Header */}
-            <View style={shareStyles.headerRow}>
-              <Text style={[shareStyles.title, { color: colors.text.primary }]}>Share Hand Note</Text>
-              <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <View style={[shareStyles.closeBtn, { backgroundColor: colors.bg.secondary }]}>
-                  <Ionicons name="close" size={16} color={colors.text.secondary} />
-                </View>
-              </TouchableOpacity>
+        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+          {/* Note preview chip */}
+          <View style={[shareStyles.preview, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, marginBottom: 16 }]}>
+            <View style={[shareStyles.previewIcon, { backgroundColor: `${BRAND}14` }]}>
+              <Ionicons name="document-text-outline" size={16} color={BRAND} />
             </View>
-
-            {/* Note preview chip */}
-            <View style={[shareStyles.preview, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
-              <View style={[shareStyles.previewIcon, { backgroundColor: `${BRAND}14` }]}>
-                <Ionicons name="document-text-outline" size={16} color={BRAND} />
-              </View>
-              <Text style={[shareStyles.previewText, { color: colors.text.secondary }]} numberOfLines={2}>
-                {preview}
-              </Text>
-            </View>
-
-            {/* Caption */}
-            <TextInput
-              value={caption}
-              onChangeText={setCaption}
-              placeholder="Add a caption… (optional)"
-              placeholderTextColor={colors.text.disabled}
-              multiline
-              maxLength={200}
-              style={[shareStyles.captionInput, {
-                backgroundColor: colors.bg.secondary,
-                color: colors.text.primary,
-                borderColor: colors.border.default,
-              }]}
-            />
-
-            {/* Friends-only toggle */}
-            <View style={[shareStyles.toggleRow, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary }]}>
-              <View style={{ flex: 1, gap: 2 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  <Ionicons name="people-outline" size={16} color={friendsOnly ? BRAND : colors.text.secondary} />
-                  <Text style={[shareStyles.toggleLabel, { color: colors.text.primary }]}>Followers only</Text>
-                </View>
-                <Text style={[shareStyles.toggleSub, { color: colors.text.tertiary }]}>
-                  {friendsOnly ? "Only your followers will see this post" : "Visible to everyone on the community feed"}
-                </Text>
-              </View>
-              <Switch
-                value={friendsOnly}
-                onValueChange={setFriendsOnly}
-                trackColor={{ false: colors.border.default, true: `${BRAND}55` }}
-                thumbColor={friendsOnly ? BRAND : colors.text.tertiary}
-              />
-            </View>
-
-            {/* Actions */}
-            <TouchableOpacity
-              onPress={handlePostToCommunity}
-              disabled={posting}
-              activeOpacity={0.88}
-              style={[shareStyles.primaryBtn, { backgroundColor: BRAND, opacity: posting ? 0.6 : 1 }]}
-            >
-              {posting
-                ? <ActivityIndicator color="#fff" size="small" />
-                : <Ionicons name={friendsOnly ? "people" : "earth"} size={17} color="#fff" />
-              }
-              <Text style={shareStyles.primaryBtnText}>
-                {posting ? "Posting…" : friendsOnly ? "Post to Followers" : "Post to Community"}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={handleShareToFriends}
-              activeOpacity={0.8}
-              style={[shareStyles.secondaryBtn, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary }]}
-            >
-              <Ionicons name="share-outline" size={17} color={colors.text.secondary} />
-              <Text style={[shareStyles.secondaryBtnText, { color: colors.text.secondary }]}>Share via…</Text>
-            </TouchableOpacity>
+            <Text style={[shareStyles.previewText, { color: colors.text.secondary }]} numberOfLines={2}>
+              {preview}
+            </Text>
           </View>
-        </KeyboardAvoidingView>
+
+          {/* Caption */}
+          <TextInput
+            value={caption}
+            onChangeText={setCaption}
+            placeholder="Add a caption… (optional)"
+            placeholderTextColor={colors.text.disabled}
+            multiline
+            maxLength={200}
+            style={[shareStyles.captionInput, {
+              backgroundColor: colors.bg.primary,
+              color: colors.text.primary,
+              borderColor: colors.border.default,
+            }]}
+          />
+
+          {/* Friends-only toggle */}
+          <View style={[shareStyles.toggleRow, { borderColor: colors.border.default, backgroundColor: colors.bg.primary }]}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Ionicons name="people-outline" size={16} color={friendsOnly ? BRAND : colors.text.secondary} />
+                <Text style={[shareStyles.toggleLabel, { color: colors.text.primary }]}>Followers only</Text>
+              </View>
+              <Text style={[shareStyles.toggleSub, { color: colors.text.tertiary }]}>
+                {friendsOnly ? "Only your followers will see this post" : "Visible to everyone on the community feed"}
+              </Text>
+            </View>
+            <Switch
+              value={friendsOnly}
+              onValueChange={setFriendsOnly}
+              trackColor={{ false: colors.border.default, true: `${BRAND}55` }}
+              thumbColor={friendsOnly ? BRAND : colors.text.tertiary}
+            />
+          </View>
+
+          {/* Actions */}
+          <TouchableOpacity
+            onPress={handlePostToCommunity}
+            disabled={posting}
+            activeOpacity={0.88}
+            style={[shareStyles.primaryBtn, { backgroundColor: BRAND, opacity: posting ? 0.6 : 1 }]}
+          >
+            {posting
+              ? <ActivityIndicator color="#fff" size="small" />
+              : <Ionicons name={friendsOnly ? "people" : "earth"} size={17} color="#fff" />
+            }
+            <Text style={shareStyles.primaryBtnText}>
+              {posting ? "Posting…" : friendsOnly ? "Post to Followers" : "Post to Community"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={handleShareToFriends}
+            activeOpacity={0.8}
+            style={[shareStyles.secondaryBtn, { borderColor: colors.border.default, backgroundColor: colors.bg.primary }]}
+          >
+            <Ionicons name="share-outline" size={17} color={colors.text.secondary} />
+            <Text style={[shareStyles.secondaryBtnText, { color: colors.text.secondary }]}>Share via…</Text>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
     </Modal>
   );
 }
 
 const shareStyles = StyleSheet.create({
-  sheet: {
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-  },
-  handle: {
-    width: 40, height: 4, borderRadius: 2,
-    alignSelf: "center", marginBottom: 20,
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 16,
-  },
-  title: { fontSize: 18, fontWeight: "800" },
-  closeBtn: {
-    width: 30, height: 30, borderRadius: 15,
-    alignItems: "center", justifyContent: "center",
-  },
   preview: {
     flexDirection: "row",
     alignItems: "center",
@@ -774,18 +750,26 @@ export default function NotesScreen() {
   const { colors } = usePokerTheme();
   const { user, profile, isSyncing } = useAuth();
   const insets = useSafeAreaInsets();
+  const { new: openNew } = useLocalSearchParams<{ new?: string }>();
   const [notes,    setNotes]    = useState<NoteEntry[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [editorVisible, setEditorVisible] = useState(false);
   const [editTarget,    setEditTarget]    = useState<NoteEntry | null>(null);
+  const [newNoteCounter, setNewNoteCounter] = useState(0);
   const [toast,         setToast]         = useState<string | null>(null);
   const [handReviewEntry, setHandReviewEntry] = useState<NoteEntry | null>(null);
   const [shareEntry,      setShareEntry]      = useState<NoteEntry | null>(null);
+  const [showSignIn,      setShowSignIn]      = useState(false);
 
   useFocusEffect(useCallback(() => {
     setNotes(getNoteHistory());
     setSessions(getSessions());
-  }, []));
+    if (openNew === "1") {
+      setEditTarget(null);
+      setNewNoteCounter(c => c + 1);
+      setEditorVisible(true);
+    }
+  }, [openNew]));
 
   // Reload from SQLite once cloud sync completes
   useEffect(() => {
@@ -868,11 +852,13 @@ export default function NotesScreen() {
   }, [headerTranslateY, headerContentMargin]);
 
   function handleReviewHand(entry: NoteEntry) {
+    if (!user) { setShowSignIn(true); return; }
     setHandReviewEntry(entry);
   }
 
   function handleAddPress() {
     setEditTarget(null);
+    setNewNoteCounter(c => c + 1);
     setEditorVisible(true);
   }
 
@@ -885,6 +871,12 @@ export default function NotesScreen() {
         savedAnalysis={handReviewEntry?.hand_analysis}
         onClose={() => setHandReviewEntry(null)}
         onSaved={refresh}
+      />
+      <SignInSheet
+        visible={showSignIn}
+        onClose={() => setShowSignIn(false)}
+        title="Sign in to use AI"
+        description="Create a free account to access AI hand review and note compression."
       />
 
       <ShareNoteModal
@@ -978,7 +970,7 @@ export default function NotesScreen() {
       )}
 
       <NoteEditorModal
-        key={editTarget?.id ?? "new"}
+        key={editTarget ? editTarget.id : `new-${newNoteCounter}`}
         visible={editorVisible}
         initial={editTarget}
         sessions={sessions}

@@ -1,5 +1,7 @@
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { computeBadges, topBadge } from "@/lib/badges";
+import { ProfileBadge } from "@/components/ProfileBadge";
 import {
   FullProfile,
   followPlayer,
@@ -23,6 +25,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   RefreshControl,
   Share,
   StyleSheet,
@@ -33,7 +36,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const BRAND  = "#155DFC";
-const PURPLE = "#7C3AED";
+const PURPLE = "#0891B2";
 
 type ProfileTab = "posts" | "stakes";
 
@@ -171,6 +174,77 @@ function StakeRow({ deal, colors }: { deal: StakeDeal; colors: any }) {
           <Text style={[pStyles.progressLabel, { color: colors.text.tertiary }]}>{available.toFixed(1)}% left</Text>
         </View>
       </View>
+    </View>
+  );
+}
+
+// ─── Social links row ────────────────────────────────────────────────────────
+
+type SocialLink = { icon: keyof typeof Ionicons.glyphMap; color: string; url: string; label: string };
+
+function buildSocialLinks(profile: FullProfile): SocialLink[] {
+  const links: SocialLink[] = [];
+
+  if (profile.twitter_handle) {
+    const handle = profile.twitter_handle.replace(/^@/, "");
+    links.push({ icon: "logo-twitter", color: "#1DA1F2", label: "X / Twitter", url: `https://x.com/${handle}` });
+  }
+  if (profile.instagram_handle) {
+    const handle = profile.instagram_handle.replace(/^@/, "");
+    links.push({ icon: "logo-instagram", color: "#E1306C", label: "Instagram", url: `https://instagram.com/${handle}` });
+  }
+  if (profile.youtube_handle) {
+    const handle = profile.youtube_handle.replace(/^@/, "");
+    links.push({ icon: "logo-youtube", color: "#FF0000", label: "YouTube", url: `https://youtube.com/@${handle}` });
+  }
+  if (profile.twitch_handle) {
+    const handle = profile.twitch_handle.replace(/^@/, "");
+    links.push({ icon: "game-controller-outline", color: "#9146FF", label: "Twitch", url: `https://twitch.tv/${handle}` });
+  }
+  if (profile.hendon_mob_url) {
+    const url = profile.hendon_mob_url.startsWith("http") ? profile.hendon_mob_url : `https://${profile.hendon_mob_url}`;
+    links.push({ icon: "trophy-outline", color: "#F59E0B", label: "Hendon Mob", url });
+  }
+  if (profile.poker_index_url) {
+    const url = profile.poker_index_url.startsWith("http") ? profile.poker_index_url : `https://${profile.poker_index_url}`;
+    links.push({ icon: "stats-chart-outline", color: "#0891B2", label: "Poker Index", url });
+  }
+  return links;
+}
+
+function SocialLinksRow({ profile, colors }: { profile: FullProfile; colors: any }) {
+  const links = buildSocialLinks(profile);
+  if (links.length === 0) return null;
+
+  function open(link: SocialLink) {
+    Linking.openURL(link.url).catch(() =>
+      Alert.alert("Could not open link", `Try visiting ${link.url} in your browser.`)
+    );
+  }
+
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 16, paddingBottom: 12, paddingTop: 4 }}>
+      {links.map((link) => (
+        <TouchableOpacity
+          key={link.label}
+          onPress={() => open(link)}
+          activeOpacity={0.75}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 5,
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 20,
+            backgroundColor: link.color + "14",
+            borderWidth: 1,
+            borderColor: link.color + "35",
+          }}
+        >
+          <Ionicons name={link.icon} size={14} color={link.color} />
+          <Text style={{ fontSize: 12, fontWeight: "600", color: link.color }}>{link.label}</Text>
+        </TouchableOpacity>
+      ))}
     </View>
   );
 }
@@ -315,6 +389,19 @@ export default function UserProfileScreen() {
   const displayName = profileData.display_name || profileData.username || "Player";
   const handle      = profileData.username ? `@${profileData.username}` : null;
 
+  const socialLinkCount = [
+    profileData.twitter_handle, profileData.instagram_handle,
+    profileData.youtube_handle, profileData.twitch_handle,
+    profileData.hendon_mob_url, profileData.poker_index_url,
+  ].filter(Boolean).length;
+
+  const profileBadges = computeBadges({
+    createdAt:       profileData.created_at,
+    lastSeenAt:      profileData.last_seen_at,
+    socialLinkCount,
+    stakeDealsCount: profileData.stake_deals_count,
+  });
+
   // ── Header (stable JSX — not an inline component function) ───────────────
 
   const listHeader = (
@@ -326,6 +413,11 @@ export default function UserProfileScreen() {
           <View style={{ flex: 1, gap: 3 }}>
             <Text style={[pStyles.displayName, { color: colors.text.primary }]}>{displayName}</Text>
             {handle ? <Text style={[pStyles.handle, { color: colors.text.secondary }]}>{handle}</Text> : null}
+            {profileBadges.length > 0 && (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 4 }}>
+                {profileBadges.map((b) => <ProfileBadge key={b.id} badge={b} size="full" />)}
+              </View>
+            )}
             {profileData.location ? (
               <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
                 <Ionicons name="location-outline" size={12} color={colors.text.tertiary} />
@@ -359,14 +451,7 @@ export default function UserProfileScreen() {
           ))}
         </View>
 
-        {profileData.hendon_mob_url ? (
-          <View style={{ paddingHorizontal: 16, paddingBottom: 4 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Ionicons name="link-outline" size={13} color={colors.text.tertiary} />
-              <Text style={{ fontSize: 13, color: BRAND }} numberOfLines={1}>{profileData.hendon_mob_url}</Text>
-            </View>
-          </View>
-        ) : null}
+        <SocialLinksRow profile={profileData} colors={colors} />
 
         {!isOwnProfile && (
           <View style={pStyles.actions}>

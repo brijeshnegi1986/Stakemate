@@ -53,8 +53,6 @@ async function fetchProfiles(ids: string[]): Promise<Map<string, ProfileRow>> {
 export async function fetchAppNotifications(userId: string): Promise<AppNotification[]> {
   const lastReadAt = getSetting(LAST_READ_KEY) ?? "1970-01-01T00:00:00Z";
 
-  // Step 1: fetch raw data (FK joins to profiles not available, so no profile embed)
-  // Also need following IDs first for tournament post feed
   const { data: followingData } = await supabase
     .from("social_follows")
     .select("following_id")
@@ -95,7 +93,6 @@ export async function fetchAppNotifications(userId: string): Promise<AppNotifica
       : Promise.resolve({ data: [], error: null }),
   ]);
 
-  // Step 2: collect all actor IDs to batch-fetch profiles
   const actorIds = new Set<string>();
 
   if (dealsRes.status === "fulfilled" && dealsRes.value.data) {
@@ -124,7 +121,6 @@ export async function fetchAppNotifications(userId: string): Promise<AppNotifica
   }
 
   const profileMap = await fetchProfiles([...actorIds]);
-
   const notifications: AppNotification[] = [];
 
   // ── Stake claims ──────────────────────────────────────────────────────────

@@ -7,6 +7,8 @@ export type SocialProfile = {
   username: string | null;
   display_name: string | null;
   avatar_url: string | null;
+  created_at?: string | null;
+  last_seen_at?: string | null;
 };
 
 export type ReactionGroup = {
@@ -34,6 +36,7 @@ export type SocialPost = {
   comment_count: number;
   save_count: number;
   saved_by_me: boolean;
+  visibility: "public" | "friends";
 };
 
 export type CreatePostInput = {
@@ -48,7 +51,7 @@ export type CreatePostInput = {
   image_url?: string | null;
   is_live?: boolean;
   stake_deal_id?: string | null;
-  visibility?: "public" | "friends";
+  visibility: "public" | "friends";
 };
 
 export type SocialComment = {
@@ -67,7 +70,7 @@ const SAVE_EMOJI = "⭐";
 // Posts query — no profiles join (FK points to auth.users, not public.profiles)
 const POST_QUERY = `
   id, user_id, session_type, session_name, venue, status,
-  amount, amount_label, is_live, content, image_url, stake_deal_id, created_at,
+  amount, amount_label, is_live, content, image_url, stake_deal_id, visibility, created_at,
   social_reactions (emoji, user_id),
   social_comments (id)
 ` as const;
@@ -76,7 +79,7 @@ async function fetchProfiles(userIds: string[]): Promise<Map<string, SocialProfi
   if (!userIds.length) return new Map();
   const { data } = await supabase
     .from("profiles")
-    .select("id, username, display_name, avatar_url")
+    .select("id, username, display_name, avatar_url, created_at, last_seen_at")
     .in("id", userIds);
   const map = new Map<string, SocialProfile>();
   for (const p of data ?? []) map.set(p.id, p);
@@ -116,6 +119,7 @@ function normalizePosts(rows: any[], currentUserId: string, profilesMap: Map<str
       comment_count: (row.social_comments ?? []).length,
       save_count: saveReactions.length,
       saved_by_me: saveReactions.some((r) => r.user_id === currentUserId),
+      visibility: (row.visibility ?? "public") as "public" | "friends",
     };
   });
 }
@@ -204,6 +208,35 @@ export async function getSuggestedPlayers(currentUserId: string, limit = 10): Pr
   return data ?? [];
 }
 
+// ─── Online presence ──────────────────────────────────────────────────────────
+
+export type ActiveMember = {
+  id: string;
+  username: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  last_seen_at: string | null;
+};
+
+export async function updateLastSeen(userId: string): Promise<void> {
+  await supabase
+    .from("profiles")
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq("id", userId);
+}
+
+export async function fetchActiveMembers(limit = 20): Promise<ActiveMember[]> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data } = await supabase
+    .from("profiles")
+    .select("id, username, display_name, avatar_url, last_seen_at")
+    .not("avatar_url", "is", null)
+    .gte("last_seen_at", since)
+    .order("last_seen_at", { ascending: false })
+    .limit(limit);
+  return data ?? [];
+}
+
 // ─── Follows ──────────────────────────────────────────────────────────────────
 
 export async function getFollowingIds(userId: string): Promise<string[]> {
@@ -263,6 +296,14 @@ export async function createPost(input: CreatePostInput): Promise<SocialPost> {
 
 export async function deletePost(postId: string): Promise<void> {
   await supabase.from("social_posts").delete().eq("id", postId);
+}
+
+export async function updatePostVisibility(postId: string, visibility: "public" | "friends"): Promise<void> {
+  const { error } = await supabase
+    .from("social_posts")
+    .update({ visibility })
+    .eq("id", postId);
+  if (error) throw error;
 }
 
 export async function createTextPost(userId: string, content: string, visibility: "public" | "friends" = "public"): Promise<SocialPost> {
@@ -414,17 +455,23 @@ export type FullProfile = SocialProfile & {
   location: string | null;
   follower_count: number;
   following_count: number;
+  stake_deals_count: number;
   hendon_mob_url: string | null;
+  poker_index_url: string | null;
+  twitter_handle: string | null;
+  instagram_handle: string | null;
+  youtube_handle: string | null;
+  twitch_handle: string | null;
 };
 
 export async function getProfileWithCounts(
   profileId: string,
   currentUserId: string
 ): Promise<{ profile: FullProfile; isFollowing: boolean } | null> {
-  const [profileRes, followerRes, followingRes, isFollowingRes] = await Promise.all([
+  const [profileRes, followerRes, followingRes, isFollowingRes, dealsRes] = await Promise.all([
     supabase
       .from("profiles")
-      .select("id, username, display_name, avatar_url, bio, location, hendon_mob_url")
+      .select("id, username, display_name, avatar_url, bio, location, created_at, last_seen_at, hendon_mob_url, poker_index_url, twitter_handle, instagram_handle, youtube_handle, twitch_handle")
       .eq("id", profileId)
       .single(),
     supabase
@@ -441,6 +488,11 @@ export async function getProfileWithCounts(
       .eq("follower_id", currentUserId)
       .eq("following_id", profileId)
       .maybeSingle(),
+    supabase
+      .from("stake_deals")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", profileId)
+      .neq("status", "cancelled"),
   ]);
 
   if (!profileRes.data) return null;
@@ -448,8 +500,9 @@ export async function getProfileWithCounts(
   return {
     profile: {
       ...profileRes.data,
-      follower_count: followerRes.count ?? 0,
-      following_count: followingRes.count ?? 0,
+      follower_count:    followerRes.count ?? 0,
+      following_count:   followingRes.count ?? 0,
+      stake_deals_count: dealsRes.count ?? 0,
     },
     isFollowing: !!isFollowingRes.data,
   };

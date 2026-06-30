@@ -2,6 +2,7 @@ import { SessionFAB } from "@/components/SessionFAB";
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -29,7 +30,7 @@ const BRAND  = "#155DFC";
 const GREEN  = "#22C55E";
 const RED    = "#EF4444";
 const ORANGE = "#F97316";
-const PURPLE = "#7C3AED";
+const PURPLE = "#0891B2";
 
 const CURRENCY_META: Record<string, { flag: string; symbol: string }> = {
   AUD: { flag: "🇦🇺", symbol: "$" },
@@ -49,17 +50,39 @@ function LineSegment({ x1, y1, x2, y2, color }: {
   const length = Math.sqrt(dx * dx + dy * dy);
   const angle  = Math.atan2(dy, dx) * (180 / Math.PI);
   const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+  const baseStyle = {
+    position: "absolute" as const,
+    left: cx - length / 2,
+    borderRadius: 3,
+    transform: [{ rotate: `${angle}deg` }],
+  };
   return (
-    <View style={{
-      position: "absolute",
-      left: cx - length / 2,
-      top: cy - 1.5,
-      width: length,
-      height: 3,
-      backgroundColor: color,
-      borderRadius: 2,
-      transform: [{ rotate: `${angle}deg` }],
-    }} />
+    <>
+      {/* Glow bloom layer */}
+      <View style={{
+        ...baseStyle,
+        top: cy - 4,
+        width: length,
+        height: 8,
+        backgroundColor: color + "30",
+        shadowColor: color,
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.9,
+        shadowRadius: 8,
+      }} />
+      {/* Sharp stroke */}
+      <View style={{
+        ...baseStyle,
+        top: cy - 1.5,
+        width: length,
+        height: 3,
+        backgroundColor: color,
+        shadowColor: color,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.55,
+        shadowRadius: 5,
+      }} />
+    </>
   );
 }
 
@@ -110,6 +133,27 @@ function ProfitChart({ sessions, colors, symbol }: { sessions: Session[]; colors
     ? CHART_H - ((0 - minVal) / range) * CHART_H
     : null;
 
+  // Pre-compute area fill: vertical slices from line Y down to chart bottom
+  const fillSlices = useMemo(() => {
+    if (!hasData || points.length < 2) return [];
+    const STEP = 3;
+    const maxX = Math.ceil(points[points.length - 1].x);
+    const slices: { x: number; y: number; h: number }[] = [];
+    for (let x = 0; x <= maxX; x += STEP) {
+      let lineY = CHART_H;
+      for (let i = 0; i < points.length - 1; i++) {
+        if (x >= points[i].x && x <= points[i + 1].x) {
+          const t = (x - points[i].x) / (points[i + 1].x - points[i].x);
+          lineY = points[i].y + t * (points[i + 1].y - points[i].y);
+          break;
+        }
+      }
+      const h = CHART_H - lineY;
+      if (h > 0) slices.push({ x, y: lineY, h });
+    }
+    return slices;
+  }, [hasData, points, CHART_H]);
+
   return (
     <View style={[styles.chartCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
       <View style={styles.chartHeader}>
@@ -150,10 +194,35 @@ function ProfitChart({ sessions, colors, symbol }: { sessions: Session[]; colors
 
           {hasData ? (
             <>
+              {/* Area fill — gradient slices below the line */}
+              {fillSlices.map((s, i) => (
+                <LinearGradient
+                  key={i}
+                  colors={[lineColor + "45", lineColor + "00"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 0, y: 1 }}
+                  style={{
+                    position: "absolute",
+                    left: s.x,
+                    top: s.y,
+                    width: 3,
+                    height: s.h,
+                  }}
+                />
+              ))}
+              {/* Line segments with glow */}
               {points.slice(0, -1).map((pt, i) => (
                 <LineSegment key={i} x1={pt.x} y1={pt.y} x2={points[i + 1].x} y2={points[i + 1].y} color={lineColor} />
               ))}
-              {/* End dot */}
+              {/* End dot — outer glow ring */}
+              <View style={{
+                position: "absolute",
+                left: points[points.length - 1].x - 9,
+                top:  points[points.length - 1].y - 9,
+                width: 18, height: 18, borderRadius: 9,
+                backgroundColor: lineColor + "28",
+              }} />
+              {/* End dot — solid */}
               <View style={{
                 position: "absolute",
                 left: points[points.length - 1].x - 5,
@@ -161,8 +230,8 @@ function ProfitChart({ sessions, colors, symbol }: { sessions: Session[]; colors
                 width: 10, height: 10, borderRadius: 5,
                 backgroundColor: lineColor,
                 shadowColor: lineColor,
-                shadowOpacity: 0.5,
-                shadowRadius: 4,
+                shadowOpacity: 0.8,
+                shadowRadius: 8,
                 shadowOffset: { width: 0, height: 0 },
               }} />
               {/* Start dot */}
@@ -223,7 +292,10 @@ export default function StatsScreen() {
   const insets = useSafeAreaInsets();
 
   const [sessions, setSessions]           = useState<Session[]>([]);
-  const [filter, setFilter]               = useState<Filter>("all");
+  const [filter, setFilter]               = useState<Filter>(() => {
+    const saved = getSetting("dashboardView") ?? "all";
+    return (saved === "cash" || saved === "tournament") ? saved : "all";
+  });
   const [currency, setCurrency]           = useState("AUD");
   const [showAddSheet, setShowAddSheet]   = useState(false);
   const [balanceHidden, setBalanceHidden] = useState(false);
@@ -232,6 +304,8 @@ export default function StatsScreen() {
     useCallback(() => {
       setSessions(getSessions() || []);
       setCurrency(getSetting("currency") ?? "AUD");
+      const saved = getSetting("dashboardView") ?? "all";
+      setFilter((saved === "cash" || saved === "tournament") ? saved : "all");
     }, [])
   );
 
@@ -301,37 +375,38 @@ export default function StatsScreen() {
   const sessionLabel = (s: Session) =>
     s.type === "tournament" ? (s.tournamentName || "Tournament") : `${s.stakes} NLH`;
 
+  const hasBanner = isSyncing || !user;
+
   return (
     <View style={[styles.root, { backgroundColor: colors.bg.secondary }]}>
 
+      {/* ── Banners — fixed above ScrollView, clear the status bar ── */}
+      {isSyncing && (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingTop: insets.top, paddingHorizontal: 16, paddingBottom: 10, backgroundColor: "#EFF6FF" }}>
+          <ActivityIndicator size="small" color={BRAND} />
+          <Text style={{ color: BRAND, fontSize: 13, fontWeight: "500" }}>Syncing your data…</Text>
+        </View>
+      )}
+
+      {!user && !isSyncing && (
+        <TouchableOpacity
+          onPress={() => router.push("/welcome")}
+          activeOpacity={0.85}
+          style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingTop: insets.top, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: "#FEF3C7", borderBottomWidth: 1, borderBottomColor: "#FDE68A" }}
+        >
+          <Ionicons name="cloud-offline-outline" size={18} color="#D97706" />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: "#92400E" }}>Your data is not being backed up</Text>
+            <Text style={{ fontSize: 12, color: "#B45309", marginTop: 1 }}>Sign in to save your sessions to the cloud</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={14} color="#D97706" />
+        </TouchableOpacity>
+      )}
+
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
 
-        {/* ── Sync banner ── */}
-        {isSyncing && (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: "#EFF6FF" }}>
-            <ActivityIndicator size="small" color={BRAND} />
-            <Text style={{ color: BRAND, fontSize: 13, fontWeight: "500" }}>Syncing your data…</Text>
-          </View>
-        )}
-
-        {/* ── Guest nudge banner ── */}
-        {!user && !isSyncing && (
-          <TouchableOpacity
-            onPress={() => router.push("/welcome")}
-            activeOpacity={0.85}
-            style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: "#FEF3C7", borderBottomWidth: 1, borderBottomColor: "#FDE68A" }}
-          >
-            <Ionicons name="cloud-offline-outline" size={18} color="#D97706" />
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 13, fontWeight: "600", color: "#92400E" }}>Your data is not being backed up</Text>
-              <Text style={{ fontSize: 12, color: "#B45309", marginTop: 1 }}>Sign in to save your sessions to the cloud</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={14} color="#D97706" />
-          </TouchableOpacity>
-        )}
-
         {/* ── Blue header (inside ScrollView so negative-margin card can overlap it) ── */}
-        <View style={[styles.topBar, { backgroundColor: BRAND, paddingTop: insets.top + 10 }]}>
+        <View style={[styles.topBar, { backgroundColor: BRAND, paddingTop: hasBanner ? 10 : insets.top + 10 }]}>
           <View style={styles.topBarRow}>
             <Text style={styles.topBarTitle}>Bankroll</Text>
             <View style={styles.filterChips}>
@@ -517,7 +592,7 @@ export default function StatsScreen() {
                   </View>
                   <Text style={[styles.highlightKicker, { color: colors.text.tertiary }]}>Worst Session</Text>
                   <Text style={[styles.highlightValue, { color: RED }]}>
-                    {meta.symbol}{worstSession.profit.toLocaleString("en-AU", { maximumFractionDigits: 0 })}
+                    {worstSession.profit < 0 ? `-${meta.symbol}${Math.abs(worstSession.profit).toLocaleString("en-AU", { maximumFractionDigits: 0 })}` : `${meta.symbol}${worstSession.profit.toLocaleString("en-AU", { maximumFractionDigits: 0 })}`}
                   </Text>
                   <Text style={[styles.highlightSub, { color: colors.text.tertiary }]} numberOfLines={1}>
                     {sessionLabel(worstSession)}

@@ -1,6 +1,7 @@
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { AppNotification, fetchAppNotifications, markAllRead } from "@/lib/appNotifications";
+import * as Notifications from "expo-notifications";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router } from "expo-router";
@@ -63,7 +64,7 @@ function notifIconColor(type: AppNotification["type"]): string {
     case "stake_claim_confirmed": return "#22C55E";
     case "stake_claim_rejected":  return "#EF4444";
     case "post_comment":          return BRAND;
-    case "new_follower":          return "#7C3AED";
+    case "new_follower":          return "#0891B2";
     case "tournament_post":       return "#F97316";
   }
 }
@@ -74,7 +75,7 @@ function notifIconBg(type: AppNotification["type"]): string {
     case "stake_claim_confirmed": return "#22C55E18";
     case "stake_claim_rejected":  return "#EF444418";
     case "post_comment":          return `${BRAND}18`;
-    case "new_follower":          return "#7C3AED18";
+    case "new_follower":          return "#0891B218";
     case "tournament_post":       return "#F9731618";
   }
 }
@@ -93,9 +94,10 @@ export default function NotificationsScreen() {
       .then((data) => {
         setNotifications(data);
         markAllRead();
+        Notifications.setBadgeCountAsync(0).catch(() => {});
         setNotifications(data.map((n) => ({ ...n, read: true })));
       })
-      .catch(() => {})
+      .catch((e) => { console.error("[NotificationsScreen] error:", e); })
       .finally(() => setLoading(false));
   }, [profile?.id]);
 

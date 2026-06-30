@@ -28,7 +28,11 @@
     }
   },
   "submit": {
-    "production": {},
+    "production": {
+      "ios": {
+        "ascAppId": "6772975225"
+      }
+    },
     "staging": {
       "ios": {
         "appleId": "brijeshnegi.86@gmail.com",

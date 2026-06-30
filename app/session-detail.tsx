@@ -103,6 +103,7 @@ export default function SessionDetailScreen() {
         status: shareCaption.trim() || null,
         content: null,
         is_live: false,
+        visibility: "public",
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setShareVisible(false);
@@ -370,25 +371,22 @@ export default function SessionDetailScreen() {
 
 
         {/* ── Share to Social modal ── */}
-        <Modal visible={shareVisible} transparent animationType="slide" onRequestClose={() => setShareVisible(false)}>
-          <TouchableOpacity style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)" }} activeOpacity={1} onPress={() => setShareVisible(false)} />
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
-            <View style={{
-              backgroundColor: colors.bg.primary,
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-              paddingHorizontal: 20,
-              paddingTop: 12,
-              paddingBottom: insets.bottom + 20,
-            }}>
-              {/* Handle */}
-              <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border.default, alignSelf: "center", marginBottom: 20 }} />
+        <Modal visible={shareVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShareVisible(false)}>
+          <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
+            {/* iOS nav header */}
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary }}>
+              <TouchableOpacity onPress={() => setShareVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 72 }}>
+                <Text style={{ fontSize: 16, color: colors.text.secondary }}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={{ fontSize: 17, fontWeight: "700", color: colors.text.primary }}>Share to Social</Text>
+              <View style={{ width: 72 }} />
+            </View>
 
-              <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text.primary, marginBottom: 4 }}>Share to Social</Text>
+            <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
               <Text style={{ fontSize: 13, color: colors.text.tertiary, marginBottom: 20 }}>Post this session to the Stakemate community feed.</Text>
 
               {/* Session preview */}
-              <View style={{ backgroundColor: colors.bg.secondary, borderRadius: 14, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: colors.border.default }}>
+              <View style={{ backgroundColor: colors.bg.primary, borderRadius: 14, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: colors.border.default }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 }}>
                   <View style={{ width: 36, height: 36, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: isTournament ? "#8B5CF6" : "#F97316" }}>
                     <Ionicons name={isTournament ? "trophy-outline" : "cash-outline"} size={18} color="#fff" />
@@ -416,7 +414,7 @@ export default function SessionDetailScreen() {
                 multiline
                 maxLength={140}
                 style={{
-                  backgroundColor: colors.bg.secondary,
+                  backgroundColor: colors.bg.primary,
                   borderRadius: 12,
                   borderWidth: 1,
                   borderColor: colors.border.default,
@@ -451,8 +449,8 @@ export default function SessionDetailScreen() {
                     </>
                 }
               </TouchableOpacity>
-            </View>
-          </KeyboardAvoidingView>
+            </ScrollView>
+          </View>
         </Modal>
       </View>
       </TouchableWithoutFeedback>

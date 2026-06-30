@@ -2,18 +2,19 @@
   "expo": {
     "name": "Stakemate",
     "slug": "stakemate",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "pokerroll",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "deploymentTarget": "16.4",
+      "deploymentTarget": "17.0",
       "bundleIdentifier": "com.stakemate.pokerroll",
-      "buildNumber": "73",
+      "buildNumber": "1.15",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryAddUsageDescription": "Allow $(PRODUCT_NAME) to save photos to your library"
       }
     },
     "android": {
@@ -44,7 +45,12 @@
         {
           "icon": "./assets/images/icon.png",
           "color": "#155DFC",
-          "sounds": []
+          "sounds": [],
+          "requestPermissionsViaSafariViewController": false,
+          "permissions": [
+            "NOTIFICATIONS",
+            "BADGE"
+          ]
         }
       ],
       [
@@ -63,9 +69,9 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
+          "image": "./assets/images/Splash-bg.png",
+          "enableFullScreenImage_legacy": true,
+          "resizeMode": "cover",
           "backgroundColor": "#155DFC",
           "dark": {
             "backgroundColor": "#155DFC"
@@ -80,7 +86,16 @@
       "expo-sharing",
       "expo-status-bar",
       "expo-web-browser",
-      "expo-iap"
+      "expo-iap",
+      "@react-native-community/datetimepicker",
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "project": "react-native",
+          "organization": "stakemate-wd"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

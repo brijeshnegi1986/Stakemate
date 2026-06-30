@@ -8,6 +8,7 @@ import {
   addTournamentEvent,
   deleteTournamentEvent,
   getSetting,
+  setSetting,
   getTournamentEvents,
   TournamentEvent,
 } from "@/db/database";
@@ -24,6 +25,7 @@ import {
   unsaveTournamentPost,
 } from "@/lib/social";
 import { cancelStakeDeal, claimStake, getOpenDealByAuthorAndTournament, getStakeDeal, isPublishedStatus } from "@/lib/stakes";
+import { supabase } from "@/lib/supabase";
 import { deleteMySubmission, deleteMyTournament, deleteSeriesTournaments, fetchMyPendingSubmissions, fetchOfficialTournaments, fetchSeries, fetchVenues, OfficialTournament, SeriesInfo, submitTournamentToDirectory, TournamentType, unpublishMyTournament, unpublishSeriesTournaments, updateMyTournament, VenueInfo } from "@/lib/tournaments";
 import { Ionicons } from "@expo/vector-icons";
 import * as Calendar from "expo-calendar";
@@ -49,11 +51,13 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
+  Share,
 } from "react-native";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const BRAND = "#155DFC";
-const PURPLE = "#7C3AED";
+const PURPLE = "#0891B2";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = [
@@ -128,21 +132,22 @@ async function scheduleNotifications(event: TournamentEvent) {
 
 // ─── Calendar sync helper ─────────────────────────────────────────────────────
 
-type CalendarResult = { ok: boolean; reason?: "denied" | "no_calendar" | "error" };
+type CalendarResult = { ok: boolean; calEventId?: string; reason?: "denied" | "no_calendar" | "error" };
 
 async function addToDeviceCalendar(event: TournamentEvent): Promise<CalendarResult> {
   try {
-    const { status } = await Calendar.requestCalendarPermissions();
+    const { status } = await Calendar.requestCalendarPermissionsAsync();
     if (status !== "granted") return { ok: false, reason: "denied" };
 
-    let targetCal: any = null;
+    let targetCalId: string | null = null;
 
     if (Platform.OS === "ios") {
-      try { targetCal = Calendar.getDefaultCalendarSync(); } catch { /* fall through */ }
+      try { targetCalId = Calendar.getDefaultCalendarSync()?.id ?? null; } catch { /* fall through */ }
     }
 
-    if (!targetCal) {
+    if (!targetCalId) {
       const calendars = await Calendar.getCalendars(Calendar.EntityTypes.EVENT);
+      let targetCal: any = null;
       if (Platform.OS === "ios") {
         targetCal = calendars.find((c: any) => c.allowsModifications && (c.type === "caldav" || c.type === "local"))
           ?? calendars.find((c: any) => c.allowsModifications);
@@ -150,15 +155,16 @@ async function addToDeviceCalendar(event: TournamentEvent): Promise<CalendarResu
         targetCal = calendars.find((c: any) => c.isPrimary && c.allowsModifications)
           ?? calendars.find((c: any) => c.allowsModifications);
       }
+      targetCalId = targetCal?.id ?? null;
     }
 
-    if (!targetCal) return { ok: false, reason: "no_calendar" };
+    if (!targetCalId) return { ok: false, reason: "no_calendar" };
 
     const start = new Date(event.date + "T09:00:00");
     const end   = new Date(event.date + "T18:00:00");
     const notes = [event.buyin ? `Buy-in: ${event.buyin}` : "", event.notes || ""].filter(Boolean).join("\n") || undefined;
 
-    await targetCal.createEvent({
+    const calEventId = await Calendar.createEventAsync(targetCalId, {
       title: event.name,
       startDate: start,
       endDate: end,
@@ -166,32 +172,17 @@ async function addToDeviceCalendar(event: TournamentEvent): Promise<CalendarResu
       notes,
       alarms: [{ relativeOffset: -1440 }, { relativeOffset: -60 }],
     });
-    return { ok: true };
+    return { ok: true, calEventId };
   } catch (e) {
     console.error("[Calendar]", e);
     return { ok: false, reason: "error" };
   }
 }
 
-function handleCalendarResult(result: CalendarResult) {
-  if (result.ok) {
-    Alert.alert("Added!", "Added to your device calendar.");
-  } else if (result.reason === "denied") {
-    Alert.alert("Calendar Access Denied", "Go to Settings > Stakemate > Calendars to enable.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Open Settings", onPress: () => Linking.openURL("app-settings:") },
-    ]);
-  } else if (result.reason === "no_calendar") {
-    Alert.alert("No Calendar Found", "Please ensure you have a writable calendar set up in the iOS Calendar app.");
-  } else {
-    Alert.alert("Error", "Could not add to calendar. Please try again.");
-  }
-}
-
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function CalendarScreen() {
-  const { colors } = usePokerTheme();
+  const { colors, isDark } = usePokerTheme();
   const insets = useSafeAreaInsets();
   const { user, profile, isSyncing } = useAuth();
   const { isPro, isElite } = useSubscription();
@@ -217,8 +208,17 @@ export default function CalendarScreen() {
   const [editingSubmission, setEditingSubmission] = useState<OfficialTournament | null>(null);
   const [editingApproved, setEditingApproved] = useState<OfficialTournament | null>(null);
   const [filterState, setFilterState]           = useState<string | null>(null);
+  const [filterOrganiser, setFilterOrganiser]   = useState<string | null>(null);
+  const [filterDateFrom, setFilterDateFrom]     = useState<Date | null>(null);
+  const [filterDateTo, setFilterDateTo]         = useState<Date | null>(null);
+  const [showPastEvents, setShowPastEvents]     = useState(false);
   const [searchQuery, setSearchQuery]           = useState("");
   const [showStateFilter, setShowStateFilter]   = useState(false);
+  const [showStateSubSheet, setShowStateSubSheet]       = useState(false);
+  const [showOrganiserSubSheet, setShowOrganiserSubSheet] = useState(false);
+  const [showDateFromPicker, setShowDateFromPicker]     = useState(false);
+  const [showDateToPicker, setShowDateToPicker]         = useState(false);
+  const [supabaseOrganisers, setSupabaseOrganisers]     = useState<string[]>([]);
   const [selectedSeries, setSelectedSeries]     = useState<string | null>(null);
 
   // Auto-open series modal when navigated from the home screen carousel
@@ -226,8 +226,14 @@ export default function CalendarScreen() {
     if (openSeries) setSelectedSeries(openSeries);
   }, [openSeries]);
   const [scheduleView, setScheduleView]         = useState<"list" | "month">("list");
-  const [hidePastEvents, setHidePastEvents]     = useState(() => getSetting("hidePastEvents") === "true");
+  const [hidePastEvents, setHidePastEvents]     = useState(() => getSetting("hidePastEvents") !== "false");
   const [calAccessGranted, setCalAccessGranted] = useState<boolean | null>(null);
+  const [calendarAddedMap, setCalendarAddedMap] = useState<Map<number, string>>(() => {
+    try {
+      const stored = getSetting("calendarAddedMap");
+      return stored ? new Map<number, string>(JSON.parse(stored)) : new Map();
+    } catch { return new Map(); }
+  });
 
   // ── Header hide-on-scroll (Facebook style) ───────────────────────────────
   const headerTranslateY  = useRef(new Animated.Value(0)).current;
@@ -323,7 +329,7 @@ export default function CalendarScreen() {
       setHidePastEvents(getSetting("hidePastEvents") === "true");
       (async () => {
         try {
-          const r = await Calendar.getCalendarPermissions();
+          const r = await Calendar.getCalendarPermissionsAsync();
           setCalAccessGranted(r?.status === "granted");
         } catch {
           setCalAccessGranted(false);
@@ -415,12 +421,25 @@ export default function CalendarScreen() {
   const eventDates = new Set(events.map((e) => e.date));
   const todayYMD   = toYMD(today.getFullYear(), today.getMonth(), today.getDate());
 
+  // Apply client-side organiser + date filters
+  const filteredOfficialTournaments = useMemo(() => {
+    return officialTournaments.filter((t) => {
+      if (filterOrganiser) {
+        const org = t.series_info?.organiser ?? t.organiser_info?.name ?? null;
+        if (org !== filterOrganiser) return false;
+      }
+      if (filterDateFrom && t.tournament_date < filterDateFrom.toISOString().split("T")[0]) return false;
+      if (filterDateTo && t.tournament_date > filterDateTo.toISOString().split("T")[0]) return false;
+      return true;
+    });
+  }, [officialTournaments, filterOrganiser, filterDateFrom, filterDateTo]);
+
   // Group official tournaments by series (only when not searching)
   const { seriesGroups, soloTournaments } = useMemo(() => {
-    if (searchQuery.trim()) return { seriesGroups: [], soloTournaments: officialTournaments };
+    if (searchQuery.trim()) return { seriesGroups: [], soloTournaments: filteredOfficialTournaments };
     const map = new Map<string, OfficialTournament[]>();
     const solo: OfficialTournament[] = [];
-    for (const t of officialTournaments) {
+    for (const t of filteredOfficialTournaments) {
       const seriesKey = t.series_info?.name ?? null;
       if (seriesKey) {
         const arr = map.get(seriesKey) ?? [];
@@ -444,14 +463,19 @@ export default function CalendarScreen() {
           dateTo: tournaments[tournaments.length - 1].tournament_date,
           venue: tournaments[0].venue_info?.name ?? tournaments[0].venue_name ?? "",
           city: tournaments[0].city ?? "",
-          venueLogoUrl: tournaments[0].venue_info?.logo_url ?? null,
+          logoUrl: (() => {
+            const org = tournaments[0].series_info?.organiser_logo_url ?? tournaments[0].organiser_info?.logo_url ?? null;
+            const ven = tournaments[0].venue_info?.logo_url ?? null;
+            if (org) return org;
+            return ven;
+          })(),
           venueWebsite: tournaments[0].venue_info?.website ?? null,
           tournaments,
         });
       }
     }
     return { seriesGroups: groups, soloTournaments: solo };
-  }, [officialTournaments, searchQuery]);
+  }, [filteredOfficialTournaments, searchQuery]);
 
   function prevMonth() {
     if (viewMonth === 0) { setViewMonth(11); setViewYear((y) => y - 1); }
@@ -536,13 +560,26 @@ export default function CalendarScreen() {
     }
   }
 
-  function handleDelete(id: number) {
-    Alert.alert("Delete Event", "Remove this tournament from your calendar?", [
+  async function handleDelete(id: number) {
+    const evt = events.find((e) => e.id === id);
+
+    if (evt?.stake_deal_id) {
+      const deal = await getStakeDeal(evt.stake_deal_id).catch(() => null);
+      const activeStatuses = ["draft", "open", "active", "paused", "filled", "sold_out"];
+      if (deal && activeStatuses.includes(deal.status)) {
+        Alert.alert(
+          "Active Deal Exists",
+          "You have an active Marketplace deal on this tournament. Cancel your deal first before removing the tournament.",
+          [{ text: "OK" }]
+        );
+        return;
+      }
+    }
+
+    Alert.alert("Delete Event", "Remove this tournament from your schedule?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete", style: "destructive", onPress: () => {
-          const evt = events.find((e) => e.id === id);
-          if (evt?.stake_deal_id) cancelStakeDeal(evt.stake_deal_id).catch(() => {});
           deleteTournamentEvent(id);
           if (user?.id) deleteEventFromCloud(user.id, id).catch(console.error);
           refresh();
@@ -553,7 +590,7 @@ export default function CalendarScreen() {
 
   async function handleRequestCalAccess() {
     try {
-      const r = await Calendar.requestCalendarPermissions();
+      const r = await Calendar.requestCalendarPermissionsAsync();
       const granted = r?.status === "granted";
       setCalAccessGranted(granted);
       Alert.alert(
@@ -566,6 +603,40 @@ export default function CalendarScreen() {
       setCalAccessGranted(false);
       Alert.alert("Error", "Could not request calendar permission. Please check Settings.");
     }
+  }
+
+  async function handleCalendarAdd(e: TournamentEvent) {
+    const result = await addToDeviceCalendar(e);
+    if (result.ok && result.calEventId) {
+      setCalendarAddedMap(prev => {
+        const next = new Map(prev).set(e.id, result.calEventId!);
+        setSetting("calendarAddedMap", JSON.stringify([...next.entries()]));
+        return next;
+      });
+      Alert.alert("Added!", "Added to your device calendar.");
+    } else if (result.reason === "denied") {
+      Alert.alert("Calendar Access Denied", "Go to Settings > Stakemate > Calendars to enable.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Open Settings", onPress: () => Linking.openURL("app-settings:") },
+      ]);
+    } else if (result.reason === "no_calendar") {
+      Alert.alert("No Calendar Found", "Please ensure you have a writable calendar set up in the iOS Calendar app.");
+    } else {
+      Alert.alert("Error", "Could not add to calendar. Please try again.");
+    }
+  }
+
+  async function handleCalendarRemove(e: TournamentEvent) {
+    const calEventId = calendarAddedMap.get(e.id);
+    if (calEventId) {
+      try { await Calendar.deleteEventAsync(calEventId); } catch { /* already removed */ }
+    }
+    setCalendarAddedMap(prev => {
+      const next = new Map(prev);
+      next.delete(e.id);
+      setSetting("calendarAddedMap", JSON.stringify([...next.entries()]));
+      return next;
+    });
   }
 
   const selectedEvents = selectedDate ? events.filter((e) => e.date === selectedDate) : [];
@@ -597,8 +668,9 @@ export default function CalendarScreen() {
         <View style={[styles.header, { backgroundColor: BRAND, paddingTop: insets.top + 12 }]}>
           <View style={styles.headerRow}>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.headerGreeting, { color: "rgba(255,255,255,0.7)" }]}>Welcome back</Text>
-              <Text style={[styles.headerName, { color: "#fff" }]} numberOfLines={1}>{displayName}</Text>
+              <Text style={[styles.headerName, { color: "#fff" }]} numberOfLines={1}>
+                {calTab === "schedule" ? "My Schedule" : "Tournaments"}
+              </Text>
             </View>
             <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
               {calTab === "tournaments" && isElite && (
@@ -618,7 +690,7 @@ export default function CalendarScreen() {
           {/* Segmented control */}
           <SegmentedControl
             options={[
-              { value: "schedule",    label: "My Schedule", icon: "calendar-outline" },
+              { value: "schedule",    label: "My Tournaments", icon: "calendar-outline" },
               { value: "tournaments", label: "Tournaments",  icon: "trophy-outline"   },
             ]}
             selected={calTab}
@@ -640,7 +712,7 @@ export default function CalendarScreen() {
       {/* ── Scrollable content — margin shrinks to 0 when header hides ── */}
       <Animated.View style={{ flex: 1, marginTop: contentMarginTop }}>
 
-      {/* ── My Schedule tab ── */}
+      {/* ── My Tournaments tab ── */}
       {calTab === "schedule" && (
         <View style={{ flex: 1 }}>
           <ScrollView
@@ -739,7 +811,9 @@ export default function CalendarScreen() {
                           onShare={() => setShareEvent(e)}
                           onShareStake={() => handleShareStakeDeal(e)}
                           onSellStakes={() => handleSellStakesPress(e)}
-                          onCalendarSync={() => addToDeviceCalendar(e).then(handleCalendarResult)}
+                          onCalendarSync={() => handleCalendarAdd(e)}
+                          calendarAdded={calendarAddedMap.has(e.id)}
+                          onCalendarRemove={() => handleCalendarRemove(e)}
                         />
                       ))}
                       {selectedSavedPosts.map((p) => (
@@ -759,7 +833,9 @@ export default function CalendarScreen() {
                       onDelete={() => handleDelete(e.id)} onShare={() => setShareEvent(e)}
                       onShareStake={() => handleShareStakeDeal(e)}
                       onSellStakes={() => handleSellStakesPress(e)}
-                      onCalendarSync={() => addToDeviceCalendar(e).then(handleCalendarResult)}
+                      onCalendarSync={() => handleCalendarAdd(e)}
+                      calendarAdded={calendarAddedMap.has(e.id)}
+                      onCalendarRemove={() => handleCalendarRemove(e)}
                     />
                   ))}
                   {savedTournaments.filter((p) => p.status === todayYMD).map((p) => (
@@ -777,7 +853,9 @@ export default function CalendarScreen() {
                       onDelete={() => handleDelete(e.id)} onShare={() => setShareEvent(e)}
                       onShareStake={() => handleShareStakeDeal(e)}
                       onSellStakes={() => handleSellStakesPress(e)}
-                      onCalendarSync={() => addToDeviceCalendar(e).then(handleCalendarResult)}
+                      onCalendarSync={() => handleCalendarAdd(e)}
+                      calendarAdded={calendarAddedMap.has(e.id)}
+                      onCalendarRemove={() => handleCalendarRemove(e)}
                     />
                   ))}
                 </View>
@@ -794,18 +872,34 @@ export default function CalendarScreen() {
               )}
 
               {/* Past */}
-              {!hidePastEvents && pastEvents.length > 0 && (
-                <View style={styles.section}>
-                  <Text style={[styles.sectionTitle, { color: colors.text.secondary, marginBottom: 10 }]}>Past</Text>
-                  {pastEvents.map((e) => (
-                    <EventCard key={e.id} event={e} colors={colors} past showDate
-                      onDelete={() => handleDelete(e.id)} onShare={() => setShareEvent(e)}
-                      onShareStake={() => handleShareStakeDeal(e)}
-                      onSellStakes={() => handleSellStakesPress(e)} onCalendarSync={() => {}}
-                    />
-                  ))}
-                </View>
-              )}
+              {(() => {
+                const pastWithDeal    = pastEvents.filter((e) => !!e.stake_deal_id);
+                const pastWithoutDeal = pastEvents.filter((e) => !e.stake_deal_id);
+                const visiblePast     = hidePastEvents ? pastWithDeal : pastEvents;
+                if (visiblePast.length === 0) return null;
+                return (
+                  <View style={styles.section}>
+                    <Text style={[styles.sectionTitle, { color: colors.text.secondary, marginBottom: 10 }]}>Past</Text>
+                    {visiblePast.map((e) => (
+                      <EventCard key={e.id} event={e} colors={colors} past showDate
+                        onDelete={() => handleDelete(e.id)} onShare={() => setShareEvent(e)}
+                        onShareStake={() => handleShareStakeDeal(e)}
+                        onSellStakes={() => handleSellStakesPress(e)} onCalendarSync={() => {}}
+                      />
+                    ))}
+                    {hidePastEvents && pastWithoutDeal.length > 0 && (
+                      <TouchableOpacity
+                        onPress={() => setHidePastEvents(false)}
+                        style={{ paddingVertical: 10, alignItems: "center" }}
+                      >
+                        <Text style={{ fontSize: 12, color: colors.text.tertiary }}>
+                          +{pastWithoutDeal.length} more past event{pastWithoutDeal.length > 1 ? "s" : ""} hidden — <Text style={{ color: BRAND }}>Show all</Text>
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              })()}
 
               {/* Empty state / sync loader */}
               {events.length === 0 && savedTournaments.length === 0 && (
@@ -819,7 +913,7 @@ export default function CalendarScreen() {
                     <Ionicons name="calendar-outline" size={44} color={colors.text.tertiary} />
                     <Text style={[styles.emptyStateTitle, { color: colors.text.primary }]}>No tournaments yet</Text>
                     <Text style={[styles.emptyStateSub, { color: colors.text.tertiary }]}>
-                      Browse the Tournaments tab and tap ⭐ to add events to your schedule.
+                      Browse the Tournaments tab and tap ⭐ to save events to My Tournaments.
                     </Text>
                     <TouchableOpacity
                       onPress={() => setCalTab("tournaments")}
@@ -856,31 +950,42 @@ export default function CalendarScreen() {
             </View>
           </View>
 
-          {/* Location row + filter button */}
-          <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary }}>
-            <Ionicons name="location-outline" size={13} color={colors.text.tertiary} />
-            <Text style={{ marginLeft: 4, fontSize: 12, color: colors.text.tertiary, fontWeight: "500", flex: 1 }}>
-              {filterState
-                ? <>Showing tournaments in <Text style={{ color: BRAND, fontWeight: "700" }}>{filterState}</Text></>
-                : <>Showing <Text style={{ color: BRAND, fontWeight: "700" }}>all locations</Text></>
-              }
-            </Text>
-            <TouchableOpacity
-              onPress={() => setShowStateFilter(true)}
-              activeOpacity={0.75}
-              style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1, borderColor: filterState ? BRAND : colors.border.default, backgroundColor: filterState ? BRAND + "15" : colors.bg.secondary }}
-            >
-              <Ionicons name="options-outline" size={12} color={filterState ? BRAND : colors.text.secondary} />
-              <Text style={{ fontSize: 11, fontWeight: "600", color: filterState ? BRAND : colors.text.secondary }}>
-                {filterState ? filterState : "Filter"}
-              </Text>
-              {filterState && (
-                <TouchableOpacity onPress={() => setFilterState(null)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                  <Ionicons name="close-circle" size={13} color={BRAND} />
+          {/* Filter bar */}
+          {(() => {
+            const activeFilterCount = [filterState, filterOrganiser, filterDateFrom, filterDateTo].filter(Boolean).length;
+            return (
+              <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary, gap: 8 }}>
+                <Ionicons name="funnel-outline" size={13} color={colors.text.tertiary} />
+                <Text style={{ fontSize: 12, color: colors.text.tertiary, fontWeight: "500", flex: 1 }}>
+                  {activeFilterCount === 0
+                    ? <>Showing <Text style={{ color: BRAND, fontWeight: "700" }}>all upcoming</Text> tournaments</>
+                    : <Text style={{ color: BRAND, fontWeight: "700" }}>{activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""} active</Text>
+                  }
+                </Text>
+                {activeFilterCount > 0 && (
+                  <TouchableOpacity
+                    onPress={() => { setFilterState(null); setFilterOrganiser(null); setFilterDateFrom(null); setFilterDateTo(null); }}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Text style={{ fontSize: 11, color: BRAND, fontWeight: "600" }}>Clear</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  onPress={() => setShowStateFilter(true)}
+                  activeOpacity={0.75}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: activeFilterCount > 0 ? BRAND : colors.border.default, backgroundColor: activeFilterCount > 0 ? BRAND + "15" : colors.bg.secondary }}
+                >
+                  <Ionicons name="options-outline" size={12} color={activeFilterCount > 0 ? BRAND : colors.text.secondary} />
+                  <Text style={{ fontSize: 11, fontWeight: "600", color: activeFilterCount > 0 ? BRAND : colors.text.secondary }}>Filter</Text>
+                  {activeFilterCount > 0 && (
+                    <View style={{ backgroundColor: BRAND, borderRadius: 8, minWidth: 16, height: 16, alignItems: "center", justifyContent: "center", paddingHorizontal: 4 }}>
+                      <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>{activeFilterCount}</Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
-              )}
-            </TouchableOpacity>
-          </View>
+              </View>
+            );
+          })()}
 
           <View style={{ flex: 1 }}>
           <ScrollView
@@ -896,18 +1001,18 @@ export default function CalendarScreen() {
               <View style={styles.centered}>
                 <ActivityIndicator size="large" color={BRAND} />
               </View>
-            ) : officialTournaments.length === 0 ? (
+            ) : filteredOfficialTournaments.length === 0 ? (
               <View style={[styles.emptyState, { borderColor: colors.border.default, marginHorizontal: 16 }]}>
                 <Ionicons name="trophy-outline" size={44} color={colors.text.tertiary} />
                 <Text style={[styles.emptyStateTitle, { color: colors.text.primary }]}>No tournaments found</Text>
                 <Text style={[styles.emptyStateSub, { color: colors.text.tertiary }]}>
-                  {searchQuery.trim() ? "Try a different search term." : filterState ? `No upcoming tournaments in ${filterState} yet.` : "No upcoming tournaments found."}
+                  {searchQuery.trim() ? "Try a different search term." : "Try adjusting your filters."}
                 </Text>
               </View>
             ) : (
               <View style={{ gap: 10 }}>
                 <Text style={[styles.sectionLabel, { color: colors.text.tertiary, marginBottom: 4, paddingHorizontal: 16 }]}>
-                  {officialTournaments.length} UPCOMING{filterState ? ` IN ${filterState}` : ""}
+                  {filteredOfficialTournaments.length} UPCOMING TOURNAMENT{filteredOfficialTournaments.length !== 1 ? "S" : ""}
                 </Text>
 
                 {/* Series groups */}
@@ -1040,43 +1145,230 @@ export default function CalendarScreen() {
       )}
 
       {/* ── State Filter Modal ── */}
-      <Modal visible={showStateFilter} transparent animationType="slide" onRequestClose={() => setShowStateFilter(false)}>
-        <View style={{ flex: 1, justifyContent: "flex-end" }}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowStateFilter(false)}>
-            <View style={{ flex: 1, backgroundColor: "rgba(15,23,43,0.45)" }} />
+      {/* ── Filter Tournament Modal ── */}
+      <Modal
+        visible={showStateFilter}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowStateFilter(false)}
+        onShow={() => {
+          supabase.from("tournaments").select("organiser_info->name").eq("status", "approved").then(({ data }) => {
+            const names = [...new Set((data ?? []).map((r: any) => r.name).filter(Boolean))].sort() as string[];
+            setSupabaseOrganisers(names);
+          });
+        }}
+      >
+        <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <TouchableOpacity style={{ width: 72 }} onPress={() => setShowStateFilter(false)}>
+            <Text style={{ fontSize: 16, color: BRAND }}>Cancel</Text>
           </TouchableOpacity>
-          <View style={{ backgroundColor: colors.bg.primary, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: insets.bottom + 16, paddingHorizontal: 20, paddingTop: 20 }}>
-            <Text style={{ fontSize: 18, fontWeight: "800", color: colors.text.primary, marginBottom: 6 }}>Filter by State</Text>
-            <Text style={{ fontSize: 12, color: colors.text.tertiary, marginBottom: 16 }}>Select a state or show all locations</Text>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-              <TouchableOpacity
-                onPress={() => { setFilterState(null); setShowStateFilter(false); }}
-                activeOpacity={0.75}
-                style={{
-                  paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, borderWidth: 1.5,
-                  backgroundColor: filterState === null ? BRAND : colors.bg.secondary,
-                  borderColor: filterState === null ? BRAND : colors.border.default,
-                }}
-              >
-                <Text style={{ fontSize: 14, fontWeight: "700", color: filterState === null ? "#fff" : colors.text.primary }}>All</Text>
-              </TouchableOpacity>
-              {["NSW", "VIC", "QLD", "WA", "SA", "ACT", "NT", "TAS"].map((s) => (
+          <Text style={[styles.filterNavTitle, { color: colors.text.primary }]}>Filter Tournaments</Text>
+          <TouchableOpacity style={{ width: 72, alignItems: "flex-end" }} onPress={() => { setFilterState(null); setFilterOrganiser(null); setFilterDateFrom(null); setFilterDateTo(null); }}>
+            <Text style={{ fontSize: 16, color: BRAND }}>Reset</Text>
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView style={{ flex: 1, backgroundColor: colors.bg.secondary }} contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}>
+
+          {/* State */}
+          <Text style={[styles.filterSectionLabel, { color: colors.text.tertiary }]}>STATE</Text>
+          <View style={[styles.filterGroup, { borderColor: colors.border.default }]}>
+            <TouchableOpacity
+              style={[styles.filterRow, { backgroundColor: colors.bg.primary }]}
+              activeOpacity={0.6}
+              onPress={() => setShowStateSubSheet(true)}
+            >
+              <Text style={[styles.filterRowLabel, { color: colors.text.primary }]}>State</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text style={{ fontSize: 15, color: filterState ? BRAND : colors.text.tertiary }}>
+                  {filterState ?? "All"}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          {/* Organiser */}
+          <Text style={[styles.filterSectionLabel, { color: colors.text.tertiary }]}>ORGANISER</Text>
+          <View style={[styles.filterGroup, { borderColor: colors.border.default }]}>
+            <TouchableOpacity
+              style={[styles.filterRow, { backgroundColor: colors.bg.primary }]}
+              activeOpacity={0.6}
+              onPress={() => setShowOrganiserSubSheet(true)}
+            >
+              <Text style={[styles.filterRowLabel, { color: colors.text.primary }]}>Organiser</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text style={{ fontSize: 15, color: filterOrganiser ? BRAND : colors.text.tertiary }} numberOfLines={1}>
+                  {filterOrganiser ?? "All"}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          {/* Date range */}
+          <Text style={[styles.filterSectionLabel, { color: colors.text.tertiary }]}>DATE RANGE</Text>
+          <View style={[styles.filterGroup, { borderColor: colors.border.default }]}>
+            <TouchableOpacity
+              style={[styles.filterRow, { backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }]}
+              activeOpacity={0.6}
+              onPress={() => setShowDateFromPicker(true)}
+            >
+              <Text style={[styles.filterRowLabel, { color: colors.text.primary }]}>From</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text style={{ fontSize: 15, color: filterDateFrom ? BRAND : colors.text.tertiary }}>
+                  {filterDateFrom ? filterDateFrom.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : "Any date"}
+                </Text>
+                {filterDateFrom
+                  ? <TouchableOpacity onPress={() => setFilterDateFrom(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Ionicons name="close-circle" size={16} color={colors.text.tertiary} /></TouchableOpacity>
+                  : <Ionicons name="calendar-outline" size={16} color={colors.text.tertiary} />
+                }
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterRow, { backgroundColor: colors.bg.primary }]}
+              activeOpacity={0.6}
+              onPress={() => setShowDateToPicker(true)}
+            >
+              <Text style={[styles.filterRowLabel, { color: colors.text.primary }]}>To</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text style={{ fontSize: 15, color: filterDateTo ? BRAND : colors.text.tertiary }}>
+                  {filterDateTo ? filterDateTo.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : "Any date"}
+                </Text>
+                {filterDateTo
+                  ? <TouchableOpacity onPress={() => setFilterDateTo(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}><Ionicons name="close-circle" size={16} color={colors.text.tertiary} /></TouchableOpacity>
+                  : <Ionicons name="calendar-outline" size={16} color={colors.text.tertiary} />
+                }
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          <View style={{ paddingHorizontal: 16, marginTop: 8 }}>
+            <TouchableOpacity
+              style={[styles.saveBtn, { backgroundColor: BRAND }]}
+              onPress={() => setShowStateFilter(false)}
+              activeOpacity={0.88}
+            >
+              <Text style={styles.saveBtnText}>Apply Filters</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+
+        {/* State sub-sheet */}
+        <Modal visible={showStateSubSheet} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowStateSubSheet(false)}>
+          <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+            <TouchableOpacity style={{ width: 72 }} onPress={() => setShowStateSubSheet(false)}>
+              <Text style={{ fontSize: 16, color: BRAND }}>Back</Text>
+            </TouchableOpacity>
+            <Text style={[styles.filterNavTitle, { color: colors.text.primary }]}>Select State</Text>
+            <View style={{ width: 72 }} />
+          </View>
+          <ScrollView style={{ flex: 1, backgroundColor: colors.bg.secondary }} contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}>
+            <View style={{ height: 24 }} />
+            <View style={[styles.filterGroup, { borderColor: colors.border.default }]}>
+              {[null, "NSW", "VIC", "QLD", "WA", "SA", "ACT", "NT", "TAS"].map((s, i, arr) => (
                 <TouchableOpacity
-                  key={s}
-                  onPress={() => { setFilterState(s); setShowStateFilter(false); }}
-                  activeOpacity={0.75}
-                  style={{
-                    paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, borderWidth: 1.5,
-                    backgroundColor: filterState === s ? BRAND : colors.bg.secondary,
-                    borderColor: filterState === s ? BRAND : colors.border.default,
-                  }}
+                  key={s ?? "all"}
+                  style={[
+                    styles.filterRow,
+                    { backgroundColor: colors.bg.primary },
+                    i < arr.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default },
+                  ]}
+                  activeOpacity={0.6}
+                  onPress={() => { setFilterState(s); setShowStateSubSheet(false); }}
                 >
-                  <Text style={{ fontSize: 14, fontWeight: "700", color: filterState === s ? "#fff" : colors.text.primary }}>{s}</Text>
+                  <Text style={[styles.filterRowLabel, { color: colors.text.primary }]}>{s ?? "All States"}</Text>
+                  {filterState === s && <Ionicons name="checkmark" size={20} color={BRAND} />}
                 </TouchableOpacity>
               ))}
             </View>
+          </ScrollView>
+        </Modal>
+
+        {/* Organiser sub-sheet */}
+        <Modal visible={showOrganiserSubSheet} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowOrganiserSubSheet(false)}>
+          <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+            <TouchableOpacity style={{ width: 72 }} onPress={() => setShowOrganiserSubSheet(false)}>
+              <Text style={{ fontSize: 16, color: BRAND }}>Back</Text>
+            </TouchableOpacity>
+            <Text style={[styles.filterNavTitle, { color: colors.text.primary }]}>Select Organiser</Text>
+            <View style={{ width: 72 }} />
           </View>
-        </View>
+          <ScrollView style={{ flex: 1, backgroundColor: colors.bg.secondary }} contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}>
+            <View style={{ height: 24 }} />
+            <View style={[styles.filterGroup, { borderColor: colors.border.default }]}>
+              {[null, ...supabaseOrganisers].map((org, i, arr) => (
+                <TouchableOpacity
+                  key={org ?? "all"}
+                  style={[
+                    styles.filterRow,
+                    { backgroundColor: colors.bg.primary },
+                    i < arr.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default },
+                  ]}
+                  activeOpacity={0.6}
+                  onPress={() => { setFilterOrganiser(org); setShowOrganiserSubSheet(false); }}
+                >
+                  <Text style={[styles.filterRowLabel, { color: colors.text.primary }]}>{org ?? "All Organisers"}</Text>
+                  {filterOrganiser === org && <Ionicons name="checkmark" size={20} color={BRAND} />}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+        </Modal>
+
+        {/* Date pickers */}
+        {showDateFromPicker && (
+          <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowDateFromPicker(false)}>
+            <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+              <TouchableOpacity style={{ width: 72 }} onPress={() => setShowDateFromPicker(false)}>
+                <Text style={{ fontSize: 16, color: BRAND }}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={[styles.filterNavTitle, { color: colors.text.primary }]}>From Date</Text>
+              <TouchableOpacity style={{ width: 72, alignItems: "flex-end" }} onPress={() => setShowDateFromPicker(false)}>
+                <Text style={{ fontSize: 16, color: BRAND, fontWeight: "600" }}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ flex: 1, backgroundColor: isDark ? "#1C1C1E" : "#F2F2F7", alignItems: "center", paddingTop: 20 }}>
+              <DateTimePicker
+                value={filterDateFrom ?? new Date()}
+                mode="date"
+                display="inline"
+                onChange={(_, date) => date && setFilterDateFrom(date)}
+                minimumDate={new Date()}
+                accentColor={BRAND}
+                textColor={isDark ? "#FFFFFF" : "#000000"}
+                themeVariant={isDark ? "dark" : "light"}
+                style={{ width: "100%" }}
+              />
+            </View>
+          </Modal>
+        )}
+        {showDateToPicker && (
+          <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowDateToPicker(false)}>
+            <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+              <TouchableOpacity style={{ width: 72 }} onPress={() => setShowDateToPicker(false)}>
+                <Text style={{ fontSize: 16, color: BRAND }}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={[styles.filterNavTitle, { color: colors.text.primary }]}>To Date</Text>
+              <TouchableOpacity style={{ width: 72, alignItems: "flex-end" }} onPress={() => setShowDateToPicker(false)}>
+                <Text style={{ fontSize: 16, color: BRAND, fontWeight: "600" }}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ flex: 1, backgroundColor: isDark ? "#1C1C1E" : "#F2F2F7", alignItems: "center", paddingTop: 20 }}>
+              <DateTimePicker
+                value={filterDateTo ?? filterDateFrom ?? new Date()}
+                mode="date"
+                display="inline"
+                onChange={(_, date) => date && setFilterDateTo(date)}
+                minimumDate={filterDateFrom ?? new Date()}
+                accentColor={BRAND}
+                textColor={isDark ? "#FFFFFF" : "#000000"}
+                themeVariant={isDark ? "dark" : "light"}
+                style={{ width: "100%" }}
+              />
+            </View>
+          </Modal>
+        )}
       </Modal>
 
 
@@ -2894,7 +3186,7 @@ type SeriesGroup = {
   dateTo: string;
   venue: string;
   city: string;
-  venueLogoUrl: string | null;
+  logoUrl: string | null;
   venueWebsite: string | null;
   tournaments: OfficialTournament[];
 };
@@ -2996,16 +3288,16 @@ function SeriesCard({ group, colors, onPress, onEditSeries, onUnpublishSeries, o
             <Ionicons name="trophy" size={28} color={BRAND} />
           </View>
         )}
-        {/* Venue logo badge — bottom-left of banner */}
-        {group.venueLogoUrl && (
+        {/* Organiser / venue logo badge — bottom-left of banner */}
+        {group.logoUrl && (
           <View style={{ position: "absolute", bottom: -16, left: 14, width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg.primary, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3, overflow: "hidden" }}>
-            <Image source={{ uri: group.venueLogoUrl }} style={{ width: 34, height: 34 }} resizeMode="contain" />
+            <Image source={{ uri: group.logoUrl }} style={{ width: 34, height: 34 }} resizeMode="contain" />
           </View>
         )}
       </View>
 
       {/* Info row */}
-      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingTop: group.venueLogoUrl ? 22 : 12, paddingBottom: 12, gap: 10 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingTop: group.logoUrl ? 22 : 12, paddingBottom: 12, gap: 10 }}>
         <View style={{ flex: 1, gap: 3 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <Text style={[styles.officialName, { color: colors.text.primary, flexShrink: 1 }]} numberOfLines={1}>{group.name}</Text>
@@ -3059,7 +3351,7 @@ type SeriesFilter = "all" | "games" | "satellites";
 
 function isSatellite(t: OfficialTournament) {
   const haystack = `${t.name} ${t.format ?? ""} ${t.structure ?? ""}`.toLowerCase();
-  return haystack.includes("satellite") || haystack.includes("sat ");
+  return haystack.includes("satellite") || haystack.includes("sat ") || haystack.includes("satty");
 }
 
 function SeriesDetailModal({
@@ -3121,7 +3413,7 @@ function SeriesDetailModal({
           <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }}>
             {(["all", "games", "satellites"] as SeriesFilter[]).map((opt) => {
               const active = filter === opt;
-              const label = opt === "all" ? "All" : opt === "games" ? "Games" : "Satellites";
+              const label = opt === "all" ? "All" : opt === "games" ? "Games" : "Satties";
               return (
                 <TouchableOpacity
                   key={opt}
@@ -3158,6 +3450,7 @@ function SeriesDetailModal({
               colors={colors}
               onAdded={onAdded}
               hideBanner
+              hideSeriesName
               onEditOwn={modalUser?.id && t.submitted_by === modalUser.id ? () => setEditingTournament(t) : undefined}
               onUnpublishOwn={modalUser?.id && t.submitted_by === modalUser.id ? async () => {
                 try {
@@ -3207,12 +3500,13 @@ function SeriesDetailModal({
 }
 
 function OfficialTournamentCard({
-  tournament, colors, onAdded, hideBanner = false, onEditOwn, onDeleteOwn, onUnpublishOwn,
+  tournament, colors, onAdded, hideBanner = false, hideSeriesName = false, onEditOwn, onDeleteOwn, onUnpublishOwn,
 }: {
   tournament: OfficialTournament;
   colors: any;
   onAdded: () => void;
   hideBanner?: boolean;
+  hideSeriesName?: boolean;
   onEditOwn?: () => void;
   onDeleteOwn?: () => void;
   onUnpublishOwn?: () => void;
@@ -3223,6 +3517,28 @@ function OfficialTournamentCard({
   const [ownerSheetVisible, setOwnerSheetVisible] = useState(false);
   const [starSignInVisible, setStarSignInVisible] = useState(false);
   const isOwner = !!cardUser?.id && tournament.submitted_by === cardUser.id;
+
+  // Animated confirmation toast
+  const toastOpacity    = useRef(new Animated.Value(0)).current;
+  const toastTranslateY = useRef(new Animated.Value(8)).current;
+  const [toastMessage, setToastMessage] = useState("");
+
+  function showToast(msg: string) {
+    setToastMessage(msg);
+    toastOpacity.setValue(0);
+    toastTranslateY.setValue(8);
+    Animated.parallel([
+      Animated.timing(toastOpacity,    { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.timing(toastTranslateY, { toValue: 0, duration: 180, useNativeDriver: true }),
+    ]).start(() => {
+      setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(toastOpacity,    { toValue: 0, duration: 300, useNativeDriver: true }),
+          Animated.timing(toastTranslateY, { toValue: -6, duration: 300, useNativeDriver: true }),
+        ]).start();
+      }, 1600);
+    });
+  }
 
   const dateLabel = tournament.tournament_date
     ? new Date(tournament.tournament_date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })
@@ -3240,6 +3556,7 @@ function OfficialTournamentCard({
       if (cardUser?.id) deleteEventFromCloud(cardUser.id, savedEventId).catch(console.error);
       setSavedEventId(null);
       setStarred(false);
+      showToast("Removed from My Tournaments");
       return;
     }
     const eventId = addTournamentEvent({
@@ -3258,6 +3575,7 @@ function OfficialTournamentCard({
     if (cardUser?.id) syncEventToCloud(cardUser.id, eventId).catch(console.error);
     setSavedEventId(eventId);
     setStarred(true);
+    showToast("Added to My Tournaments");
     onAdded();
   }
 
@@ -3267,9 +3585,12 @@ function OfficialTournamentCard({
   // Organiser logo: series organiser > standalone organiser
   const organiserLogoUrl = tournament.series_info?.organiser_logo_url ?? tournament.organiser_info?.logo_url ?? null;
   const organiserName    = tournament.series_info?.organiser ?? tournament.organiser_info?.name ?? null;
-  // Venue logo always from venue_info
-  const venueLogoUrl     = tournament.venue_info?.logo_url ?? null;
-  // For the banner overlay badge: show organiser logo if available, else venue
+  // Only show venue logo when there's no organiser logo and the URLs aren't the same
+  const _venueLogoUrl    = tournament.venue_info?.logo_url ?? null;
+  const venueLogoUrl     = (!organiserLogoUrl && _venueLogoUrl) ? _venueLogoUrl
+                         : (organiserLogoUrl && _venueLogoUrl && _venueLogoUrl !== organiserLogoUrl) ? _venueLogoUrl
+                         : null;
+  // Single badge for banner overlay: always organiser first, then venue only if distinct
   const bannerBadgeUrl   = organiserLogoUrl ?? venueLogoUrl;
 
   return (
@@ -3279,26 +3600,17 @@ function OfficialTournamentCard({
       {hasBanner && (
         <View style={{ position: "relative" }}>
           <Image source={{ uri: bannerUrl! }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
-          {/* Show both logos overlapping at bottom-left of banner */}
-          {(organiserLogoUrl || venueLogoUrl) && (
-            <View style={{ position: "absolute", bottom: -16, left: 14, flexDirection: "row" }}>
-              {organiserLogoUrl && (
-                <View style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg.primary, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3, overflow: "hidden" }}>
-                  <Image source={{ uri: organiserLogoUrl }} style={{ width: 34, height: 34 }} resizeMode="contain" />
-                </View>
-              )}
-              {venueLogoUrl && (
-                <View style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg.primary, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3, overflow: "hidden", marginLeft: organiserLogoUrl ? 6 : 0 }}>
-                  <Image source={{ uri: venueLogoUrl }} style={{ width: 34, height: 34 }} resizeMode="contain" />
-                </View>
-              )}
+          {/* Single logo badge at bottom-left of banner: organiser takes priority */}
+          {bannerBadgeUrl && (
+            <View style={{ position: "absolute", bottom: -16, left: 14, width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg.primary, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3, overflow: "hidden" }}>
+              <Image source={{ uri: bannerBadgeUrl }} style={{ width: 34, height: 34 }} resizeMode="contain" />
             </View>
           )}
         </View>
       )}
 
       {/* Name row */}
-      <View style={[styles.officialCardTop, !hasBanner && { paddingTop: 14 }, hasBanner && { paddingTop: (organiserLogoUrl || venueLogoUrl) ? 22 : 12 }]}>
+      <View style={[styles.officialCardTop, !hasBanner && { paddingTop: 14 }, hasBanner && { paddingTop: bannerBadgeUrl ? 22 : 12 }]}>
         {!hasBanner && (
           <View style={{ flexDirection: "row", gap: 6 }}>
             {/* Organiser logo */}
@@ -3324,7 +3636,7 @@ function OfficialTournamentCard({
           {organiserName ? (
             <Text style={[styles.officialSeries, { color: colors.text.tertiary, fontSize: 11 }]}>{organiserName.toUpperCase()}</Text>
           ) : null}
-          {tournament.series_info?.name ? (
+          {!hideSeriesName && tournament.series_info?.name ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
               <Text style={[styles.officialSeries, { color: BRAND }]}>{tournament.series_info.name}</Text>
               <View style={{ backgroundColor: BRAND + "15", borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
@@ -3344,13 +3656,20 @@ function OfficialTournamentCard({
               <Ionicons name="ellipsis-horizontal" size={18} color={colors.text.secondary} />
             </TouchableOpacity>
           )}
-          <TouchableOpacity
-            onPress={handleStar}
-            style={[styles.officialStarBtn, starred && { backgroundColor: STAR_COLOR + "18" }]}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name={starred ? "star" : "star-outline"} size={22} color={starred ? STAR_COLOR : colors.text.tertiary} />
-          </TouchableOpacity>
+          <View style={{ alignItems: "center", gap: 0 }}>
+            <TouchableOpacity
+              onPress={handleStar}
+              style={[styles.officialStarBtn, starred && { backgroundColor: STAR_COLOR + "18" }]}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name={starred ? "star" : "star-outline"} size={22} color={starred ? STAR_COLOR : colors.text.tertiary} />
+            </TouchableOpacity>
+            {!starred && (
+              <Text style={{ fontSize: 9, color: colors.text.disabled, textAlign: "center", maxWidth: 48, marginTop: -4 }}>
+                Tap to save
+              </Text>
+            )}
+          </View>
         </View>
       </View>
 
@@ -3385,9 +3704,6 @@ function OfficialTournamentCard({
               ? `${tournament.venue_info.address}, ${tournament.city}`
               : `${tournament.venue_info?.name ?? tournament.venue_name ?? ""}${tournament.city ? `, ${tournament.city}` : ""}`}
           </Text>
-          {tournament.venue_info?.lat && (
-            <Ionicons name="open-outline" size={11} color={BRAND} style={{ marginLeft: 2 }} />
-          )}
         </TouchableOpacity>
       </View>
 
@@ -3414,6 +3730,35 @@ function OfficialTournamentCard({
           </View>
         ) : null}
       </View>
+
+      {/* Full-card toast overlay */}
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          opacity: toastOpacity,
+          transform: [{ translateY: toastTranslateY }],
+          backgroundColor: toastMessage.startsWith("Added") ? STAR_COLOR : "#64748B",
+          borderBottomLeftRadius: 16,
+          borderBottomRightRadius: 16,
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+        }}
+      >
+        <Ionicons
+          name={toastMessage.startsWith("Added") ? "star" : "star-outline"}
+          size={13}
+          color="#fff"
+        />
+        <Text style={{ fontSize: 12, fontWeight: "700", color: "#fff" }}>{toastMessage}</Text>
+      </Animated.View>
 
     </View>
     <CardActionsSheet
@@ -3526,14 +3871,21 @@ function BuyStakesFromFeedModal({
     return (parseFloat(match[0]) * pct).toFixed(2);
   })();
 
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.bsOverlay} activeOpacity={1} onPress={onClose} />
-      <View style={[styles.bsSheet, { backgroundColor: colors.bg.primary }]}>
-        {/* Handle */}
-        <View style={[styles.bsHandle, { backgroundColor: colors.border.default }]} />
+  const insets = useSafeAreaInsets();
 
-        <Text style={[styles.bsTitle, { color: colors.text.primary }]}>Buy Stakes</Text>
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
+        {/* Nav header */}
+        <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <TouchableOpacity style={{ width: 72 }} onPress={onClose}>
+            <Text style={{ fontSize: 16, color: BRAND }}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={[styles.filterNavTitle, { color: colors.text.primary }]}>Buy Stake</Text>
+          <View style={{ width: 72 }} />
+        </View>
+
+        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 32 }} keyboardShouldPersistTaps="handled">
         <Text style={{ fontSize: 13, color: colors.text.secondary, marginBottom: 16 }}>
           {authorName} · {tournamentName}
         </Text>
@@ -3594,6 +3946,7 @@ function BuyStakesFromFeedModal({
             </TouchableOpacity>
           </>
         )}
+        </ScrollView>
       </View>
     </Modal>
   );
@@ -3684,7 +4037,7 @@ function CommunityTournamentCard({
     const canBuy  = !isOwnPost && !!currentUserId && parseInt(stakeDeal.remaining) > 0;
     return (
       <>
-        <View style={[styles.communityCard, { backgroundColor: colors.bg.primary, borderColor: "#7C3AED30", flexDirection: "column", padding: 0, overflow: "hidden" }]}>
+        <View style={[styles.communityCard, { backgroundColor: colors.bg.primary, borderColor: "#0891B230", flexDirection: "column", padding: 0, overflow: "hidden" }]}>
           {/* Author header */}
           {AuthorRow}
           <View style={[styles.officialDivider, { backgroundColor: colors.border.subtle, marginHorizontal: 12 }]} />
@@ -3692,8 +4045,8 @@ function CommunityTournamentCard({
           <View style={{ padding: 12, gap: 10 }}>
             {/* Type label */}
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Ionicons name="people" size={13} color="#7C3AED" />
-              <Text style={{ fontSize: 12, fontWeight: "700", color: "#7C3AED" }}>Selling Tournament Action</Text>
+              <Ionicons name="people" size={13} color="#0891B2" />
+              <Text style={{ fontSize: 12, fontWeight: "700", color: "#0891B2" }}>Selling Tournament Action</Text>
             </View>
 
             {/* Tournament name */}
@@ -3701,8 +4054,8 @@ function CommunityTournamentCard({
 
             {/* Pills */}
             <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-              <View style={[styles.officialPill, { backgroundColor: "#7C3AED12" }]}>
-                <Text style={[styles.officialPillText, { color: "#7C3AED" }]}>Selling {stakeDeal.pct}%</Text>
+              <View style={[styles.officialPill, { backgroundColor: "#0891B212" }]}>
+                <Text style={[styles.officialPillText, { color: "#0891B2" }]}>Selling {stakeDeal.pct}%</Text>
               </View>
               <View style={[styles.officialPill, { backgroundColor: parseInt(stakeDeal.remaining) > 0 ? "#22C55E12" : "#EF444412" }]}>
                 <Text style={[styles.officialPillText, { color: parseInt(stakeDeal.remaining) > 0 ? "#16A34A" : "#DC2626" }]}>
@@ -3733,7 +4086,7 @@ function CommunityTournamentCard({
                 <Text style={{ fontSize: 11, color: colors.text.tertiary }}>{stakeDeal.remaining}% available</Text>
               </View>
               <View style={{ height: 6, borderRadius: 3, backgroundColor: colors.bg.secondary, overflow: "hidden" }}>
-                <View style={{ width: `${Math.min(soldPct, 100)}%`, height: "100%", backgroundColor: "#7C3AED", borderRadius: 3 }} />
+                <View style={{ width: `${Math.min(soldPct, 100)}%`, height: "100%", backgroundColor: "#0891B2", borderRadius: 3 }} />
               </View>
             </View>
 
@@ -3748,10 +4101,10 @@ function CommunityTournamentCard({
               {canBuy && (
                 <TouchableOpacity
                   onPress={() => setBuyModal(true)}
-                  style={{ backgroundColor: "#7C3AED", paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 }}
+                  style={{ backgroundColor: "#0891B2", paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 }}
                   activeOpacity={0.8}
                 >
-                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#fff" }}>Buy Stakes</Text>
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#fff" }}>BUY</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -3870,7 +4223,7 @@ function SavedTournamentCard({ post, colors, onUnsave }: { post: SocialPost; col
 // ─── Event Card ───────────────────────────────────────────────────────────────
 
 function EventCard({
-  event, colors, onDelete, onShare, onShareStake, onCalendarSync, onSellStakes, showDate, past,
+  event, colors, onDelete, onShare, onShareStake, onCalendarSync, onCalendarRemove, calendarAdded, onSellStakes, showDate, past,
 }: {
   event: TournamentEvent;
   colors: any;
@@ -3878,6 +4231,8 @@ function EventCard({
   onShare: () => void;
   onShareStake: () => void;
   onCalendarSync: () => void;
+  onCalendarRemove?: () => void;
+  calendarAdded?: boolean;
   onSellStakes: () => void;
   showDate?: boolean;
   past?: boolean;
@@ -3942,24 +4297,24 @@ function EventCard({
 
           {/* Right side: Sell Stakes chip + icons (bottom-aligned) */}
           <View style={{ alignItems: "flex-end", justifyContent: "space-between", alignSelf: "stretch" }}>
-            {!past ? (
+            {!past && (
               <TouchableOpacity
                 onPress={handleSellStakesGuarded}
                 style={{
                   flexDirection: "row", alignItems: "center", gap: 4,
                   paddingHorizontal: 9, paddingVertical: 5,
                   borderRadius: 20, borderWidth: 1,
-                  backgroundColor: hasActiveDeal ? "#7C3AED14" : "transparent",
-                  borderColor: hasActiveDeal ? "#7C3AED" : "#7C3AED50",
+                  backgroundColor: "#0891B214",
+                  borderColor: "#0891B2",
                 }}
                 activeOpacity={0.7}
               >
-                <Ionicons name={hasActiveDeal ? "trending-up-outline" : "people-outline"} size={12} color="#7C3AED" />
-                <Text style={{ fontSize: 11, fontWeight: "700", color: "#7C3AED" }}>
-                  {hasActiveDeal ? "Manage Stakes" : "Sell Stakes"}
+                <Ionicons name="storefront-outline" size={12} color="#0891B2" />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#0891B2" }}>
+                  {hasActiveDeal ? "Manage Deal" : "SELL"}
                 </Text>
               </TouchableOpacity>
-            ) : <View />}
+            )}
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
               {/* More actions */}
               <TouchableOpacity
@@ -3977,7 +4332,7 @@ function EventCard({
       <SignInSheet
         visible={stakeSignInVisible}
         onClose={() => setStakeSignInVisible(false)}
-        icon="trending-up-outline"
+        icon="storefront-outline"
         title="Staking Marketplace"
         description="Sign in to sell poker action and advertise stake deals to the community."
       />
@@ -3986,21 +4341,40 @@ function EventCard({
         title={event.name}
         onClose={() => setShowShareSheet(false)}
         actions={[
-          ...(!past ? [{ icon: "calendar-outline" as const, label: "Add to Calendar", iconColor: "#22C55E", onPress: onCalendarSync }] : []),
-          ...(!past ? [{ icon: "people-outline" as const, label: "Advertise Stake Deal", iconColor: PURPLE, onPress: handleAdvertiseGuarded }] : []),
-          ...(!past ? [{ icon: "share-social-outline" as const, label: "Post to Community", iconColor: BRAND, onPress: onShare }] : []),
+          ...(!past ? [{
+            icon: (calendarAdded ? "checkmark-circle-outline" : "calendar-outline") as any,
+            label: calendarAdded ? "Added to Calendar" : "Add to Calendar",
+            iconColor: "#22C55E",
+            onPress: calendarAdded
+              ? () => Alert.alert("Remove from Calendar", "Remove this tournament from your device calendar?", [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Remove", style: "destructive", onPress: () => { setShowShareSheet(false); setTimeout(() => onCalendarRemove?.(), 300); } },
+                ])
+              : onCalendarSync,
+          }] : []),
+          ...(!past && !hasActiveDeal ? [{ icon: "people-outline" as const, label: "Post on Community", iconColor: BRAND, onPress: onShare }] : []),
+          {
+            icon: "share-outline" as const,
+            label: "Share Tournament",
+            iconColor: "#8B5CF6",
+            onPress: () => {
+              setShowShareSheet(false);
+              const date = new Date(event.date + "T00:00:00").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+              const lines = [
+                `🃏 ${event.name}`,
+                `📅 ${date}`,
+                event.venue ? `📍 ${event.venue}` : null,
+                event.buyin ? `💰 Buy-in: ${event.buyin}` : null,
+                `\nTracking this on Stakemate – the poker staking app\nhttps://stakemate.com.au`,
+              ].filter(Boolean).join("\n");
+              Share.share({ message: lines });
+            },
+          },
           {
             icon: "star-outline" as const,
             label: event.source === "directory" ? "Remove from Schedule" : "Delete",
             destructive: true,
-            onPress: () => Alert.alert(
-              event.source === "directory" ? "Remove from Schedule" : "Delete Tournament",
-              event.source === "directory" ? "Remove this tournament from your schedule?" : `Delete "${event.name}"? This cannot be undone.`,
-              [
-                { text: "Cancel", style: "cancel" },
-                { text: event.source === "directory" ? "Remove" : "Delete", style: "destructive", onPress: onDelete },
-              ]
-            ),
+            onPress: onDelete,
           },
         ]}
       />
@@ -4054,77 +4428,77 @@ function ShareTournamentModal({
     } finally { setPosting(false); }
   }
 
+  const vis = friendsOnly ? "friends" : "public";
+
   return (
-    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={{ flex: 1, justifyContent: "flex-end" }}>
-            <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
-            <View style={[styles.sheetModal, { backgroundColor: colors.bg.primary }]}>
-              <View style={[styles.modalHandle, { backgroundColor: colors.border.default }]} />
-              <View style={styles.modalTitleRow}>
-                <Text style={[styles.modalTitle, { color: colors.text.primary }]}>Share to Community</Text>
-                <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                  <View style={[styles.closeBtn, { backgroundColor: colors.bg.tertiary }]}>
-                    <Ionicons name="close" size={16} color={colors.text.secondary} />
-                  </View>
-                </TouchableOpacity>
-              </View>
+    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={[styles.shareTmNavHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+        <TouchableOpacity style={styles.shareTmNavSide} onPress={onClose}>
+          <Text style={[styles.shareTmNavCancel, { color: BRAND }]}>Cancel</Text>
+        </TouchableOpacity>
+        <Text style={[styles.shareTmNavTitle, { color: colors.text.primary }]}>Post to Community</Text>
+        <View style={styles.shareTmNavSide} />
+      </View>
 
-              <View style={[styles.shareTournamentCard, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
-                <View style={[styles.shareTournamentBadge, { backgroundColor: "rgba(124,58,237,0.12)" }]}>
-                  <Ionicons name="trophy" size={18} color="#7C3AED" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.shareTournamentName, { color: colors.text.primary }]}>{event.name}</Text>
-                  <Text style={[styles.shareTournamentMeta, { color: colors.text.tertiary }]}>{formattedDate}</Text>
-                  {!!event.venue && <Text style={[styles.shareTournamentMeta, { color: colors.text.tertiary }]}>{event.venue}</Text>}
-                  {!!event.buyin && <Text style={[styles.shareTournamentMeta, { color: colors.text.tertiary }]}>Buy-in: {event.buyin}</Text>}
-                </View>
-              </View>
-
-              <TextInput
-                style={[styles.input, styles.inputMulti, { backgroundColor: colors.bg.secondary, color: colors.text.primary, borderColor: colors.border.default }]}
-                placeholder="Add a caption… (optional)"
-                placeholderTextColor={colors.text.tertiary}
-                value={caption}
-                onChangeText={setCaption}
-                multiline
-                maxLength={300}
-                returnKeyType="done"
-              />
-
-              <View style={[styles.toggleRow, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary }]}>
-                <View style={{ flex: 1, gap: 2 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Ionicons name="people-outline" size={15} color={friendsOnly ? BRAND : colors.text.secondary} />
-                    <Text style={[styles.toggleLabel, { color: colors.text.primary }]}>Followers only</Text>
-                  </View>
-                  <Text style={[styles.toggleSub, { color: colors.text.tertiary }]}>
-                    {friendsOnly ? "Only your followers will see this" : "Visible to everyone on the community feed"}
-                  </Text>
-                </View>
-                <Switch
-                  value={friendsOnly}
-                  onValueChange={setFriendsOnly}
-                  trackColor={{ false: colors.border.default, true: `${BRAND}55` }}
-                  thumbColor={friendsOnly ? BRAND : colors.text.tertiary}
-                />
-              </View>
-
-              <TouchableOpacity
-                style={[styles.saveBtn, { backgroundColor: BRAND, marginBottom: insets.bottom + 8 }, posting && { opacity: 0.6 }]}
-                onPress={handleShare}
-                disabled={posting}
-                activeOpacity={0.88}
-              >
-                <Ionicons name={friendsOnly ? "people" : "earth"} size={16} color="#fff" style={{ marginRight: 6 }} />
-                <Text style={styles.saveBtnText}>{posting ? "Sharing…" : friendsOnly ? "Post to Followers" : "Share to Community"}</Text>
-              </TouchableOpacity>
-            </View>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.bg.primary }}
+        contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={[styles.shareTournamentCard, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
+          <View style={[styles.shareTournamentBadge, { backgroundColor: "rgba(124,58,237,0.12)" }]}>
+            <Ionicons name="trophy" size={18} color="#0891B2" />
           </View>
-        </TouchableWithoutFeedback>
-      </KeyboardAvoidingView>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.shareTournamentName, { color: colors.text.primary }]}>{event.name}</Text>
+            <Text style={[styles.shareTournamentMeta, { color: colors.text.tertiary }]}>{formattedDate}</Text>
+            {!!event.venue && <Text style={[styles.shareTournamentMeta, { color: colors.text.tertiary }]}>{event.venue}</Text>}
+            {!!event.buyin && <Text style={[styles.shareTournamentMeta, { color: colors.text.tertiary }]}>Buy-in: {event.buyin}</Text>}
+          </View>
+        </View>
+
+        <TextInput
+          style={[styles.input, styles.inputMulti, { backgroundColor: colors.bg.secondary, color: colors.text.primary, borderColor: colors.border.default, marginTop: 14 }]}
+          placeholder="Add a caption… (optional)"
+          placeholderTextColor={colors.text.tertiary}
+          value={caption}
+          onChangeText={setCaption}
+          multiline
+          maxLength={300}
+          returnKeyType="done"
+        />
+
+        <Text style={[styles.shareTmSectionLabel, { color: colors.text.tertiary }]}>AUDIENCE</Text>
+        <View style={{ flexDirection: "row", gap: 10, marginBottom: 24 }}>
+          {([ ["public", "globe-outline", "Public"] , ["friends", "people-outline", "Followers Only"] ] as const).map(([val, icon, label]) => (
+            <TouchableOpacity
+              key={val}
+              onPress={() => setFriendsOnly(val === "friends")}
+              activeOpacity={0.8}
+              style={[
+                styles.shareTmVisBtn,
+                {
+                  borderColor: vis === val ? BRAND : colors.border.default,
+                  backgroundColor: vis === val ? `${BRAND}14` : colors.bg.secondary,
+                },
+              ]}
+            >
+              <Ionicons name={icon} size={14} color={vis === val ? BRAND : colors.text.secondary} />
+              <Text style={[styles.shareTmVisBtnText, { color: vis === val ? BRAND : colors.text.primary }]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <TouchableOpacity
+          style={[styles.saveBtn, { backgroundColor: BRAND }, posting && { opacity: 0.6 }]}
+          onPress={handleShare}
+          disabled={posting}
+          activeOpacity={0.88}
+        >
+          <Ionicons name={friendsOnly ? "people" : "earth"} size={16} color="#fff" style={{ marginRight: 6 }} />
+          <Text style={styles.saveBtnText}>{posting ? "Sharing…" : friendsOnly ? "Post to Followers" : "Share to Community"}</Text>
+        </TouchableOpacity>
+      </ScrollView>
     </Modal>
   );
 }
@@ -4313,6 +4687,47 @@ const styles = StyleSheet.create({
   },
   toggleLabel: { fontSize: 14, fontWeight: "600" },
   toggleSub: { fontSize: 12, lineHeight: 17 },
+
+  // Shared pageSheet nav bar — iOS standard spacing
+  shareTmNavHeader: {
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  shareTmNavSide: { width: 72 },
+  shareTmNavTitle: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "700" },
+  shareTmNavCancel: { fontSize: 16 },
+
+  // Filter modal styles
+  filterNavBar: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  filterNavTitle: { fontSize: 17, fontWeight: "700" },
+  filterSectionLabel: {
+    fontSize: 12, fontWeight: "600", letterSpacing: 0.5,
+    paddingHorizontal: 16, paddingTop: 24, paddingBottom: 8,
+  },
+  filterGroup: {
+    marginHorizontal: 16, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden",
+  },
+  filterRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingVertical: 14, minHeight: 52,
+  },
+  filterRowLabel: { fontSize: 16 },
+  shareTmSectionLabel: {
+    fontSize: 11, fontWeight: "600", letterSpacing: 0.5,
+    marginTop: 20, marginBottom: 10,
+  },
+  shareTmVisBtn: {
+    flex: 1, flexDirection: "row", alignItems: "center", gap: 6,
+    paddingVertical: 10, paddingHorizontal: 12,
+    borderRadius: 12, borderWidth: 1,
+  },
+  shareTmVisBtnText: { fontSize: 13, fontWeight: "600" },
+
   saveBtn: {
     flexDirection: "row", borderRadius: 14,
     paddingVertical: 16, alignItems: "center",

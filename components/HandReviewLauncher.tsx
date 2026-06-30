@@ -17,7 +17,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const BRAND  = "#155DFC";
-const PURPLE = "#7C3AED";
+const PURPLE = "#0891B2";
 
 export function HandReviewLauncher({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { user } = useAuth();

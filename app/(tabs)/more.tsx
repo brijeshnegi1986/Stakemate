@@ -119,7 +119,7 @@ export default function MoreScreen() {
         <MenuRow
           icon="color-wand-outline"
           label="AI Hand Review"
-          iconColor="#7C3AED"
+          iconColor="#0891B2"
           onPress={() => setShowHandReview(true)}
           isLast
         />

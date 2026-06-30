@@ -38,7 +38,7 @@ const PLAN_META: Record<Plan, { label: string; tagline: string; color: string; a
   elite: {
     label:   "Elite",
     tagline: "Everything Pro + AI coaching",
-    color:   "#7C3AED",
+    color:   "#0891B2",
     accent:  "#9B5DF5",
   },
 };
@@ -127,10 +127,9 @@ export function PaywallModal({
           {/* SM wordmark */}
           <View style={styles.heroMark}>
             <Image
-              source={require("@/assets/images/SM.svg")}
-              style={styles.markIcon}
+              source={require("@/assets/images/stakemate-monogram.png")}
+              style={{ width: 19, height: 30 }}
               contentFit="contain"
-              tintColor="rgba(255,255,255,0.9)"
             />
             <Text style={styles.heroAppName}>Stakemate</Text>
           </View>
@@ -227,10 +226,10 @@ export function PaywallModal({
               <>
                 {ELITE_ONLY.map((f) => (
                   <View key={f.text} style={styles.featureItem}>
-                    <View style={[styles.featCheck, { backgroundColor: "#7C3AED" }]}>
+                    <View style={[styles.featCheck, { backgroundColor: "#0891B2" }]}>
                       <Ionicons name={f.icon as any} size={12} color="#fff" />
                     </View>
-                    <Text style={[styles.featureText, { fontWeight: "700", color: "#7C3AED" }]}>{f.text}</Text>
+                    <Text style={[styles.featureText, { fontWeight: "700", color: "#0891B2" }]}>{f.text}</Text>
                     <View style={styles.eliteTag}>
                       <Text style={styles.eliteTagText}>ELITE</Text>
                     </View>
@@ -320,10 +319,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     marginBottom: 16,
-  },
-  markIcon: {
-    width: 46,
-    height: 30,
   },
   heroAppName: {
     color: "rgba(255,255,255,0.85)",
@@ -489,7 +484,7 @@ const styles = StyleSheet.create({
   eliteTagText: {
     fontSize: 10,
     fontWeight: "700",
-    color: "#7C3AED",
+    color: "#0891B2",
     letterSpacing: 0.5,
   },
   divider: {

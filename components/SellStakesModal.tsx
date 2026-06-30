@@ -1,6 +1,7 @@
 import { setTournamentStakeDeal, TournamentEvent } from "@/db/database";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { sendPushToUser } from "@/lib/notifications";
+import { createPost, updatePostVisibility } from "@/lib/social";
 import { supabase } from "@/lib/supabase";
 import {
   cancelStakeDeal,
@@ -21,13 +22,18 @@ import {
   StakeClaim,
   StakeDeal,
   unpublishStakeDeal,
+  calculatePayouts,
+  markDealSettled,
+  recordDealResult,
+  removeConfirmedClaim,
   updateClaimStatus,
   updateStakeDeal,
+  upsertMuaBalance,
   withdrawClaim,
 } from "@/lib/stakes";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -45,7 +51,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const BRAND  = "#155DFC";
-const PURPLE = "#7C3AED";
+const PURPLE = "#0891B2";
 const GREEN  = "#22C55E";
 const RED    = "#EF4444";
 const ORANGE = "#F97316";
@@ -77,11 +83,12 @@ function Avatar({ uri, size, name }: { uri?: string | null; size: number; name?:
 // ─── Claim row (seller view) ──────────────────────────────────────────────────
 
 function ClaimRow({
-  claim, onConfirm, onReject, colors,
+  claim, onConfirm, onReject, onRemove, colors,
 }: {
   claim: StakeClaim;
   onConfirm: () => void;
   onReject: () => void;
+  onRemove?: () => void;
   colors: any;
 }) {
   const name   = claim.buyer_profile?.display_name || claim.buyer_profile?.username || "Player";
@@ -93,11 +100,6 @@ function ClaimRow({
 
   return (
     <View style={[styles.claimRow, { backgroundColor: colors.bg.secondary, borderColor }]}>
-      {/* Pending indicator stripe */}
-      {isPending && (
-        <View style={{ height: 3, backgroundColor: ORANGE, borderRadius: 2, marginBottom: 12 }} />
-      )}
-
       {/* Buyer identity row */}
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14 }}>
         {/* Avatar initials */}
@@ -112,9 +114,40 @@ function ClaimRow({
           <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text.primary }}>{name}</Text>
           {handle && <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 1 }}>{handle}</Text>}
         </View>
-        <View style={{ backgroundColor: statusColor + "18", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 }}>
-          <Text style={{ fontSize: 11, fontWeight: "700", color: statusColor, textTransform: "capitalize" }}>{claim.status}</Text>
-        </View>
+        {/* Pending: show confirm/decline icon buttons inline; settled: show status pill */}
+        {isPending ? (
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <TouchableOpacity
+              onPress={onReject}
+              activeOpacity={0.75}
+              style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: RED + "18", borderWidth: 1, borderColor: RED + "40", alignItems: "center", justifyContent: "center" }}
+            >
+              <Ionicons name="close" size={20} color={RED} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={onConfirm}
+              activeOpacity={0.75}
+              style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: GREEN + "18", borderWidth: 1, borderColor: GREEN + "40", alignItems: "center", justifyContent: "center" }}
+            >
+              <Ionicons name="checkmark" size={20} color={GREEN} />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <View style={{ backgroundColor: statusColor + "18", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 }}>
+              <Text style={{ fontSize: 11, fontWeight: "700", color: statusColor, textTransform: "capitalize" }}>{claim.status}</Text>
+            </View>
+            {isConfirmed && onRemove && (
+              <TouchableOpacity
+                onPress={onRemove}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: RED + "15", borderWidth: 1, borderColor: RED + "35", alignItems: "center", justifyContent: "center" }}
+              >
+                <Ionicons name="person-remove-outline" size={14} color={RED} />
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </View>
 
       {/* Claim details */}
@@ -139,27 +172,7 @@ function ClaimRow({
         </View>
       ) : null}
 
-      {/* Action buttons — only for pending */}
-      {isPending && (
-        <View style={{ flexDirection: "row", gap: 10, marginTop: 14, paddingHorizontal: 14, paddingBottom: 14 }}>
-          <TouchableOpacity
-            onPress={onReject}
-            activeOpacity={0.8}
-            style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderRadius: 12, backgroundColor: RED + "15", borderWidth: 1, borderColor: RED + "40" }}
-          >
-            <Ionicons name="close-circle-outline" size={18} color={RED} />
-            <Text style={{ fontSize: 14, fontWeight: "700", color: RED }}>Decline</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={onConfirm}
-            activeOpacity={0.8}
-            style={{ flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderRadius: 12, backgroundColor: GREEN }}
-          >
-            <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
-            <Text style={{ fontSize: 14, fontWeight: "700", color: "#fff" }}>Confirm Deal</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      {isPending && <View style={{ height: 14 }} />}
     </View>
   );
 }
@@ -185,6 +198,7 @@ function PackageForm({
   onSave,
   onCancel,
   saving,
+  onRegisterSave,
 }: {
   event: TournamentEvent;
   deal: StakeDeal | null;  // null = create mode
@@ -196,11 +210,14 @@ function PackageForm({
     markup: string;
     showMarkup: boolean;
     minPiece: string;
+    numEntries: string;
     notes: string;
+    reentryCovered: "yes" | "no" | "ask";
     visibility: "public" | "followers";
   }) => void;
   onCancel: () => void;
   saving: boolean;
+  onRegisterSave?: (fn: () => void) => void;
 }) {
   const parsedBuyIn = useMemo(() => {
     if (!event.buyin) return null;
@@ -213,22 +230,31 @@ function PackageForm({
   const [showMarkup,  setShowMarkup]  = useState(deal ? (deal.markup ?? 1.0) !== 1.0 : false);
   const [markup,      setMarkup]      = useState(deal ? String(deal.markup ?? 1.0) : "1.0");
   const [minPiece,    setMinPiece]    = useState(deal ? String(deal.min_piece ?? 1) : "1");
-  const [notes,       setNotes]       = useState(deal?.notes ?? "");
-  const [visibility,  setVisibility]  = useState<"public" | "followers">(
+  const [numEntries,  setNumEntries]  = useState("1");
+  const [notes,           setNotes]           = useState(deal?.notes ?? "");
+  const [reentryCovered,  setReentryCovered]  = useState<"yes" | "no" | "ask">(deal?.reentry_covered ?? "ask");
+  const [visibility,      setVisibility]      = useState<"public" | "followers">(
     deal ? (deal.visibility === "friends" || deal.visibility === "followers" ? "followers" : "public") : "public"
   );
 
-  // Auto-calc price from buy-in when markup changes
+  const entriesNum     = Math.max(1, parseInt(numEntries) || 1);
+  const effectiveBuyIn = parsedBuyIn != null ? parsedBuyIn * entriesNum : null;
+
+  // Auto-calc price from buy-in when markup or entries changes
   useEffect(() => {
-    if (parsedBuyIn == null || deal) return;
+    if (effectiveBuyIn == null || deal) return;
     const mkp = showMarkup ? parseFloat(markup) || 1.0 : 1.0;
-    setPricePerPct(((parsedBuyIn / 100) * mkp).toFixed(2));
-  }, [parsedBuyIn, showMarkup, markup]);
+    setPricePerPct(((effectiveBuyIn / 100) * mkp).toFixed(2));
+  }, [effectiveBuyIn, showMarkup, markup]);
 
   const pctNum   = parseFloat(actionPct) || 0;
   const priceNum = parseFloat(pricePerPct) || 0;
   const mkpNum   = showMarkup ? parseFloat(markup) || 1.0 : 1.0;
   const totalRaise = priceNum > 0 ? (pctNum * priceNum).toFixed(2) : null;
+
+  useEffect(() => {
+    onRegisterSave?.(() => onSave({ actionPct, pricePerPct, markup, showMarkup, minPiece, numEntries, notes, reentryCovered, visibility }));
+  }, [actionPct, pricePerPct, markup, showMarkup, minPiece, numEntries, notes, reentryCovered, visibility]);
 
   return (
     <ScrollView
@@ -290,11 +316,44 @@ function PackageForm({
 
         <View style={[styles.cardDivider, { backgroundColor: colors.border.subtle }]} />
 
+        {/* Number of entries — create mode only */}
+        {!deal && (
+          <>
+            <View style={[styles.cardFieldBlock, { paddingBottom: 14 }]}>
+              <Text style={[styles.cardFieldLabel, { color: colors.text.tertiary, marginBottom: 12 }]}>Number of entries</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <TouchableOpacity
+                  onPress={() => setNumEntries(String(Math.max(1, entriesNum - 1)))}
+                  activeOpacity={0.7}
+                  style={[styles.stepperBtn, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}
+                >
+                  <Ionicons name="remove" size={20} color={colors.text.secondary} />
+                </TouchableOpacity>
+                <View style={{ flex: 1, alignItems: "center" }}>
+                  <Text style={{ fontSize: 26, fontWeight: "900", color: colors.text.primary }}>{entriesNum}</Text>
+                  <Text style={{ fontSize: 11, color: colors.text.tertiary, marginTop: 2 }}>
+                    {entriesNum === 1 ? "entry" : "entries"}
+                    {parsedBuyIn && entriesNum > 1 ? `  ·  $${(parsedBuyIn * entriesNum).toLocaleString()} total` : ""}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setNumEntries(String(entriesNum + 1))}
+                  activeOpacity={0.7}
+                  style={[styles.stepperBtn, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}
+                >
+                  <Ionicons name="add" size={20} color={colors.text.secondary} />
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={[styles.cardDivider, { backgroundColor: colors.border.subtle }]} />
+          </>
+        )}
+
         {/* Price per % — read-only auto-calculated field */}
         <View style={styles.cardFieldBlock}>
           <Text style={[styles.cardFieldLabel, { color: colors.text.tertiary, marginBottom: 8 }]}>Price per 1%</Text>
 
-          {parsedBuyIn ? (
+          {effectiveBuyIn ? (
             /* ── Auto-calc mode: clearly disabled, visually distinct ── */
             <View style={[styles.calcBlock, { backgroundColor: PURPLE + "0A", borderColor: PURPLE + "25" }]}>
               {/* Top strip: icon + "Auto-calculated" label */}
@@ -310,7 +369,7 @@ function PackageForm({
               <View style={{ flexDirection: "row", alignItems: "baseline", gap: 4 }}>
                 <Text style={{ fontSize: 13, fontWeight: "600", color: PURPLE + "90" }}>$</Text>
                 <Text style={{ fontSize: 26, fontWeight: "900", color: PURPLE, letterSpacing: -0.5 }}>
-                  {pricePerPct || (parsedBuyIn / 100).toFixed(2)}
+                  {pricePerPct || (effectiveBuyIn / 100).toFixed(2)}
                 </Text>
                 <Text style={{ fontSize: 13, color: PURPLE + "80", fontWeight: "600", marginLeft: 2 }}>per 1%</Text>
                 {mkpNum !== 1 && (
@@ -321,7 +380,9 @@ function PackageForm({
               </View>
               {/* Hint */}
               <Text style={{ fontSize: 11, color: PURPLE + "70", marginTop: 6, lineHeight: 15 }}>
-                {event.buyin} buy-in ÷ 100{mkpNum !== 1 ? ` × ${mkpNum}× markup` : ""}
+                {entriesNum > 1
+                  ? `${entriesNum} entries × ${event.buyin} = $${effectiveBuyIn.toLocaleString()} ÷ 100${mkpNum !== 1 ? ` × ${mkpNum}× markup` : ""}`
+                  : `${event.buyin} buy-in ÷ 100${mkpNum !== 1 ? ` × ${mkpNum}× markup` : ""}`}
               </Text>
             </View>
           ) : (
@@ -382,6 +443,39 @@ function PackageForm({
         </View>
       </View>
 
+      {/* Re-entry policy */}
+      <View style={[styles.formCard, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
+        <View style={styles.cardFieldBlock}>
+          <Text style={[styles.cardFieldLabel, { color: colors.text.tertiary }]}>Re-entries covered?</Text>
+          <Text style={[styles.cardFieldSub, { color: colors.text.tertiary, marginBottom: 10 }]}>
+            Let backers know upfront if your stake covers re-entries
+          </Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {([
+              { key: "yes" as const, label: "Yes",          color: GREEN },
+              { key: "no"  as const, label: "No",           color: RED   },
+              { key: "ask" as const, label: "Ask me first", color: ORANGE },
+            ]).map(({ key, label, color }) => (
+              <TouchableOpacity
+                key={key}
+                onPress={() => setReentryCovered(key)}
+                activeOpacity={0.75}
+                style={{
+                  flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: "center",
+                  borderWidth: 1,
+                  borderColor: reentryCovered === key ? color : colors.border.default,
+                  backgroundColor: reentryCovered === key ? color + "14" : colors.bg.primary,
+                }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: "700", color: reentryCovered === key ? color : colors.text.secondary }}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      </View>
+
       {/* Visibility (only relevant when editing an already-published deal) */}
       {deal && isPublishedStatus(deal.status) && (
         <View style={[styles.formCard, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
@@ -389,7 +483,7 @@ function PackageForm({
             <Text style={[styles.cardFieldLabel, { color: colors.text.tertiary, marginBottom: 10 }]}>Visibility</Text>
             <View style={styles.visibilityRow}>
               {([
-                { key: "public"    as const, icon: "globe-outline"  as const, label: "Public",       sub: "Community feed" },
+                { key: "public"    as const, icon: "globe-outline"  as const, label: "Public",       sub: "Marketplace" },
                 { key: "followers" as const, icon: "people-outline" as const, label: "Followers Only", sub: "Your followers" },
               ]).map(({ key, icon, label, sub }) => (
                 <TouchableOpacity
@@ -420,6 +514,7 @@ function PackageForm({
               <Text style={[styles.summaryLabel, { color: PURPLE }]}>Selling {pctNum}% of action</Text>
               <Text style={[styles.summarySub, { color: colors.text.secondary }]}>
                 ${priceNum.toFixed(2)} per %{mkpNum !== 1 ? ` · ${mkpNum}× markup` : ""}
+                {entriesNum > 1 ? ` · ${entriesNum} entries` : ""}
               </Text>
             </View>
             {totalRaise && (
@@ -429,11 +524,18 @@ function PackageForm({
               </View>
             )}
           </View>
+          {entriesNum > 1 && effectiveBuyIn && (
+            <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: PURPLE + "25" }}>
+              <Text style={{ fontSize: 12, color: PURPLE + "90" }}>
+                {entriesNum} × ${parsedBuyIn?.toLocaleString()} buy-in = ${effectiveBuyIn.toLocaleString()} effective buy-in
+              </Text>
+            </View>
+          )}
         </View>
       )}
 
       <TouchableOpacity
-        onPress={() => onSave({ actionPct, pricePerPct, markup, showMarkup, minPiece, notes, visibility })}
+        onPress={() => onSave({ actionPct, pricePerPct, markup, showMarkup, minPiece, numEntries, notes, reentryCovered, visibility })}
         disabled={saving || !actionPct}
         style={[styles.createBtn, { backgroundColor: PURPLE, opacity: saving || !actionPct ? 0.6 : 1 }]}
         activeOpacity={0.85}
@@ -481,14 +583,14 @@ function PublishPromptView({
         <Ionicons name="checkmark-circle-outline" size={32} color={GREEN} />
         <Text style={[styles.publishSuccessTitle, { color: GREEN }]}>Package saved!</Text>
         <Text style={[styles.publishSuccessSub, { color: colors.text.secondary }]}>
-          Choose who can see your stake deal, then publish to find backers.
+          Choose who can see your deal, then list it on Marketplace to find backers.
         </Text>
       </View>
 
       <Text style={[styles.publishHeading, { color: colors.text.primary }]}>Who can see this?</Text>
 
       {([
-        { key: "public"    as const, icon: "globe-outline"   as const, label: "Public",         sub: "Visible to everyone on the community feed",  color: BRAND },
+        { key: "public"    as const, icon: "globe-outline"   as const, label: "Public",         sub: "Visible to everyone on Marketplace",  color: BRAND },
         { key: "followers" as const, icon: "people-outline"  as const, label: "Followers Only",  sub: "Only your followers can find this deal",       color: PURPLE },
       ]).map(({ key, icon, label, sub, color }) => (
         <TouchableOpacity
@@ -539,7 +641,7 @@ function PublishPromptView({
           ? <ActivityIndicator color="#fff" />
           : <>
               <Ionicons name="rocket-outline" size={18} color="#fff" />
-              <Text style={styles.createBtnText}>Publish Now</Text>
+              <Text style={styles.createBtnText}>List on Marketplace</Text>
             </>
         }
       </TouchableOpacity>
@@ -558,7 +660,7 @@ function SellerDashView({
   event,
   colors,
   insets,
-  onEdit,
+  userId,
   onPublish,
   onDealChanged,
   onCancelled,
@@ -567,7 +669,7 @@ function SellerDashView({
   event: TournamentEvent;
   colors: any;
   insets: any;
-  onEdit: () => void;
+  userId: string;
   onPublish: () => void;
   onDealChanged: (updated: StakeDeal) => void;
   onCancelled: () => void;
@@ -580,6 +682,161 @@ function SellerDashView({
   const isActive    = deal.status === "open" || deal.status === "active";
   const isEditable  = isEditableStatus(deal.status);
   const isClosed    = deal.status === "closed" || deal.status === "cancelled";
+  const hasResult   = !!deal.result_type;
+
+  // ── Result recording state ────────────────────────────────────────────────
+  const [resultType,    setResultType]    = useState<"cashed" | "busted">(deal.result_type ?? "cashed");
+  const [cashInput,     setCashInput]     = useState(deal.result_cash != null ? String(deal.result_cash) : "");
+  const [savingResult,  setSavingResult]  = useState(false);
+  const [settlingDeal,  setSettlingDeal]  = useState(false);
+
+  const confirmedClaims = deal.claims?.filter((c) => c.status === "confirmed") ?? [];
+  const cashNum = parseFloat(cashInput) || 0;
+  const payouts = (hasResult && deal.result_type === "cashed" && deal.result_cash != null)
+    ? calculatePayouts(confirmedClaims, deal.total_action_selling, deal.result_cash)
+    : resultType === "cashed" && cashNum > 0
+      ? calculatePayouts(confirmedClaims, deal.total_action_selling, cashNum)
+      : [];
+
+  async function handleRecordResult() {
+    if (resultType === "cashed" && (!cashInput || cashNum <= 0)) {
+      Alert.alert("Enter cash amount", "How much did you cash for?"); return;
+    }
+    Alert.alert(
+      resultType === "cashed" ? `Record Cash: $${cashNum.toLocaleString()}` : "Record: Busted",
+      `This will notify your ${confirmedClaims.length} backer${confirmedClaims.length !== 1 ? "s" : ""} of the result. Continue?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Record Result",
+          onPress: async () => {
+            setSavingResult(true);
+            try {
+              await recordDealResult(deal.id, resultType, resultType === "cashed" ? cashNum : undefined);
+              const updated = { ...deal, result_type: resultType, result_cash: resultType === "cashed" ? cashNum : null };
+              onDealChanged(updated);
+              // Notify each backer
+              const payoutList = resultType === "cashed"
+                ? calculatePayouts(confirmedClaims, deal.total_action_selling, cashNum)
+                : [];
+              for (const { claim, share } of payoutList) {
+                sendPushToUser(
+                  claim.buyer_id,
+                  `Result: ${deal.tournament_name} 🃏`,
+                  `${deal.seller_profile?.display_name ?? "The player"} cashed $${cashNum.toLocaleString()}. Your ${claim.percent_claimed}% share ≈ $${share.toLocaleString()}.`,
+                  { dealId: deal.id }
+                ).catch(() => {});
+              }
+              if (resultType === "busted" && confirmedClaims.length > 0) {
+                for (const claim of confirmedClaims) {
+                  sendPushToUser(
+                    claim.buyer_id,
+                    `Result: ${deal.tournament_name} 🃏`,
+                    `${deal.seller_profile?.display_name ?? "The player"} didn't cash this time. Better luck next time!`,
+                    { dealId: deal.id }
+                  ).catch(() => {});
+                }
+              }
+            } catch {
+              Alert.alert("Error", "Could not record result. Please try again.");
+            } finally {
+              setSavingResult(false);
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  async function handleMarkSettled() {
+    Alert.alert("Mark as Settled", "Confirm you've settled all payouts with backers outside the app?", [
+      { text: "Not yet", style: "cancel" },
+      {
+        text: "Mark Settled",
+        onPress: async () => {
+          setSettlingDeal(true);
+          try {
+            await markDealSettled(deal.id);
+            // Update MUA balances: busted = backers owed money (negative for player)
+            if (deal.result_type === "busted" && deal.result_cash == null) {
+              for (const claim of confirmedClaims) {
+                const cost = claim.amount_paid ?? 0;
+                if (cost > 0) await upsertMuaBalance(claim.buyer_id, deal.user_id, cost).catch(() => {});
+              }
+            } else if (deal.result_type === "cashed" && deal.result_cash != null) {
+              // If cashed, reduce existing MUA (player paid back backers)
+              const totalBuyin = deal.buy_in ?? 0;
+              for (const claim of confirmedClaims) {
+                const cost = claim.amount_paid ?? 0;
+                const share = (claim.percent_claimed / 100) * deal.result_cash;
+                if (share < cost) {
+                  await upsertMuaBalance(claim.buyer_id, deal.user_id, cost - share).catch(() => {});
+                }
+              }
+            }
+            onDealChanged({ ...deal, is_settled: true });
+          } catch {
+            Alert.alert("Error", "Could not mark as settled.");
+          } finally {
+            setSettlingDeal(false);
+          }
+        },
+      },
+    ]);
+  }
+
+  // ── Community post state ──────────────────────────────────────────────────
+  const [communityPostId,   setCommunityPostId]   = useState<string | null>(null);
+  const [communityVis,      setCommunityVis]      = useState<"public" | "friends">("public");
+  const [togglingPost,      setTogglingPost]      = useState(false);
+
+  useEffect(() => {
+    supabase
+      .from("social_posts")
+      .select("id, visibility")
+      .eq("stake_deal_id", deal.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setCommunityPostId(data.id);
+          setCommunityVis((data.visibility ?? "public") as "public" | "friends");
+        }
+      });
+  }, [deal.id]);
+
+  async function handleToggleCommunityPost(on: boolean) {
+    if (togglingPost) return;
+    setTogglingPost(true);
+    try {
+      if (on) {
+        const post = await createPost({
+          user_id:      userId,
+          session_type: "tournament",
+          session_name: deal.tournament_name,
+          venue:        deal.venue ?? null,
+          stake_deal_id: deal.id,
+          visibility:   communityVis,
+        });
+        setCommunityPostId(post.id);
+      } else {
+        if (communityPostId) {
+          await supabase.from("social_posts").delete().eq("id", communityPostId);
+          setCommunityPostId(null);
+        }
+      }
+    } catch {
+      Alert.alert("Error", "Could not update community post.");
+    } finally {
+      setTogglingPost(false);
+    }
+  }
+
+  async function handleCommunityVisChange(vis: "public" | "friends") {
+    setCommunityVis(vis);
+    if (communityPostId) {
+      try { await updatePostVisibility(communityPostId, vis); } catch { /* best effort */ }
+    }
+  }
 
   async function handleTogglePause() {
     try {
@@ -596,17 +853,17 @@ function SellerDashView({
   }
 
   async function handleClose() {
-    Alert.alert("Close Deal", "Stop accepting new claims? Existing confirmed claims remain.", [
+    Alert.alert("Mark as Sold", "Mark this deal as sold? No new claims will be accepted. Existing confirmed claims remain.", [
       { text: "Keep Open", style: "cancel" },
       {
-        text: "Close",
+        text: "Mark Sold",
         style: "destructive",
         onPress: async () => {
           try {
             await closeStakeDeal(deal.id);
             onDealChanged({ ...deal, status: "closed" });
           } catch {
-            Alert.alert("Error", "Could not close deal.");
+            Alert.alert("Error", "Could not update deal.");
           }
         },
       },
@@ -614,22 +871,26 @@ function SellerDashView({
   }
 
   async function handleCancel() {
-    Alert.alert("Cancel Deal", "Cancel this deal and notify buyers? This cannot be undone.", [
-      { text: "Keep Deal", style: "cancel" },
-      {
-        text: "Cancel Deal",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await cancelStakeDeal(deal.id);
-            setTournamentStakeDeal(event.id, "");
-            onCancelled();
-          } catch {
-            Alert.alert("Error", "Could not cancel deal.");
-          }
+    Alert.alert(
+      "Delete Deal",
+      "Permanently delete this deal? All pending requests will be removed. This cannot be undone.",
+      [
+        { text: "Keep Deal", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await cancelStakeDeal(deal.id);
+              setTournamentStakeDeal(event.id, "");
+              onCancelled();
+            } catch {
+              Alert.alert("Error", "Could not delete deal.");
+            }
+          },
         },
-      },
-    ]);
+      ]
+    );
   }
 
   async function handleClaimAction(claim: StakeClaim, status: "confirmed" | "rejected") {
@@ -665,6 +926,40 @@ function SellerDashView({
     }
   }
 
+  async function handleRemoveClaim(claim: StakeClaim) {
+    Alert.alert(
+      "Remove Backer",
+      `Remove ${claim.buyer_profile?.display_name || "this backer"}'s ${claim.percent_claimed}% stake? The deal will re-open for new requests.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const { newActionClaimed } = await removeConfirmedClaim(claim.id, deal.id, claim.percent_claimed);
+              const wasClosedOut = ["sold_out", "filled", "closed"].includes(deal.status);
+              onDealChanged({
+                ...deal,
+                action_claimed: newActionClaimed,
+                status: wasClosedOut ? "active" : deal.status,
+                claims: deal.claims?.map((c) => c.id === claim.id ? { ...c, status: "cancelled" as any } : c),
+              });
+              sendPushToUser(
+                claim.buyer_id,
+                "Stake deal update",
+                `Your ${claim.percent_claimed}% stake in ${deal.tournament_name} has been removed by the seller.`,
+                { dealId: deal.id }
+              ).catch(() => {});
+            } catch {
+              Alert.alert("Error", "Could not remove backer. Please try again.");
+            }
+          },
+        },
+      ]
+    );
+  }
+
   async function handleShare() {
     await shareStakeDealExternal({
       tournament_name:      deal.tournament_name,
@@ -679,10 +974,10 @@ function SellerDashView({
   }
 
   async function handleUnpublish() {
-    Alert.alert("Unpublish", "Remove this deal from the feed? You can re-publish it later.", [
+    Alert.alert("Remove from Marketplace", "Remove this deal from Marketplace? You can re-list it later.", [
       { text: "Cancel", style: "cancel" },
       {
-        text: "Unpublish",
+        text: "Remove",
         onPress: async () => {
           try {
             await unpublishStakeDeal(deal.id);
@@ -698,20 +993,92 @@ function SellerDashView({
   return (
     <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 24 }]} showsVerticalScrollIndicator={false}>
 
-      {/* Draft publish prompt */}
-      {isDraft && (
-        <TouchableOpacity
-          onPress={onPublish}
-          style={[styles.publishDraftBanner, { backgroundColor: BRAND + "10", borderColor: BRAND + "40" }]}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="rocket-outline" size={20} color={BRAND} />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.publishDraftTitle, { color: BRAND }]}>Draft — not visible yet</Text>
-            <Text style={[styles.publishDraftSub, { color: colors.text.secondary }]}>Tap to publish and find backers</Text>
+      {/* ── Sharing section ── */}
+      {!isClosed && (
+        <View style={[styles.sharingCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text.primary, marginBottom: 12 }]}>Sharing</Text>
+
+          {/* Marketplace row */}
+          <View style={styles.sharingRow}>
+            <View style={[styles.sharingIcon, { backgroundColor: BRAND + "14" }]}>
+              <Ionicons name="storefront-outline" size={18} color={BRAND} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: colors.text.primary }}>Marketplace</Text>
+              <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 1 }}>
+                {isPublishedStatus(deal.status) ? "Listed — buyers can find your deal" : "Not listed yet"}
+              </Text>
+            </View>
+            <Switch
+              value={isPublishedStatus(deal.status)}
+              onValueChange={(on) => on ? onPublish() : handleUnpublish()}
+              trackColor={{ false: colors.border.default, true: BRAND + "55" }}
+              thumbColor={isPublishedStatus(deal.status) ? BRAND : colors.text.tertiary}
+            />
           </View>
-          <Ionicons name="chevron-forward" size={18} color={BRAND} />
-        </TouchableOpacity>
+
+          {/* Share Link row — only when listed */}
+          {isPublishedStatus(deal.status) && (
+            <TouchableOpacity onPress={handleShare} activeOpacity={0.7} style={[styles.sharingRow, { marginTop: 0, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle }]}>
+              <View style={[styles.sharingIcon, { backgroundColor: colors.bg.secondary }]}>
+                <Ionicons name="share-outline" size={18} color={colors.text.secondary} />
+              </View>
+              <Text style={{ flex: 1, fontSize: 14, fontWeight: "600", color: colors.text.primary }}>Share Link</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+            </TouchableOpacity>
+          )}
+
+          {/* Divider */}
+          <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border.default, marginVertical: 10 }} />
+
+          {/* Community Post row */}
+          <View style={styles.sharingRow}>
+            <View style={[styles.sharingIcon, { backgroundColor: "#8B5CF614" }]}>
+              <Ionicons name="people-outline" size={18} color="#8B5CF6" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: colors.text.primary }}>Post on Community</Text>
+              <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 1 }}>
+                {communityPostId ? "Visible on the community feed" : "Share with the community feed"}
+              </Text>
+            </View>
+            <Switch
+              value={!!communityPostId}
+              onValueChange={handleToggleCommunityPost}
+              disabled={togglingPost}
+              trackColor={{ false: colors.border.default, true: "#8B5CF655" }}
+              thumbColor={communityPostId ? "#8B5CF6" : colors.text.tertiary}
+            />
+          </View>
+
+          {/* Visibility picker — only when community post is ON */}
+          {!!communityPostId && (
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 8, paddingLeft: 46 }}>
+              {([["public", "globe-outline", "Public"] as const, ["friends", "people-outline", "Followers Only"] as const]).map(([val, icon, label]) => (
+                <TouchableOpacity
+                  key={val}
+                  onPress={() => handleCommunityVisChange(val)}
+                  activeOpacity={0.8}
+                  style={{
+                    flex: 1,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 5,
+                    paddingVertical: 7,
+                    paddingHorizontal: 10,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: communityVis === val ? "#8B5CF6" : colors.border.default,
+                    backgroundColor: communityVis === val ? "#8B5CF614" : colors.bg.secondary,
+                  }}
+                >
+                  <Ionicons name={icon} size={13} color={communityVis === val ? "#8B5CF6" : colors.text.tertiary} />
+                  <Text style={{ fontSize: 12, fontWeight: "600", color: communityVis === val ? "#8B5CF6" : colors.text.secondary }}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
       )}
 
       {/* Status banner */}
@@ -737,50 +1104,14 @@ function SellerDashView({
       {/* Progress bar */}
       <ProgressBar claimed={deal.action_claimed} total={deal.total_action_selling} color={statusColor} />
 
-      {/* Quick actions */}
-      {!isClosed && (
+      {/* Resume quick action — only for paused deals (recovery path) */}
+      {!isClosed && isPaused && (
         <View style={styles.quickActionsRow}>
-          {isEditable && (
-            <TouchableOpacity onPress={onEdit} style={[styles.quickActionBtn, { borderColor: colors.border.default, backgroundColor: colors.bg.secondary }]} activeOpacity={0.8}>
-              <Ionicons name="pencil-outline" size={16} color={colors.text.secondary} />
-              <Text style={[styles.quickActionText, { color: colors.text.secondary }]}>Edit</Text>
-            </TouchableOpacity>
-          )}
-          {(isActive || isPaused) && (
-            <TouchableOpacity onPress={handleTogglePause} style={[styles.quickActionBtn, { borderColor: isPaused ? GREEN + "60" : ORANGE + "60", backgroundColor: isPaused ? GREEN + "10" : ORANGE + "10" }]} activeOpacity={0.8}>
-              <Ionicons name={isPaused ? "play-outline" : "pause-outline"} size={16} color={isPaused ? GREEN : ORANGE} />
-              <Text style={[styles.quickActionText, { color: isPaused ? GREEN : ORANGE }]}>{isPaused ? "Resume" : "Pause"}</Text>
-            </TouchableOpacity>
-          )}
-          {isPublishedStatus(deal.status) && (
-            <TouchableOpacity onPress={handleShare} style={[styles.quickActionBtn, { borderColor: BRAND + "60", backgroundColor: BRAND + "10" }]} activeOpacity={0.8}>
-              <Ionicons name="share-outline" size={16} color={BRAND} />
-              <Text style={[styles.quickActionText, { color: BRAND }]}>Share</Text>
-            </TouchableOpacity>
-          )}
-          {isActive && (
-            <TouchableOpacity onPress={handleClose} style={[styles.quickActionBtn, { borderColor: GRAY + "60", backgroundColor: GRAY + "10" }]} activeOpacity={0.8}>
-              <Ionicons name="lock-closed-outline" size={16} color={GRAY} />
-              <Text style={[styles.quickActionText, { color: GRAY }]}>Close</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity onPress={handleTogglePause} style={[styles.quickActionBtn, { flex: 1, borderColor: GREEN + "60", backgroundColor: GREEN + "10" }]} activeOpacity={0.8}>
+            <Ionicons name="play-outline" size={16} color={GREEN} />
+            <Text style={[styles.quickActionText, { color: GREEN }]}>Resume</Text>
+          </TouchableOpacity>
         </View>
-      )}
-
-      {/* Visibility chip */}
-      {isPublishedStatus(deal.status) && (
-        <TouchableOpacity onPress={handleUnpublish} activeOpacity={0.8}>
-          <View style={[styles.visChip, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}>
-            <Ionicons
-              name={deal.visibility === "friends" || deal.visibility === "followers" ? "people-outline" : "globe-outline"}
-              size={14}
-              color={colors.text.tertiary}
-            />
-            <Text style={[styles.visChipText, { color: colors.text.secondary }]}>
-              {deal.visibility === "friends" || deal.visibility === "followers" ? "Followers Only" : "Public"} · Tap to unpublish
-            </Text>
-          </View>
-        </TouchableOpacity>
       )}
 
       {/* ── Claims — shown FIRST so pending requests are impossible to miss ── */}
@@ -818,6 +1149,7 @@ function SellerDashView({
                     claim={c}
                     onConfirm={() => handleClaimAction(c, "confirmed")}
                     onReject={() => handleClaimAction(c, "rejected")}
+                    onRemove={() => handleRemoveClaim(c)}
                     colors={colors}
                   />
                 ))}
@@ -826,6 +1158,179 @@ function SellerDashView({
           </>
         );
       })()}
+
+      {/* Mark as Sold — only shown when deal is active, placed after claims so owner has reviewed requests first */}
+      {isActive && (() => {
+        const hasConfirmed = (deal.claims?.filter((c) => c.status === "confirmed").length ?? 0) > 0;
+        const canMarkSold  = deal.action_claimed > 0 || hasConfirmed;
+        return (
+          <View style={{ marginBottom: 16 }}>
+            <TouchableOpacity
+              onPress={canMarkSold ? handleClose : undefined}
+              activeOpacity={canMarkSold ? 0.85 : 1}
+              style={[
+                styles.markSoldBtn,
+                {
+                  backgroundColor: canMarkSold ? GREEN + "12" : colors.bg.secondary,
+                  borderColor:     canMarkSold ? GREEN + "50" : colors.border.default,
+                  opacity:         canMarkSold ? 1 : 0.55,
+                },
+              ]}
+            >
+              <Ionicons name="checkmark-circle-outline" size={18} color={canMarkSold ? GREEN : colors.text.tertiary} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: "700", color: canMarkSold ? GREEN : colors.text.tertiary }}>
+                  Mark as Sold
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.text.disabled, marginTop: 1 }}>
+                  {canMarkSold
+                    ? "Close the deal — no new requests will be accepted"
+                    : "Available once at least one stake claim is confirmed"}
+                </Text>
+              </View>
+              {canMarkSold && <Ionicons name="chevron-forward" size={14} color={GREEN} />}
+            </TouchableOpacity>
+          </View>
+        );
+      })()}
+
+      {/* ── Result & Settlement ───────────────────────────────────────────────── */}
+      {isClosed && (
+        <>
+          <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Tournament Result</Text>
+
+          {hasResult ? (
+            /* Result already recorded — show summary */
+            <View style={[styles.detailCard, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default, gap: 12 }]}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Ionicons
+                  name={deal.result_type === "cashed" ? "trophy" : "close-circle"}
+                  size={22}
+                  color={deal.result_type === "cashed" ? GREEN : RED}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 16, fontWeight: "800", color: deal.result_type === "cashed" ? GREEN : RED }}>
+                    {deal.result_type === "cashed" ? `Cashed — $${(deal.result_cash ?? 0).toLocaleString()}` : "Busted"}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 2 }}>
+                    {deal.is_settled ? "✓ Settled with all backers" : "Awaiting settlement"}
+                  </Text>
+                </View>
+              </View>
+
+              {deal.result_type === "cashed" && confirmedClaims.length > 0 && (
+                <View style={{ gap: 6 }}>
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text.tertiary, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Backer Payouts
+                  </Text>
+                  {payouts.map(({ claim, share }) => {
+                    const name = claim.buyer_profile?.display_name || claim.buyer_profile?.username || "Backer";
+                    return (
+                      <View key={claim.id} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle }}>
+                        <Text style={{ fontSize: 14, color: colors.text.primary }}>{name} ({claim.percent_claimed}%)</Text>
+                        <Text style={{ fontSize: 14, fontWeight: "700", color: GREEN }}>${share.toLocaleString()}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
+              {!deal.is_settled && (
+                <TouchableOpacity
+                  onPress={handleMarkSettled}
+                  disabled={settlingDeal}
+                  activeOpacity={0.85}
+                  style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, borderRadius: 12, backgroundColor: GREEN + "14", borderWidth: 1, borderColor: GREEN + "40" }}
+                >
+                  {settlingDeal
+                    ? <ActivityIndicator size="small" color={GREEN} />
+                    : <>
+                        <Ionicons name="checkmark-done-outline" size={16} color={GREEN} />
+                        <Text style={{ fontSize: 14, fontWeight: "700", color: GREEN }}>Mark as Settled</Text>
+                      </>
+                  }
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            /* No result yet — show recorder */
+            <View style={[styles.detailCard, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default, gap: 14 }]}>
+              <Text style={{ fontSize: 13, color: colors.text.secondary, lineHeight: 18 }}>
+                Record your result so your backers know what happened.
+              </Text>
+
+              {/* Cashed / Busted toggle */}
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                {([
+                  { key: "cashed" as const, icon: "trophy-outline" as const, label: "Cashed", color: GREEN },
+                  { key: "busted" as const, icon: "close-circle-outline" as const, label: "Busted", color: RED },
+                ]).map(({ key, icon, label, color }) => (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => setResultType(key)}
+                    activeOpacity={0.75}
+                    style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, borderRadius: 12, borderWidth: 1.5, borderColor: resultType === key ? color : colors.border.default, backgroundColor: resultType === key ? color + "14" : colors.bg.primary }}
+                  >
+                    <Ionicons name={icon} size={18} color={resultType === key ? color : colors.text.tertiary} />
+                    <Text style={{ fontSize: 15, fontWeight: "700", color: resultType === key ? color : colors.text.secondary }}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Cash amount input */}
+              {resultType === "cashed" && (
+                <View>
+                  <Text style={[styles.cardFieldLabel, { color: colors.text.tertiary, marginBottom: 8 }]}>Cash amount</Text>
+                  <View style={[styles.cardInputRow, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                    <Text style={[styles.cardInputUnit, { color: colors.text.tertiary }]}>$</Text>
+                    <TextInput
+                      value={cashInput}
+                      onChangeText={setCashInput}
+                      keyboardType="numeric"
+                      placeholder="0"
+                      placeholderTextColor={colors.text.disabled}
+                      style={[styles.cardInput, { color: colors.text.primary }]}
+                    />
+                  </View>
+                </View>
+              )}
+
+              {/* Payout preview */}
+              {payouts.length > 0 && (
+                <View style={{ gap: 4 }}>
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text.tertiary, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Backer Payouts Preview
+                  </Text>
+                  {payouts.map(({ claim, share }) => {
+                    const name = claim.buyer_profile?.display_name || claim.buyer_profile?.username || "Backer";
+                    return (
+                      <View key={claim.id} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 5 }}>
+                        <Text style={{ fontSize: 13, color: colors.text.secondary }}>{name} ({claim.percent_claimed}%)</Text>
+                        <Text style={{ fontSize: 13, fontWeight: "700", color: GREEN }}>${share.toLocaleString()}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
+              <TouchableOpacity
+                onPress={handleRecordResult}
+                disabled={savingResult}
+                activeOpacity={0.85}
+                style={[styles.createBtn, { backgroundColor: PURPLE, opacity: savingResult ? 0.6 : 1, marginTop: 0 }]}
+              >
+                {savingResult
+                  ? <ActivityIndicator color="#fff" />
+                  : <>
+                      <Ionicons name="flag-outline" size={16} color="#fff" />
+                      <Text style={styles.createBtnText}>Record & Notify Backers</Text>
+                    </>
+                }
+              </TouchableOpacity>
+            </View>
+          )}
+        </>
+      )}
 
       {/* Deal details card */}
       <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Deal Details</Text>
@@ -838,6 +1343,7 @@ function SellerDashView({
           { icon: "pie-chart-outline",      label: "Selling",    value: `${deal.total_action_selling}% of action` },
           deal.price_per_percent ? { icon: "pricetag-outline",     label: "Price",      value: `$${deal.price_per_percent}/% ${deal.markup !== 1 ? `(${deal.markup}×)` : ""}` } : null,
           deal.min_piece > 1     ? { icon: "layers-outline",       label: "Min piece",  value: `${deal.min_piece}%` } : null,
+          deal.reentry_covered  ? { icon: "refresh-outline",       label: "Re-entries", value: deal.reentry_covered === "yes" ? "Covered" : deal.reentry_covered === "no" ? "Not covered" : "Ask seller" } : null,
           deal.notes            ? { icon: "document-text-outline", label: "Notes",      value: deal.notes } : null,
         ].filter(Boolean).map((row: any, i) => (
           <View key={i} style={[styles.detailRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle }]}>
@@ -855,7 +1361,8 @@ function SellerDashView({
           style={[styles.cancelDealBtn, { borderColor: RED + "60" }]}
           activeOpacity={0.85}
         >
-          <Text style={[styles.cancelDealText, { color: RED }]}>Cancel Deal</Text>
+          <Ionicons name="trash-outline" size={16} color={RED} />
+          <Text style={[styles.cancelDealText, { color: RED }]}>Delete Deal</Text>
         </TouchableOpacity>
       )}
     </ScrollView>
@@ -1037,6 +1544,50 @@ function BuyerPurchaseView({
         </View>
       )}
 
+      {/* Re-entry policy */}
+      {deal.reentry_covered && (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 }}>
+          <Ionicons name="refresh-outline" size={14} color={colors.text.tertiary} />
+          <Text style={{ fontSize: 13, color: colors.text.secondary }}>
+            Re-entries:{" "}
+            <Text style={{ fontWeight: "700" }}>
+              {deal.reentry_covered === "yes" ? "Covered by stake" : deal.reentry_covered === "no" ? "Not covered" : "Ask seller first"}
+            </Text>
+          </Text>
+        </View>
+      )}
+
+      {/* Result card — shown when seller has recorded the outcome */}
+      {deal.result_type && (
+        <View style={[styles.detailCard, { backgroundColor: deal.result_type === "cashed" ? GREEN + "0F" : RED + "0F", borderColor: deal.result_type === "cashed" ? GREEN + "40" : RED + "40", gap: 10 }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <Ionicons name={deal.result_type === "cashed" ? "trophy" : "close-circle"} size={22} color={deal.result_type === "cashed" ? GREEN : RED} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 16, fontWeight: "800", color: deal.result_type === "cashed" ? GREEN : RED }}>
+                {deal.result_type === "cashed" ? `Cashed — $${(deal.result_cash ?? 0).toLocaleString()}` : "Busted"}
+              </Text>
+              <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 2 }}>
+                {deal.is_settled ? "✓ Seller has settled payouts" : "Settlement pending"}
+              </Text>
+            </View>
+          </View>
+          {/* Buyer's share */}
+          {myClaim?.status === "confirmed" && deal.result_type === "cashed" && deal.result_cash != null && (
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: deal.result_type === "cashed" ? GREEN + "30" : RED + "30" }}>
+              <Text style={{ fontSize: 14, color: colors.text.secondary }}>Your {myClaim.percent_claimed}% share</Text>
+              <Text style={{ fontSize: 18, fontWeight: "900", color: GREEN }}>
+                ${((myClaim.percent_claimed / 100) * deal.result_cash).toLocaleString()}
+              </Text>
+            </View>
+          )}
+          {myClaim?.status === "confirmed" && deal.result_type === "busted" && (
+            <Text style={{ fontSize: 13, color: colors.text.secondary, paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: RED + "30" }}>
+              No payout this time — better luck next tournament!
+            </Text>
+          )}
+        </View>
+      )}
+
       {/* Existing claim */}
       {loadingClaim ? (
         <ActivityIndicator color={BRAND} style={{ marginVertical: 8 }} />
@@ -1185,6 +1736,8 @@ export function SellStakesModal({
   const [saving,   setSaving]   = useState(false);
   const [view,     setView]     = useState<ModalView>("loading");
 
+  const saveFormRef = useRef<(() => void) | null>(null);
+
   const isOwner  = !deal || deal.user_id === userId;
 
   // Resolve initial view on open
@@ -1253,7 +1806,7 @@ export function SellStakesModal({
     publish_prompt: "Publish",
     seller_dash:    "My Deal",
     seller_edit:    "Edit Deal",
-    buyer_purchase: "Buy Stake",
+    buyer_purchase: "BUY",
   };
 
   const showBack = view === "seller_edit" || view === "publish_prompt";
@@ -1267,7 +1820,7 @@ export function SellStakesModal({
   // ── Create handler ────────────────────────────────────────────────────────
   async function handleCreate(fields: {
     actionPct: string; pricePerPct: string; markup: string; showMarkup: boolean;
-    minPiece: string; notes: string; visibility: "public" | "followers";
+    minPiece: string; numEntries: string; notes: string; reentryCovered: "yes" | "no" | "ask"; visibility: "public" | "followers";
   }) {
     if (!userId) { Alert.alert("Sign in required"); return; }
     if (!event)  { Alert.alert("Error", "No tournament attached."); return; }
@@ -1276,8 +1829,11 @@ export function SellStakesModal({
     if (isNaN(pct) || pct <= 0 || pct > 100) {
       Alert.alert("Invalid %", "Enter a percentage between 1 and 100."); return;
     }
-    const price = fields.pricePerPct ? parseFloat(fields.pricePerPct) : null;
-    const mkp   = fields.showMarkup ? parseFloat(fields.markup) || 1.0 : 1.0;
+    const price    = fields.pricePerPct ? parseFloat(fields.pricePerPct) : null;
+    const mkp      = fields.showMarkup ? parseFloat(fields.markup) || 1.0 : 1.0;
+    const entries  = Math.max(1, parseInt(fields.numEntries) || 1);
+    const singleBuyIn = event.buyin ? parseFloat(event.buyin.replace(/[^0-9.]/g, "")) || null : null;
+    const effectiveBuyIn = singleBuyIn != null ? singleBuyIn * entries : null;
 
     setSaving(true);
     try {
@@ -1286,12 +1842,13 @@ export function SellStakesModal({
         tournament_name:      event.name,
         venue:                event.venue || null,
         tournament_date:      event.date,
-        buy_in:               event.buyin ? parseFloat(event.buyin.replace(/[^0-9.]/g, "")) || null : null,
+        buy_in:               effectiveBuyIn,
         total_action_selling: pct,
         price_per_percent:    price,
         markup:               mkp,
         min_piece:            parseFloat(fields.minPiece) || 1,
         notes:                fields.notes.trim() || null,
+        reentry_covered:      fields.reentryCovered,
         local_tournament_id:  event.id,
       });
 
@@ -1309,7 +1866,7 @@ export function SellStakesModal({
   // ── Edit handler ──────────────────────────────────────────────────────────
   async function handleEdit(fields: {
     actionPct: string; pricePerPct: string; markup: string; showMarkup: boolean;
-    minPiece: string; notes: string; visibility: "public" | "followers";
+    minPiece: string; numEntries: string; notes: string; reentryCovered: "yes" | "no" | "ask"; visibility: "public" | "followers";
   }) {
     if (!deal) return;
     const pct = parseFloat(fields.actionPct);
@@ -1330,6 +1887,7 @@ export function SellStakesModal({
         markup:               mkp,
         min_piece:            parseFloat(fields.minPiece) || 1,
         notes:                fields.notes.trim() || null,
+        reentry_covered:      fields.reentryCovered,
         visibility:           isPublishedStatus(deal.status)
           ? (fields.visibility === "followers" ? "friends" : "public")
           : deal.visibility,
@@ -1378,7 +1936,29 @@ export function SellStakesModal({
               </Text>
             )}
           </View>
-          <View style={styles.headerBtn} />
+          {/* Right action */}
+          {view === "seller_dash" && deal && isOwner ? (
+            <TouchableOpacity
+              style={styles.headerBtn}
+              onPress={() => setView("seller_edit")}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="pencil-outline" size={20} color={colors.text.secondary} />
+            </TouchableOpacity>
+          ) : view === "seller_edit" ? (
+            <TouchableOpacity
+              style={styles.headerBtn}
+              onPress={() => saveFormRef.current?.()}
+              disabled={saving}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text style={{ fontSize: 16, fontWeight: "700", color: saving ? colors.text.disabled : BRAND }}>
+                Save
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.headerBtn} />
+          )}
         </View>
 
         {/* Body */}
@@ -1414,6 +1994,7 @@ export function SellStakesModal({
             onSave={handleEdit}
             onCancel={() => setView("seller_dash")}
             saving={saving}
+            onRegisterSave={(fn) => { saveFormRef.current = fn; }}
           />
         ) : view === "seller_dash" && deal ? (
           <SellerDashView
@@ -1421,7 +2002,7 @@ export function SellStakesModal({
             event={eventForForm}
             colors={colors}
             insets={insets}
-            onEdit={() => setView("seller_edit")}
+            userId={userId}
             onPublish={() => setView("publish_prompt")}
             onDealChanged={setDeal}
             onCancelled={() => { setDeal(null); onDealCreated?.(""); onClose(); }}
@@ -1452,7 +2033,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingTop: 16,
+    paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerBtn:    { width: 40, alignItems: "center" },
@@ -1474,7 +2056,7 @@ const styles = StyleSheet.create({
   },
   tournamentBannerIcon: {
     width: 36, height: 36, borderRadius: 9,
-    backgroundColor: "#7C3AED20", alignItems: "center", justifyContent: "center",
+    backgroundColor: "#0891B220", alignItems: "center", justifyContent: "center",
   },
   tournamentBannerName: { fontSize: 14, fontWeight: "700" },
   tournamentBannerMeta: { fontSize: 12, marginTop: 2 },
@@ -1549,13 +2131,19 @@ const styles = StyleSheet.create({
   publishOptionLabel: { fontSize: 15, fontWeight: "700" },
   publishOptionSub:   { fontSize: 12, marginTop: 2 },
 
-  // Seller dash
-  publishDraftBanner: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    borderRadius: 14, borderWidth: 1, padding: 14,
+  // Seller dash — sharing section
+  sharingCard: {
+    borderRadius: 16, borderWidth: StyleSheet.hairlineWidth,
+    padding: 14, gap: 0,
   },
-  publishDraftTitle: { fontSize: 14, fontWeight: "700" },
-  publishDraftSub:   { fontSize: 12, marginTop: 1 },
+  sharingRow: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    paddingVertical: 6,
+  },
+  sharingIcon: {
+    width: 36, height: 36, borderRadius: 10,
+    alignItems: "center", justifyContent: "center",
+  },
 
   dealBanner: {
     flexDirection: "row", alignItems: "center",
@@ -1584,13 +2172,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 8,
   },
   quickActionText: { fontSize: 13, fontWeight: "600" },
-
-  visChip: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    borderRadius: 10, borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 12, paddingVertical: 8,
-  },
-  visChipText: { fontSize: 12 },
 
   detailCard: {
     borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden",
@@ -1623,9 +2204,14 @@ const styles = StyleSheet.create({
     width: 32, height: 32, borderRadius: 8,
     alignItems: "center", justifyContent: "center",
   },
+  markSoldBtn: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    borderRadius: 14, borderWidth: 1,
+    paddingHorizontal: 16, paddingVertical: 14,
+  },
   cancelDealBtn: {
     borderRadius: 16, borderWidth: 1, paddingVertical: 14,
-    alignItems: "center", justifyContent: "center",
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
   },
   cancelDealText: { fontSize: 15, fontWeight: "600" },
 

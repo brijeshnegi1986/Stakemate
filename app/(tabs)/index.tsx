@@ -1,10 +1,10 @@
-import { HandAnalysisModal } from "@/components/HandAnalysisModal";
 import { HandReviewLauncher } from "@/components/HandReviewLauncher";
 import { SeriesCarousel } from "@/components/SeriesCarousel";
-import { BACKEND_URL } from "@/constants/config";
+import { SignInSheet } from "@/components/SignInSheet";
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { fetchAppNotifications, getUnreadCount } from "@/lib/appNotifications";
+import * as Notifications from "expo-notifications";
 import { getMyStakeClaims, getMyStakeDeals, MyStakeClaim, StakeDeal } from "@/lib/stakes";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -29,7 +29,6 @@ import {
   NoteEntry,
   Session,
   TournamentEvent,
-  updateNoteEntry,
 } from "../../db/database";
 
 const BRAND = "#155DFC";
@@ -104,7 +103,7 @@ function groupByBanner(events: TournamentEvent[]): NextUpGroup[] {
 
 export default function HomeScreen() {
   const { colors } = usePokerTheme();
-  const { profile, refreshProfile, isSyncing } = useAuth();
+  const { profile, session, refreshProfile, isSyncing } = useAuth();
   const insets = useSafeAreaInsets();
 
   const [sessions, setSessions]           = useState<Session[]>([]);
@@ -115,10 +114,9 @@ export default function HomeScreen() {
   const [myClaims, setMyClaims]           = useState<MyStakeClaim[]>([]);
   const [upcomingTourneys, setUpcomingTourneys] = useState<TournamentEvent[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [showSignIn, setShowSignIn]           = useState(false);
   const [showHandReview, setShowHandReview]   = useState(false);
   const [recentNotes, setRecentNotes]         = useState<NoteEntry[]>([]);
-  const [handReviewNote, setHandReviewNote]   = useState<NoteEntry | null>(null);
-  const [improvingId, setImprovingId]         = useState<number | null>(null);
 
   const meta = CURRENCY_META[currency] ?? CURRENCY_META.AUD;
 
@@ -147,7 +145,10 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!profile?.id) return;
-      getUnreadCount(profile.id).then(setUnreadCount).catch(() => {});
+      getUnreadCount(profile.id).then((count) => {
+        setUnreadCount(count);
+        Notifications.setBadgeCountAsync(count).catch(() => {});
+      }).catch(() => {});
     }, [profile?.id])
   );
 
@@ -163,27 +164,6 @@ export default function HomeScreen() {
   }, [isSyncing]);
 
   function refreshNotes() { setRecentNotes(getNoteHistory().slice(0, 3)); }
-
-  async function handleImproveNote(note: NoteEntry) {
-    if (improvingId !== null) return;
-    setImprovingId(note.id);
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/compress-hand`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: note.raw_notes }),
-      });
-      const json = await res.json();
-      if (json.compressed) {
-        updateNoteEntry(note.id, { enhancedNotes: json.compressed });
-        refreshNotes();
-      }
-    } catch {
-      // silently fail — user can try again from notes tab
-    } finally {
-      setImprovingId(null);
-    }
-  }
 
   const totalProfit = useMemo(
     () => sessions.reduce((s, x) => s + (x.profit || 0), 0),
@@ -239,10 +219,9 @@ export default function HomeScreen() {
         <View style={[styles.topBar, { backgroundColor: BRAND, paddingTop: insets.top + 10 }]}>
           <View style={styles.topBarLeft}>
             <Image
-              source={require("@/assets/images/SM.svg")}
+              source={require("@/assets/images/stakemate-monogram.png")}
               style={styles.smIcon}
               contentFit="contain"
-              tintColor="rgba(255,255,255,0.9)"
             />
             <View>
               <Text style={styles.topBarGreet}>{getGreeting()}</Text>
@@ -263,7 +242,10 @@ export default function HomeScreen() {
             <TouchableOpacity onPress={() => router.push("/settings")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="settings-outline" size={22} color="rgba(255,255,255,0.85)" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => router.navigate("/(tabs)/profile")} activeOpacity={0.8}>
+            <TouchableOpacity
+              onPress={() => session ? router.navigate("/(tabs)/profile") : setShowSignIn(true)}
+              activeOpacity={0.8}
+            >
               {profile?.avatar_url ? (
                 <Image source={{ uri: profile.avatar_url }} style={styles.avatar} contentFit="cover" cachePolicy="none" />
               ) : (
@@ -370,22 +352,6 @@ export default function HomeScreen() {
             </View>
           </TouchableOpacity>
         </View>
-
-        {/* ── AI Hand Review card ── */}
-        <TouchableOpacity
-          onPress={() => setShowHandReview(true)}
-          activeOpacity={0.82}
-          style={[styles.handReviewCard, { backgroundColor: "#7C3AED12", borderColor: "#7C3AED30" }]}
-        >
-          <View style={[styles.handReviewIcon, { backgroundColor: "#7C3AED18" }]}>
-            <Ionicons name="color-wand-outline" size={18} color="#7C3AED" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.handReviewTitle, { color: "#7C3AED" }]}>AI Hand Review</Text>
-            <Text style={[styles.handReviewSub, { color: "#7C3AED99" }]}>Describe a hand — get instant coaching</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={16} color="#7C3AED80" />
-        </TouchableOpacity>
 
         {/* ── Live session banner ── */}
         {activeSession && (
@@ -507,8 +473,8 @@ export default function HomeScreen() {
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
-                  <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: "#7C3AED15", alignItems: "center", justifyContent: "center" }}>
-                    <Ionicons name="people-outline" size={13} color="#7C3AED" />
+                  <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: "#0891B215", alignItems: "center", justifyContent: "center" }}>
+                    <Ionicons name="people-outline" size={13} color="#0891B2" />
                   </View>
                   <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Active Staking</Text>
                 </View>
@@ -527,18 +493,18 @@ export default function HomeScreen() {
                     const progress    = totalPct > 0 ? claimedPct / totalPct : 0;
                     const isFilled    = deal.status === "filled" || deal.status === "sold_out";
                     const isDraft     = deal.status === "draft";
-                    const chipColor   = isDraft ? "#6B7280" : isFilled ? "#22C55E" : deal.status === "paused" ? "#F97316" : "#7C3AED";
+                    const chipColor   = isDraft ? "#6B7280" : isFilled ? "#22C55E" : deal.status === "paused" ? "#F97316" : "#0891B2";
                     const chipLabel   = isDraft ? "Draft" : isFilled ? "Filled" : deal.status === "paused" ? "Paused" : deal.status === "closed" ? "Closed" : "Active";
                     return (
                       <TouchableOpacity
                         key={deal.id}
                         onPress={() => router.navigate("/(tabs)/calendar")}
                         activeOpacity={0.75}
-                        style={[styles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: "#7C3AED30" }]}
+                        style={[styles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: "#0891B230" }]}
                       >
                         <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
-                          <View style={[styles.stakeCardIcon, { backgroundColor: "#7C3AED15" }]}>
-                            <Ionicons name="trending-up-outline" size={15} color="#7C3AED" />
+                          <View style={[styles.stakeCardIcon, { backgroundColor: "#0891B215" }]}>
+                            <Ionicons name="trending-up-outline" size={15} color="#0891B2" />
                           </View>
                           <View style={{ flex: 1, gap: 2 }}>
                             <Text style={[styles.stakeCardName, { color: colors.text.primary }]} numberOfLines={1}>
@@ -671,22 +637,34 @@ export default function HomeScreen() {
             )}
           </View>
 
-          {/* ── Hand Notes (signed-in users only) ── */}
-          {profile && recentNotes.length > 0 && (
-            <View style={styles.section}>
+          {/* ── Hand Notes ── */}
+          <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Hand Notes</Text>
-                <TouchableOpacity onPress={() => router.navigate("/(tabs)/notes")}>
-                  <Text style={[styles.seeAll, { color: BRAND }]}>See all</Text>
-                </TouchableOpacity>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                  <TouchableOpacity onPress={() => router.navigate({ pathname: "/(tabs)/notes", params: { new: "1" } } as any)}>
+                    <Ionicons name="add-circle-outline" size={22} color={BRAND} />
+                  </TouchableOpacity>
+                  {recentNotes.length > 0 && (
+                    <TouchableOpacity onPress={() => router.navigate("/(tabs)/notes")}>
+                      <Text style={[styles.seeAll, { color: BRAND }]}>See all</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
               <View style={[styles.listCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                {recentNotes.length === 0 ? (
+                  <View style={{ alignItems: "center", paddingVertical: 24, gap: 6 }}>
+                    <Text style={[styles.noteMeta, { color: colors.text.tertiary, textAlign: "center" }]}>
+                      No hand notes yet.{"\n"}Tap + above to add your first note.
+                    </Text>
+                  </View>
+                ) : null}
                 {recentNotes.map((note, i) => {
                   const isLast = i === recentNotes.length - 1;
                   const title = note.title || note.raw_notes?.split("\n")[0]?.slice(0, 60) || "Untitled note";
                   const preview = (note.enhanced_notes || note.raw_notes || "").replace(/\n+/g, " ").slice(0, 80);
                   const dateStr = note.session_date ? new Date(note.session_date).toLocaleDateString("en-AU", { day: "numeric", month: "short" }) : "";
-                  const isImproving = improvingId === note.id;
                   return (
                     <View
                       key={note.id}
@@ -715,54 +693,24 @@ export default function HomeScreen() {
                         ) : null}
                       </TouchableOpacity>
 
-                      {/* Action buttons */}
-                      <View style={[styles.noteActions, { borderTopColor: colors.border.subtle }]}>
-                        <TouchableOpacity
-                          onPress={() => handleImproveNote(note)}
-                          disabled={isImproving}
-                          activeOpacity={0.7}
-                          style={styles.noteActionBtn}
-                        >
-                          {isImproving ? (
-                            <ActivityIndicator size="small" color="#6366F1" />
-                          ) : (
-                            <Ionicons name="sparkles-outline" size={14} color="#6366F1" />
-                          )}
-                          <Text style={[styles.noteActionText, { color: "#6366F1" }]}>
-                            {isImproving ? "Improving…" : "Improve"}
-                          </Text>
-                        </TouchableOpacity>
-                        <View style={[styles.noteActionDivider, { backgroundColor: colors.border.subtle }]} />
-                        <TouchableOpacity
-                          onPress={() => setHandReviewNote(note)}
-                          activeOpacity={0.7}
-                          style={styles.noteActionBtn}
-                        >
-                          <Ionicons name="analytics-outline" size={14} color={BRAND} />
-                          <Text style={[styles.noteActionText, { color: BRAND }]}>Review with AI</Text>
-                        </TouchableOpacity>
-                      </View>
                     </View>
                   );
                 })}
               </View>
             </View>
-          )}
 
           {/* ── Series promotional banners ── */}
           <SeriesCarousel />
         </View>
       </ScrollView>
 
-      <HandAnalysisModal
-        visible={!!handReviewNote}
-        notes={handReviewNote ? (handReviewNote.enhanced_notes ?? handReviewNote.raw_notes) : ""}
-        noteId={handReviewNote?.id}
-        savedAnalysis={handReviewNote?.hand_analysis}
-        onClose={() => setHandReviewNote(null)}
-        onSaved={refreshNotes}
-      />
       <HandReviewLauncher visible={showHandReview} onClose={() => setShowHandReview(false)} />
+      <SignInSheet
+        visible={showSignIn}
+        onClose={() => setShowSignIn(false)}
+        title="Sign in to Stakemate"
+        description="Track sessions, sync across devices, and unlock all features."
+      />
     </View>
   );
 }
@@ -783,7 +731,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   smIcon: {
-    width: 52,
+    width: 21,
     height: 34,
   },
   topBarGreet: {

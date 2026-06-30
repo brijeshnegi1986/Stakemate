@@ -35,10 +35,19 @@ const ALL_SKUS = [
 const ELITE_SKUS = new Set([PRODUCT_ELITE_MONTHLY, PRODUCT_ELITE_YEARLY]);
 const PRO_SKUS   = new Set([PRODUCT_PRO_MONTHLY,   PRODUCT_PRO_YEARLY]);
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
+    ),
+  ]);
+}
+
 const SubscriptionContext = createContext<SubscriptionState>({
-  tier: "elite",
-  isPro: true,
-  isElite: true,
+  tier: "free",
+  isPro: false,
+  isElite: false,
   isLoading: false,
   purchaseSubscription: async () => {},
   restorePurchases: async () => {},
@@ -85,37 +94,50 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   }, [connected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const purchaseSubscription = useCallback(async (productId: string) => {
+    Alert.alert("Debug", `Tapped purchase. connected=${connected}, sku=${productId}`);
     setIsLoading(true);
     try {
-      await requestPurchase({
-        type: "subs",
-        request: { apple: { sku: productId } },
-      });
-    } catch {
-      // handled by onPurchaseError
+      await withTimeout(
+        requestPurchase({
+          type: "subs",
+          request: {
+            apple: {
+              sku: productId,
+              andDangerouslyFinishTransactionAutomaticallyIOS: false,
+            },
+          },
+        }),
+        20000,
+        "requestPurchase"
+      );
+    } catch (error: any) {
+      if (error?.code !== ErrorCode.UserCancelled) {
+        Alert.alert("Purchase failed", `connected=${connected}\n${error?.message ?? error}`);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [requestPurchase]);
+  }, [requestPurchase, connected]);
 
   const restorePurchases = useCallback(async () => {
+    Alert.alert("Debug", `Tapped restore. connected=${connected}`);
     setIsLoading(true);
     try {
-      await iapRestore();
+      await withTimeout(iapRestore(), 20000, "restorePurchases");
       await getActiveSubscriptions(ALL_SKUS);
-    } catch {
-      Alert.alert("Restore failed", "Could not restore purchases. Please try again.");
+    } catch (error: any) {
+      Alert.alert("Restore failed", `connected=${connected}\n${error?.message ?? error}`);
     } finally {
       setIsLoading(false);
     }
-  }, [iapRestore, getActiveSubscriptions]);
+  }, [iapRestore, getActiveSubscriptions, connected]);
 
   return (
     <SubscriptionContext.Provider
       value={{
         tier,
-        isPro: true,
-        isElite: true,
+        isPro: tier === "pro" || tier === "elite",
+        isElite: tier === "elite",
         isLoading,
         purchaseSubscription,
         restorePurchases,

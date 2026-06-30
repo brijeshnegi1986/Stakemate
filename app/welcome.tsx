@@ -1,13 +1,13 @@
 import { useAuth } from "@/context/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
 import * as AppleAuthentication from "expo-apple-authentication";
-import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Modal,
   Platform,
   StyleSheet,
@@ -18,7 +18,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const BRAND = "#155DFC";
+const TEAL  = "#0CC8D4";
 const DARK  = "#0f172b";
+const MINT  = "#7CF3D0";
 
 export default function WelcomeScreen() {
   const { session, signInWithApple, signInWithGoogle } = useAuth();
@@ -60,17 +62,12 @@ export default function WelcomeScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: "#f8fafc" }]}>
-      {/* ── Watermark poker card image pinned to bottom ── */}
-      <Image
-        source={require("../assets/images/watermark-bg_1.png")}
-        style={styles.cardsBg}
-        contentFit="cover"
-      />
+      {/* ── Background image ── */}
 
-      {/* ── Gradient: solid at top, fades out in middle, fades back in at very bottom ── */}
+      {/* ── Gradient background ── */}
       <LinearGradient
-        colors={["#f8fafc", "#f8fafc", "rgba(248,250,252,0.85)", "rgba(248,250,252,0.1)", "rgba(248,250,252,0.75)", "#f8fafc"]}
-        locations={[0, 0.28, 0.45, 0.65, 0.88, 1]}
+        colors={["#2E6BFF", "#155DFC", "#0D3796"]}
+        locations={[0, 0.45, 1]}
         style={StyleSheet.absoluteFill}
         pointerEvents="none"
       />
@@ -80,31 +77,20 @@ export default function WelcomeScreen() {
 
         {/* Logo */}
         <View style={styles.logoRow}>
-          <Image
-            source={require("../assets/images/stakemateLogo-horizontal-blue.svg")}
-            style={styles.logo}
-            contentFit="contain"
-          />
+          <Image source={require("@/assets/images/Stakemate-logo-white.png")} style={styles.logo} resizeMode="contain" />
         </View>
 
-        {/* Hero — centered in remaining space */}
+        {/* Hero — centered */}
         <View style={styles.hero}>
-          {/* TRACK. CONNECT. STAKE. */}
           <Text style={styles.headline} allowFontScaling={false}>
-            <Text style={styles.headlineDark}>TRACK</Text>
-            <Text style={styles.headlineBrand}>.</Text>
-            {"\n"}
-            <Text style={styles.headlineBrand}>CONNECT.</Text>
-            {"\n"}
-            <Text style={styles.headlineDark}>STAKE</Text>
-            <Text style={styles.headlineBrand}>.</Text>
+            TRACK.{"\n"}CONNECT.{"\n"}STAKE.
           </Text>
 
           <Text style={styles.tagline}>Built for the modern poker player.</Text>
 
           <View style={styles.bodyWrap}>
             <Text style={styles.body}>
-              Track sessions, manage your bankroll, and connect with players.
+              Track sessions, manage your bankroll, connect with players, and discover staking opportunities.
             </Text>
           </View>
         </View>
@@ -119,7 +105,7 @@ export default function WelcomeScreen() {
             <Text style={styles.getStartedText}>Sign In</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={handleSkip} activeOpacity={0.6} style={styles.skipBtn}>
+          <TouchableOpacity onPress={handleSkip} activeOpacity={0.75} style={styles.skipBtn}>
             <Text style={styles.skipText}>Skip for now</Text>
           </TouchableOpacity>
         </View>
@@ -149,10 +135,9 @@ export default function WelcomeScreen() {
           {/* SM icon badge */}
           <View style={styles.modalIconBadge}>
             <Image
-              source={require("../assets/images/SM.svg")}
-              style={{ width: 28, height: 28 }}
-              contentFit="contain"
-              tintColor="#fff"
+              source={require("@/assets/images/stakemate-monogram.png")}
+              style={{ width: 17, height: 28 }}
+              resizeMode="contain"
             />
           </View>
 
@@ -239,10 +224,11 @@ const styles = StyleSheet.create({
 
   logoRow: {
     alignItems: "center",
+    justifyContent: "center",
   },
   logo: {
-    width: 300,
-    height: 80,
+    width: 220,
+    height: 174,
   },
 
   hero: {
@@ -256,29 +242,30 @@ const styles = StyleSheet.create({
     fontSize: 48,
     fontWeight: "900",
     textAlign: "center",
-    lineHeight: 52,
-    marginBottom: 12,
+    lineHeight: 54,
+    marginBottom: 14,
+    color: "#fff",
   },
-  headlineDark:  { color: DARK },
-  headlineBrand: { color: BRAND },
+  headlineDark: { color: DARK },
+  headlineTeal: { color: TEAL },
 
   tagline: {
     fontSize: 16,
-    fontWeight: "600",
-    color: DARK,
+    fontWeight: "700",
+    color: "#fff",
     textAlign: "center",
     marginBottom: 0,
   },
 
   bodyWrap: {
-    paddingVertical: 16,
+    paddingVertical: 14,
   },
   body: {
-    fontSize: 16,
-    fontWeight: "300",
-    color: DARK,
+    fontSize: 15,
+    fontWeight: "400",
+    color: "#fff",
     textAlign: "center",
-    lineHeight: 24,
+    lineHeight: 23,
     opacity: 0.75,
   },
 
@@ -290,7 +277,7 @@ const styles = StyleSheet.create({
   getStartedBtn: {
     width: "100%",
     height: 56,
-    backgroundColor: DARK,
+    backgroundColor: MINT,
     borderRadius: 9999,
     alignItems: "center",
     justifyContent: "center",
@@ -301,21 +288,27 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   getStartedText: {
-    color: "#fff",
+    color: DARK,
     fontSize: 16,
     fontWeight: "600",
     letterSpacing: 0.24,
   },
 
   skipBtn: {
+    width: "100%",
+    height: 56,
+    borderRadius: 9999,
+    borderWidth: 1.5,
+    borderColor: "#fff",
     alignItems: "center",
-    paddingVertical: 4,
+    justifyContent: "center",
+    backgroundColor: "transparent",
   },
   skipText: {
-    color: DARK,
+    color: "#fff",
     fontSize: 16,
     fontWeight: "600",
-    textDecorationLine: "underline",
+    letterSpacing: 0.2,
   },
 
   // Sign-in modal

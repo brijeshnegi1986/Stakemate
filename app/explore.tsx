@@ -20,7 +20,7 @@ if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental
 const BRAND  = "#155DFC";
 const SKY    = "#0EA5E9";
 const GREEN  = "#22C55E";
-const PURPLE = "#7C3AED";
+const PURPLE = "#0891B2";
 const ORANGE = "#F97316";
 const PINK   = "#EC4899";
 

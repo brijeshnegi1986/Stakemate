@@ -1,5 +1,6 @@
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { BuyInSheet, DurationSheet, FieldRow, StateSheet, StakesSheet, VenueSheet } from "@/components/SessionPickers";
+import { TournamentPickerSheet } from "@/components/TournamentPickerSheet";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { useAuth } from "@/context/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
@@ -54,11 +55,12 @@ export default function AddSessionScreen() {
   const [payout, setPayout]           = useState(editing?.payout  ? String(editing.payout)  : "");
   const [notes]                       = useState(editing?.notes ?? "");
 
-  const [buyInOpen,    setBuyInOpen]    = useState(false);
-  const [stakesOpen,   setStakesOpen]   = useState(false);
-  const [durationOpen, setDurationOpen] = useState(false);
-  const [stateOpen,    setStateOpen]    = useState(false);
-  const [venueOpen,    setVenueOpen]    = useState(false);
+  const [buyInOpen,          setBuyInOpen]          = useState(false);
+  const [stakesOpen,         setStakesOpen]         = useState(false);
+  const [durationOpen,       setDurationOpen]       = useState(false);
+  const [stateOpen,          setStateOpen]          = useState(false);
+  const [venueOpen,          setVenueOpen]          = useState(false);
+  const [tournamentPickerOpen, setTournamentPickerOpen] = useState(false);
 
   // Auto-detect state from location on new sessions only
   useEffect(() => {
@@ -285,45 +287,79 @@ export default function AddSessionScreen() {
           {/* ═══ TOURNAMENT FIELDS ═══ */}
           {type === "tournament" && (
             <>
-              <View style={{
-                ...inputCard,
-                borderColor: tournamentName.length > 0 ? colors.border.brand : colors.border.default,
-                paddingHorizontal: spacing.lg,
-                marginBottom: spacing["2xl"],
-              }}>
-                <TextInput
-                  placeholder="Tournament name e.g. Sunday Major"
-                  placeholderTextColor={colors.text.disabled}
-                  value={tournamentName}
-                  onChangeText={setTournamentName}
-                  returnKeyType="next"
-                  style={{ color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body }}
-                />
-              </View>
+              <TouchableOpacity
+                style={{
+                  ...inputCard,
+                  borderColor: tournamentName.length > 0 ? colors.border.brand : colors.border.default,
+                  paddingHorizontal: spacing.lg,
+                  paddingVertical: spacing.md,
+                  marginBottom: spacing["2xl"],
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+                onPress={() => setTournamentPickerOpen(true)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="trophy-outline" size={16} color={tournamentName.length > 0 ? colors.text.secondary : colors.text.disabled} />
+                <Text
+                  style={{ flex: 1, ...inputTypo.body, color: tournamentName.length > 0 ? colors.text.primary : colors.text.disabled }}
+                  numberOfLines={1}
+                >
+                  {tournamentName.length > 0 ? tournamentName : "Search or enter tournament name"}
+                </Text>
+                {tournamentName.length > 0 && (
+                  <TouchableOpacity onPress={() => setTournamentName("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Ionicons name="close-circle" size={16} color={colors.text.tertiary} />
+                  </TouchableOpacity>
+                )}
+                <Ionicons name="chevron-forward" size={14} color={colors.text.tertiary} />
+              </TouchableOpacity>
 
-              <View style={{
-                ...inputCard,
-                borderColor: buyIn.length > 0 ? colors.border.brand : colors.border.default,
-                flexDirection: "row",
-                alignItems: "center",
-                paddingHorizontal: spacing.lg,
-                marginBottom: spacing["2xl"],
-              }}>
-                <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: spacing.xs }}>$</Text>
-                <TextInput
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                  placeholderTextColor={colors.text.disabled}
-                  value={buyIn}
-                  onChangeText={setBuyIn}
-                  returnKeyType="next"
-                  style={{ flex: 1, color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
-                />
-              </View>
-
+              {/* Buy-in + Payout in one row */}
               <View style={{ flexDirection: "row", gap: spacing.md, marginBottom: spacing["2xl"] }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600", marginBottom: spacing.sm }}>Entries</Text>
+                  <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600", marginBottom: spacing.sm }}>Buy-in</Text>
+                  <View style={{ ...inputCard, borderColor: buyIn.length > 0 ? colors.border.brand : colors.border.default, flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg }}>
+                    <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: spacing.xs }}>$</Text>
+                    <TextInput
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      placeholderTextColor={colors.text.disabled}
+                      value={buyIn}
+                      onChangeText={setBuyIn}
+                      returnKeyType="next"
+                      style={{ flex: 1, color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
+                    />
+                  </View>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "baseline", gap: 4, marginBottom: spacing.sm }}>
+                    <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600" }}>Payout</Text>
+                    <Text style={{ color: colors.text.disabled, fontSize: 10, fontWeight: "400" }}>0 if busted</Text>
+                  </View>
+                  <View style={{ ...inputCard, borderColor: payout.length > 0 && parseFloat(payout) > 0 ? colors.border.success : colors.border.default, flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg }}>
+                    <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: spacing.xs }}>$</Text>
+                    <TextInput
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      placeholderTextColor={colors.text.disabled}
+                      value={payout}
+                      onChangeText={setPayout}
+                      returnKeyType="done"
+                      style={{ flex: 1, color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              {/* Entries + Position (optional) */}
+              <View style={{ flexDirection: "row", gap: spacing.md, marginBottom: spacing["2xl"] }}>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "baseline", gap: 4, marginBottom: spacing.sm }}>
+                    <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600" }}>Entries</Text>
+                    <Text style={{ color: colors.text.disabled, fontSize: 10, fontWeight: "400" }}>optional</Text>
+                  </View>
                   <View style={{ ...inputCard, paddingHorizontal: spacing.lg }}>
                     <TextInput
                       keyboardType="number-pad"
@@ -337,7 +373,10 @@ export default function AddSessionScreen() {
                   </View>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600", marginBottom: spacing.sm }}>Position</Text>
+                  <View style={{ flexDirection: "row", alignItems: "baseline", gap: 4, marginBottom: spacing.sm }}>
+                    <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600" }}>Position</Text>
+                    <Text style={{ color: colors.text.disabled, fontSize: 10, fontWeight: "400" }}>optional</Text>
+                  </View>
                   <View style={{ ...inputCard, paddingHorizontal: spacing.lg }}>
                     <TextInput
                       keyboardType="number-pad"
@@ -350,27 +389,6 @@ export default function AddSessionScreen() {
                     />
                   </View>
                 </View>
-              </View>
-
-              <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600", marginBottom: spacing.sm }}>Payout (0 if busted)</Text>
-              <View style={{
-                ...inputCard,
-                borderColor: payout.length > 0 && parseFloat(payout) > 0 ? colors.border.success : colors.border.default,
-                flexDirection: "row",
-                alignItems: "center",
-                paddingHorizontal: spacing.lg,
-                marginBottom: spacing["2xl"],
-              }}>
-                <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: spacing.xs }}>$</Text>
-                <TextInput
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                  placeholderTextColor={colors.text.disabled}
-                  value={payout}
-                  onChangeText={setPayout}
-                  returnKeyType="done"
-                  style={{ flex: 1, color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
-                />
               </View>
             </>
           )}
@@ -416,6 +434,16 @@ export default function AddSessionScreen() {
             onChangeState={setStateRegion}
             onClose={() => setVenueOpen(false)}
             hideStateChips
+          />
+          <TournamentPickerSheet
+            visible={tournamentPickerOpen}
+            initialValue={tournamentName}
+            onClose={() => setTournamentPickerOpen(false)}
+            onSelect={({ name, buyIn: b, venue: v }) => {
+              setTournamentName(name);
+              if (b) setBuyIn(b);
+              if (v && !venue) setVenue(v);
+            }}
           />
         </ScrollView>
 

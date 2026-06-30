@@ -1,6 +1,8 @@
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { BuyInSheet, FieldRow, StakesSheet, StateSheet, VenueSheet } from "@/components/SessionPickers";
+import { TournamentPickerSheet } from "@/components/TournamentPickerSheet";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -40,10 +42,11 @@ export default function StartSessionScreen() {
   const [tournamentName, setTournamentName] = useState("");
   const [entries, setEntries]               = useState("");
 
-  const [buyInOpen,   setBuyInOpen]   = useState(false);
-  const [stakesOpen,  setStakesOpen]  = useState(false);
-  const [stateOpen,   setStateOpen]   = useState(false);
-  const [venueOpen,   setVenueOpen]   = useState(false);
+  const [buyInOpen,           setBuyInOpen]           = useState(false);
+  const [stakesOpen,          setStakesOpen]          = useState(false);
+  const [stateOpen,           setStateOpen]           = useState(false);
+  const [venueOpen,           setVenueOpen]           = useState(false);
+  const [tournamentPickerOpen, setTournamentPickerOpen] = useState(false);
 
   const enterAnim = useRef(new Animated.Value(0)).current;
 
@@ -143,21 +146,34 @@ export default function StartSessionScreen() {
           {type === "tournament" && (
             <>
               <Text style={labelStyle}>Tournament Name</Text>
-              <View style={{
-                ...inputCard,
-                borderColor: tournamentName.length > 0 ? colors.border.brand : colors.border.default,
-                paddingHorizontal: spacing.lg,
-                marginBottom: spacing["2xl"],
-              }}>
-                <TextInput
-                  placeholder="e.g. Sunday Major, WSOP Event #14"
-                  placeholderTextColor={colors.text.disabled}
-                  value={tournamentName}
-                  onChangeText={setTournamentName}
-                  returnKeyType="next"
-                  style={{ color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body }}
-                />
-              </View>
+              <TouchableOpacity
+                style={{
+                  ...inputCard,
+                  borderColor: tournamentName.length > 0 ? colors.border.brand : colors.border.default,
+                  paddingHorizontal: spacing.lg,
+                  paddingVertical: spacing.md,
+                  marginBottom: spacing["2xl"],
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+                onPress={() => setTournamentPickerOpen(true)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="trophy-outline" size={16} color={tournamentName.length > 0 ? colors.text.secondary : colors.text.disabled} />
+                <Text
+                  style={{ flex: 1, ...inputTypo.body, color: tournamentName.length > 0 ? colors.text.primary : colors.text.disabled }}
+                  numberOfLines={1}
+                >
+                  {tournamentName.length > 0 ? tournamentName : "Search or enter tournament name"}
+                </Text>
+                {tournamentName.length > 0 && (
+                  <TouchableOpacity onPress={() => setTournamentName("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Ionicons name="close-circle" size={16} color={colors.text.tertiary} />
+                  </TouchableOpacity>
+                )}
+                <Ionicons name="chevron-forward" size={14} color={colors.text.tertiary} />
+              </TouchableOpacity>
             </>
           )}
 
@@ -234,6 +250,16 @@ export default function StartSessionScreen() {
             onChangeState={setStateRegion}
             onClose={() => setVenueOpen(false)}
             hideStateChips
+          />
+          <TournamentPickerSheet
+            visible={tournamentPickerOpen}
+            initialValue={tournamentName}
+            onClose={() => setTournamentPickerOpen(false)}
+            onSelect={({ name, buyIn: b, venue: v }) => {
+              setTournamentName(name);
+              if (b) setBuyIn(b);
+              if (v && !venue) setVenue(v);
+            }}
           />
         </ScrollView>
 

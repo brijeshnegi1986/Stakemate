@@ -1,11 +1,16 @@
+import { ProfileBadge } from "@/components/ProfileBadge";
 import { SellStakesModal } from "@/components/SellStakesModal";
 import { SignInSheet } from "@/components/SignInSheet";
+import { topBadge } from "@/lib/badges";
 import { useAuth } from "@/context/AuthContext";
 import {
   addComment,
+  ActiveMember,
   createTextPost,
   deleteComment,
   deletePost,
+  updatePostVisibility,
+  fetchActiveMembers,
   fetchComments,
   fetchFollowingFeed,
   fetchPublicFeed,
@@ -22,8 +27,10 @@ import {
 import {
   dealStatusColor,
   dealStatusLabel,
+  claimStake,
   fetchPublicStakeDeals,
   getMyClaimForDeal,
+  getMyStakeDeals,
   getStakeDealWithSeller,
   isPublishedStatus,
   StakeClaim,
@@ -44,6 +51,7 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
+  RefreshControl,
   ScrollView,
   Share,
   StyleSheet,
@@ -55,11 +63,11 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const BRAND  = "#155DFC";
-const PURPLE = "#7C3AED";
+const PURPLE = "#0891B2";
 const GREEN  = "#22C55E";
 const REACTION_EMOJIS = ["🔥", "💰", "🎉", "👏", "😅", "🤑"];
 
-type Tab = "public" | "following" | "stakes" | "backed";
+type Tab = "public" | "following" | "stakes";
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
@@ -90,9 +98,10 @@ function ComposeModal({
   const { colors } = usePokerTheme();
   const insets = useSafeAreaInsets();
   const { user, profile } = useAuth();
-  const [text,    setText]    = useState("");
-  const [image,   setImage]   = useState<string | null>(null);
-  const [posting, setPosting] = useState(false);
+  const [text,       setText]       = useState("");
+  const [image,      setImage]      = useState<string | null>(null);
+  const [posting,    setPosting]    = useState(false);
+  const [visibility, setVisibility] = useState<"public" | "friends">("public");
   const inputRef = useRef<TextInput>(null);
   const displayName = profile?.display_name || profile?.username || "You";
   const canPost = text.trim().length > 0;
@@ -100,6 +109,7 @@ function ComposeModal({
   function resetAndClose() {
     setText("");
     setImage(null);
+    setVisibility("public");
     onClose();
   }
 
@@ -110,7 +120,7 @@ function ComposeModal({
     if (!uid) { Alert.alert("Not signed in", "Sign in to post."); return; }
     setPosting(true);
     try {
-      const post = await createTextPost(uid, trimmed, "public");
+      const post = await createTextPost(uid, trimmed, visibility);
       onPosted(post);
       resetAndClose();
     } catch (e: any) {
@@ -177,7 +187,6 @@ function ComposeModal({
           <View style={styles.composeBody}>
             <Avatar uri={profile?.avatar_url} size={44} name={displayName} />
             <View style={{ flex: 1, gap: 4 }}>
-              <Text style={[styles.composeName, { color: colors.text.primary }]}>{displayName}</Text>
               <TextInput
                 ref={inputRef}
                 autoFocus
@@ -207,12 +216,38 @@ function ComposeModal({
             </View>
           )}
 
-          {/* ── Hint banner ── */}
-          <View style={[styles.composeHint, { backgroundColor: `${BRAND}0D`, borderColor: `${BRAND}25` }]}>
-            <Ionicons name="globe-outline" size={14} color={BRAND} />
-            <Text style={[styles.composeHintText, { color: colors.text.secondary }]}>
-              This post is <Text style={{ fontWeight: "700", color: colors.text.primary }}>public</Text> — it appears on your profile and may show on feeds of people who follow you.
-            </Text>
+          {/* ── Visibility picker ── */}
+          <View style={[styles.composeHint, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default, padding: 4 }]}>
+            <TouchableOpacity
+              onPress={() => setVisibility("public")}
+              activeOpacity={0.8}
+              style={[
+                styles.visibilityOption,
+                visibility === "public" && { backgroundColor: colors.bg.primary, borderColor: `${BRAND}50` },
+              ]}
+            >
+              <Ionicons name="globe-outline" size={15} color={visibility === "public" ? BRAND : colors.text.tertiary} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: "700", color: visibility === "public" ? colors.text.primary : colors.text.tertiary }}>Public</Text>
+                <Text style={{ fontSize: 11, color: colors.text.disabled }} numberOfLines={1}>Visible to everyone</Text>
+              </View>
+              {visibility === "public" && <Ionicons name="checkmark-circle" size={16} color={BRAND} />}
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setVisibility("friends")}
+              activeOpacity={0.8}
+              style={[
+                styles.visibilityOption,
+                visibility === "friends" && { backgroundColor: colors.bg.primary, borderColor: "#8B5CF650" },
+              ]}
+            >
+              <Ionicons name="people-outline" size={15} color={visibility === "friends" ? "#8B5CF6" : colors.text.tertiary} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 13, fontWeight: "700", color: visibility === "friends" ? colors.text.primary : colors.text.tertiary }}>Followers Only</Text>
+                <Text style={{ fontSize: 11, color: colors.text.disabled }} numberOfLines={1}>Only people who follow you</Text>
+              </View>
+              {visibility === "friends" && <Ionicons name="checkmark-circle" size={16} color="#8B5CF6" />}
+            </TouchableOpacity>
           </View>
         </ScrollView>
 
@@ -318,7 +353,7 @@ function CommentsModal({
       >
 
         {/* ── Navigation header ── */}
-        <View style={[styles.commentsNavHeader, { paddingTop: 14, borderBottomColor: colors.border.default }]}>
+        <View style={[styles.commentsNavHeader, { paddingTop: 16, borderBottomColor: colors.border.default }]}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.commentsBackBtn}>
             <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
           </TouchableOpacity>
@@ -428,7 +463,7 @@ function CommentsModal({
 // ─── Post card ────────────────────────────────────────────────────────────────
 
 function PostCard({
-  post, currentUserId, isFollowing, onReact, onDelete, onComment, onFollow, onPressProfile, onBuyStake,
+  post, currentUserId, isFollowing, onReact, onDelete, onComment, onFollow, onPressProfile, onBuyStake, onChangeVisibility,
 }: {
   post: SocialPost;
   currentUserId: string;
@@ -439,12 +474,14 @@ function PostCard({
   onFollow: (userId: string, currently: boolean) => void;
   onPressProfile: (userId: string) => void;
   onBuyStake?: (dealId: string) => void;
+  onChangeVisibility?: (postId: string, current: "public" | "friends") => void;
 }) {
   const { colors } = usePokerTheme();
   const isTournament = post.session_type === "tournament";
   const isOwn = post.user_id === currentUserId;
   const displayName = post.profile.display_name || post.profile.username || "Player";
   const handle = post.profile.username ? `@${post.profile.username}` : null;
+  const authorBadge = topBadge({ createdAt: post.profile.created_at, lastSeenAt: post.profile.last_seen_at });
   const profit = post.amount ?? 0;
   const profitColor = profit >= 0 ? "#22C55E" : "#EF4444";
   const profitStr = `${profit >= 0 ? "+" : "-"}$${Math.abs(profit).toLocaleString("en-AU")}`;
@@ -458,10 +495,24 @@ function PostCard({
   }, [post.stake_deal_id]);
 
   function options() {
-    Alert.alert("Options", undefined, isOwn
-      ? [{ text: "Delete Post", style: "destructive", onPress: () => onDelete(post.id) }, { text: "Cancel", style: "cancel" }]
-      : [{ text: "View Profile", onPress: () => onPressProfile(post.user_id) }, { text: "Report", onPress: () => Alert.alert("Reported", "Thanks for your report.") }, { text: "Cancel", style: "cancel" }]
-    );
+    if (isOwn) {
+      const currentVis = post.visibility ?? "public";
+      const toggleLabel = currentVis === "public" ? "Restrict to Followers Only" : "Make Public";
+      Alert.alert("Post Options", undefined, [
+        {
+          text: toggleLabel,
+          onPress: () => onChangeVisibility?.(post.id, currentVis),
+        },
+        { text: "Delete Post", style: "destructive", onPress: () => onDelete(post.id) },
+        { text: "Cancel", style: "cancel" },
+      ]);
+    } else {
+      Alert.alert("Options", undefined, [
+        { text: "View Profile", onPress: () => onPressProfile(post.user_id) },
+        { text: "Report", onPress: () => Alert.alert("Reported", "Thanks for your report.") },
+        { text: "Cancel", style: "cancel" },
+      ]);
+    }
   }
 
   return (
@@ -472,10 +523,27 @@ function PostCard({
           <Avatar uri={post.profile.avatar_url} size={38} name={displayName} />
         </TouchableOpacity>
         <TouchableOpacity style={{ flex: 1 }} onPress={() => onPressProfile(post.user_id)} activeOpacity={0.7}>
-          <Text style={[styles.postAuthorName, { color: colors.text.primary }]}>{displayName}</Text>
-          <Text style={[styles.postAuthorSub, { color: colors.text.tertiary }]}>
-            {handle ? `${handle} · ` : ""}{timeAgo(post.created_at)}
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+            <Text style={[styles.postAuthorName, { color: colors.text.primary }]}>{displayName}</Text>
+            {authorBadge && <ProfileBadge badge={authorBadge} size="full" />}
+          </View>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+            <Text style={[styles.postAuthorSub, { color: colors.text.tertiary }]}>
+              {handle ? `${handle} · ` : ""}{timeAgo(post.created_at)}
+            </Text>
+            {isOwn && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: (post.visibility ?? "public") === "friends" ? "#8B5CF614" : `${BRAND}14`, paddingHorizontal: 5, paddingVertical: 2, borderRadius: 6 }}>
+                <Ionicons
+                  name={(post.visibility ?? "public") === "friends" ? "people-outline" : "globe-outline"}
+                  size={10}
+                  color={(post.visibility ?? "public") === "friends" ? "#8B5CF6" : BRAND}
+                />
+                <Text style={{ fontSize: 10, fontWeight: "600", color: (post.visibility ?? "public") === "friends" ? "#8B5CF6" : BRAND }}>
+                  {(post.visibility ?? "public") === "friends" ? "Followers" : "Public"}
+                </Text>
+              </View>
+            )}
+          </View>
         </TouchableOpacity>
         {/* Inline follow pill — only shown if not own post */}
         {!isOwn && (
@@ -506,20 +574,24 @@ function PostCard({
       ) : null}
 
       {/* Stake deal card — shown when this post advertises stakes */}
-      {post.stake_deal_id && dealSnap ? (
+      {post.stake_deal_id && dealSnap ? (() => {
+        const dealClosed = dealSnap.status === "closed" || dealSnap.status === "cancelled";
+        const dealColor  = dealClosed ? "#6B7280" : "#0891B2";
+        return (
         <TouchableOpacity
-          activeOpacity={0.75}
-          onPress={() => { if (onBuyStake) onBuyStake(post.stake_deal_id!); }}
+          activeOpacity={dealClosed ? 1 : 0.75}
+          onPress={() => { if (!dealClosed && onBuyStake) onBuyStake(post.stake_deal_id!); }}
           style={{
             marginTop: 8, borderRadius: 12, overflow: "hidden",
-            borderWidth: 1, borderColor: "#7C3AED40",
+            borderWidth: 1, borderColor: dealColor + "40",
             backgroundColor: colors.bg.secondary,
+            opacity: dealClosed ? 0.75 : 1,
           }}
         >
           {/* Header row */}
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12, paddingBottom: 10 }}>
-            <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: "#7C3AED18", alignItems: "center", justifyContent: "center" }}>
-              <Ionicons name="trophy-outline" size={18} color="#7C3AED" />
+            <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: dealColor + "18", alignItems: "center", justifyContent: "center" }}>
+              <Ionicons name={dealClosed ? "checkmark-circle-outline" : "trophy-outline"} size={18} color={dealColor} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 14, fontWeight: "700", color: colors.text.primary }} numberOfLines={1}>{dealSnap.tournament_name}</Text>
@@ -529,19 +601,19 @@ function PostCard({
                 </Text>
               ) : null}
             </View>
-            <View style={{ backgroundColor: isOwn ? "#7C3AED30" : "#7C3AED", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 }}>
-              <Text style={{ fontSize: 12, fontWeight: "700", color: isOwn ? "#7C3AED" : "#fff" }}>
-                {isOwn ? "Manage Deal" : "Buy Stakes"}
+            <View style={{ backgroundColor: dealClosed ? "#6B7280" + "20" : isOwn ? "#0891B230" : "#0891B2", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20 }}>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: dealClosed ? "#6B7280" : isOwn ? "#0891B2" : "#fff" }}>
+                {dealClosed ? "Sold Out" : isOwn ? "Manage Deal" : "BUY"}
               </Text>
             </View>
           </View>
 
           {/* Stats row */}
-          <View style={{ flexDirection: "row", borderTopWidth: 1, borderTopColor: "#7C3AED20" }}>
+          <View style={{ flexDirection: "row", borderTopWidth: 1, borderTopColor: dealColor + "20" }}>
             {[
               { label: "Buy-in",    value: dealSnap.buy_in ? `$${dealSnap.buy_in.toLocaleString()}` : "—" },
               { label: "Selling",   value: `${dealSnap.total_action_selling}%` },
-              { label: "Available", value: `${Math.max(0, dealSnap.total_action_selling - dealSnap.action_claimed)}%` },
+              { label: dealClosed ? "Claimed" : "Available", value: dealClosed ? `${dealSnap.action_claimed}%` : `${Math.max(0, dealSnap.total_action_selling - dealSnap.action_claimed)}%` },
               { label: "Price/1%",  value: dealSnap.price_per_percent ? `$${dealSnap.price_per_percent}` : "—" },
             ].map((stat, i, arr) => (
               <View
@@ -549,10 +621,10 @@ function PostCard({
                 style={{
                   flex: 1, alignItems: "center", paddingVertical: 10,
                   borderRightWidth: i < arr.length - 1 ? 1 : 0,
-                  borderRightColor: "#7C3AED20",
+                  borderRightColor: "#0891B220",
                 }}
               >
-                <Text style={{ fontSize: 13, fontWeight: "700", color: i === 2 ? "#7C3AED" : colors.text.primary }}>{stat.value}</Text>
+                <Text style={{ fontSize: 13, fontWeight: "700", color: i === 2 ? "#0891B2" : colors.text.primary }}>{stat.value}</Text>
                 <Text style={{ fontSize: 10, color: colors.text.tertiary, marginTop: 2 }}>{stat.label}</Text>
               </View>
             ))}
@@ -576,7 +648,8 @@ function PostCard({
             </View>
           ) : null}
         </TouchableOpacity>
-      ) : isSessionPost ? (
+        );
+      })() : isSessionPost ? (
         /* Regular session block (no stake deal) */
         <TouchableOpacity
           activeOpacity={1}
@@ -684,7 +757,6 @@ function StakeDealCard({
   onPressProfile: (userId: string) => void;
 }) {
   const { colors } = usePokerTheme();
-  const available    = deal.total_action_selling - deal.action_claimed;
   const pctSold      = deal.total_action_selling > 0 ? deal.action_claimed / deal.total_action_selling : 0;
   const statusColor  = dealStatusColor(deal.status);
   const isOwner      = deal.user_id === currentUserId;
@@ -692,7 +764,9 @@ function StakeDealCard({
   const sellerName   = seller?.display_name || seller?.username || "Player";
   const isFollowingSeller = followingIds.has(deal.user_id);
 
-  const [myClaim, setMyClaim] = useState<StakeClaim | null>(null);
+  const [myClaim,    setMyClaim]    = useState<StakeClaim | null>(null);
+  const [buyPct,     setBuyPct]     = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (isOwner || !currentUserId) return;
@@ -700,6 +774,35 @@ function StakeDealCard({
       .then(setMyClaim)
       .catch(() => {});
   }, [deal.id, currentUserId, isOwner, claimRefreshKey]);
+
+  const canBuy   = !isOwner && (deal.status === "open" || deal.status === "active");
+  const available = deal.total_action_selling - deal.action_claimed;
+  const minPiece  = deal.min_piece ?? 1;
+  const pctNum    = parseFloat(buyPct);
+  const costNum   = deal.price_per_percent != null && !isNaN(pctNum)
+    ? pctNum * deal.price_per_percent * (deal.markup ?? 1)
+    : null;
+
+  async function handleBuy() {
+    if (!currentUserId) { Alert.alert("Sign in required", "Sign in to buy a stake."); return; }
+    if (isNaN(pctNum) || pctNum < minPiece) {
+      Alert.alert("Invalid amount", `Minimum is ${minPiece}%.`); return;
+    }
+    if (pctNum > available) {
+      Alert.alert("Too much", `Only ${available.toFixed(1)}% available.`); return;
+    }
+    setSubmitting(true);
+    try {
+      const claim = await claimStake(deal.id, currentUserId, pctNum, undefined);
+      setMyClaim(claim);
+      setBuyPct("");
+      Alert.alert("Request sent!", "The seller will confirm your request shortly.");
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Could not submit request.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   const daysUntil = deal.tournament_date
     ? Math.ceil((new Date(deal.tournament_date + "T00:00:00").getTime() - Date.now()) / 86400000)
@@ -818,45 +921,53 @@ function StakeDealCard({
           </Text>
         )}
         <View style={{ flex: 1 }} />
-        <TouchableOpacity
-          onPress={() => onBuy(deal)}
-          style={[
-            sDealStyles.ctaBtn,
-            {
-              backgroundColor: isOwner
-                ? PURPLE
-                : myClaim?.status === "confirmed"
-                ? "#22C55E"
-                : myClaim?.status === "pending"
-                ? "#F97316"
-                : GREEN,
-            },
-          ]}
-          activeOpacity={0.85}
-        >
-          <Ionicons
-            name={
-              isOwner
-                ? "settings-outline"
-                : myClaim?.status === "confirmed"
-                ? "checkmark-circle-outline"
-                : myClaim?.status === "pending"
-                ? "time-outline"
-                : "cash-outline"
-            }
-            size={14}
-            color="#fff"
-          />
-          <Text style={sDealStyles.ctaBtnText}>
-            {isOwner
-              ? "Manage"
-              : myClaim?.status === "confirmed"
-              ? "Confirmed ✓"
-              : myClaim?.status === "pending"
-              ? "Pending..."
-              : "Buy Stake"}
-          </Text>
-        </TouchableOpacity>
+        {isOwner ? (
+          <TouchableOpacity
+            onPress={() => onBuy(deal)}
+            style={[sDealStyles.ctaBtn, { backgroundColor: PURPLE }]}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="settings-outline" size={14} color="#fff" />
+            <Text style={sDealStyles.ctaBtnText}>Manage</Text>
+          </TouchableOpacity>
+        ) : myClaim ? (
+          <View style={[sDealStyles.ctaBtn, {
+            backgroundColor: myClaim.status === "confirmed" ? "#22C55E" : myClaim.status === "rejected" ? "#EF4444" : "#F97316",
+          }]}>
+            <Ionicons name={myClaim.status === "confirmed" ? "checkmark-circle-outline" : myClaim.status === "rejected" ? "close-circle-outline" : "time-outline"} size={14} color="#fff" />
+            <Text style={sDealStyles.ctaBtnText}>
+              {myClaim.status === "confirmed" ? "Confirmed" : myClaim.status === "rejected" ? "Declined" : "Pending..."}
+            </Text>
+          </View>
+        ) : canBuy ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: colors.border.default, borderRadius: 10, backgroundColor: colors.bg.secondary, paddingHorizontal: 10, paddingVertical: 6, gap: 4 }}>
+              <TextInput
+                value={buyPct}
+                onChangeText={(v) => setBuyPct(v.replace(/[^0-9.]/g, ""))}
+                keyboardType="numeric"
+                placeholder={`${minPiece}`}
+                placeholderTextColor={colors.text.disabled}
+                style={{ fontSize: 15, fontWeight: "700", color: colors.text.primary, minWidth: 32, textAlign: "center", padding: 0 }}
+              />
+              <Text style={{ fontSize: 13, color: colors.text.tertiary, fontWeight: "600" }}>%</Text>
+            </View>
+            {costNum != null && (
+              <Text style={{ fontSize: 12, color: PURPLE, fontWeight: "600" }}>${costNum.toFixed(0)}</Text>
+            )}
+            <TouchableOpacity
+              onPress={handleBuy}
+              disabled={submitting}
+              style={[sDealStyles.ctaBtn, { backgroundColor: GREEN, opacity: submitting ? 0.6 : 1 }]}
+              activeOpacity={0.85}
+            >
+              {submitting
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Text style={sDealStyles.ctaBtnText}>BUY</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </View>
       </TouchableOpacity>{/* end card body */}
     </View>
@@ -939,6 +1050,74 @@ function PlayerRow({ player, following, onToggleFollow }: { player: SocialProfil
   );
 }
 
+// ─── Online members strip ─────────────────────────────────────────────────────
+
+const AVATAR_SIZE          = 62;
+const ONLINE_THRESHOLD_MS  = 5  * 60 * 1000;        // 5 min  → green dot
+const RECENT_THRESHOLD_MS  = 2  * 60 * 60 * 1000;   // 2 hrs → normal opacity
+
+function OnlineMembersStrip({ members, colors, currentUserId }: { members: ActiveMember[]; colors: any; currentUserId?: string }) {
+  const visible = members.filter((m) => m.id !== currentUserId);
+  if (visible.length === 0) return null;
+
+  return (
+    <View style={{ marginBottom: 10 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 16, paddingRight: 4 }}>
+        {visible.map((m) => {
+          const lastSeen = m.last_seen_at ? Date.now() - new Date(m.last_seen_at).getTime() : Infinity;
+          const isOnline = lastSeen < ONLINE_THRESHOLD_MS;
+          const isRecent = lastSeen < RECENT_THRESHOLD_MS;
+          const opacity  = isRecent ? 1 : 0.22;
+          const name     = m.display_name || m.username || "?";
+          const initials = name[0].toUpperCase();
+
+          // Ring: bright green for online, subtle grey for recent, none for inactive
+          const ringColor = isOnline ? GREEN : isRecent ? colors.border.default : "transparent";
+          const ringWidth = isOnline ? 2.5 : isRecent ? 1.5 : 0;
+
+          return (
+            <View key={m.id} style={{ alignItems: "center", gap: 5, opacity }}>
+              {/* Avatar with status ring */}
+              <View style={{
+                width: AVATAR_SIZE + 6,
+                height: AVATAR_SIZE + 6,
+                borderRadius: (AVATAR_SIZE + 6) / 2,
+                borderWidth: ringWidth,
+                borderColor: ringColor,
+                alignItems: "center",
+                justifyContent: "center",
+              }}>
+                <View style={{
+                  width: AVATAR_SIZE,
+                  height: AVATAR_SIZE,
+                  borderRadius: AVATAR_SIZE / 2,
+                  overflow: "hidden",
+                  backgroundColor: `${BRAND}22`,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}>
+                  {m.avatar_url ? (
+                    <Image source={{ uri: m.avatar_url }} style={{ width: AVATAR_SIZE, height: AVATAR_SIZE }} contentFit="cover" />
+                  ) : (
+                    <Text style={{ color: BRAND, fontSize: AVATAR_SIZE * 0.38, fontWeight: "800" }}>{initials}</Text>
+                  )}
+                </View>
+              </View>
+              {/* Name */}
+              <Text
+                style={{ fontSize: 11, fontWeight: isRecent ? "600" : "400", color: isRecent ? colors.text.secondary : colors.text.disabled, maxWidth: AVATAR_SIZE + 12, textAlign: "center" }}
+                numberOfLines={1}
+              >
+                {name.split(" ")[0]}
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function SocialScreen() {
@@ -948,6 +1127,7 @@ export default function SocialScreen() {
   const { openDealId } = useLocalSearchParams<{ openDealId?: string }>();
 
   const [tab, setTab]                     = useState<Tab>("public");
+  const [activeMembers, setActiveMembers] = useState<ActiveMember[]>([]);
   const [signInSheet, setSignInSheet]     = useState<{ title: string; description: string; icon?: any } | null>(null);
   const [posts, setPosts]                 = useState<SocialPost[]>([]);
   const [loading, setLoading]             = useState(false);
@@ -958,6 +1138,7 @@ export default function SocialScreen() {
 
   // ── Stakes tab ───────────────────────────────────────────────────────────
   const [stakeDeals,        setStakeDeals]        = useState<StakeDeal[]>([]);
+  const [myListings,        setMyListings]        = useState<StakeDeal[]>([]);
   const [loadingStakes,     setLoadingStakes]     = useState(false);
   const [refreshingStakes,  setRefreshingStakes]  = useState(false);
   const [buyModalDeal,      setBuyModalDeal]      = useState<StakeDeal | null>(null);
@@ -967,8 +1148,6 @@ export default function SocialScreen() {
 
   // ── Backed tab ───────────────────────────────────────────────────────────
   const [backedPosts,       setBackedPosts]       = useState<SocialPost[]>([]);
-  const [loadingBacked,     setLoadingBacked]     = useState(false);
-  const [refreshingBacked,  setRefreshingBacked]  = useState(false);
 
   // ── Animated header ──────────────────────────────────────────────────────
   // spacerHeightAnim = the height below the status bar that the title occupies.
@@ -1058,36 +1237,35 @@ export default function SocialScreen() {
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
+  useFocusEffect(useCallback(() => {
+    if (tab === "public") {
+      fetchActiveMembers(20).then(setActiveMembers).catch(() => {});
+    }
+  }, [tab]));
+
   const loadStakes = useCallback(async (silent = false) => {
     if (!silent) setLoadingStakes(true);
     try {
-      const deals = await fetchPublicStakeDeals(30);
-      setStakeDeals(deals);
+      const [publicDeals, owned, backed] = await Promise.all([
+        fetchPublicStakeDeals(30),
+        userId ? getMyStakeDeals(userId) : Promise.resolve([]),
+        userId ? fetchStakedPlayerFeed(userId) : Promise.resolve([]),
+      ]);
+      const ownedIds = new Set(owned.map((d) => d.id));
+      setStakeDeals(publicDeals.filter((d) => !ownedIds.has(d.id)));
+      const activeStatuses = ["draft", "open", "active", "paused", "filled", "sold_out"];
+      setMyListings(owned.filter((d) => activeStatuses.includes(d.status)));
+      setBackedPosts(backed);
     } catch { /* ignore */ } finally {
       setLoadingStakes(false);
       setRefreshingStakes(false);
     }
-  }, []);
+  }, [userId]);
 
   useFocusEffect(useCallback(() => {
     if (tab === "stakes") loadStakes();
   }, [tab, loadStakes]));
 
-  const loadBacked = useCallback(async (silent = false) => {
-    if (!userId) return;
-    if (!silent) setLoadingBacked(true);
-    try {
-      const data = await fetchStakedPlayerFeed(userId);
-      setBackedPosts(data);
-    } catch { /* ignore */ } finally {
-      setLoadingBacked(false);
-      setRefreshingBacked(false);
-    }
-  }, [userId]);
-
-  useFocusEffect(useCallback(() => {
-    if (tab === "backed") loadBacked();
-  }, [tab, loadBacked]));
 
   const handleReact = async (postId: string, emoji: string, reacted: boolean) => {
     if (!userId) return;
@@ -1109,6 +1287,22 @@ export default function SocialScreen() {
   const handleDelete = async (postId: string) => {
     setPosts((prev) => prev.filter((p) => p.id !== postId));
     await deletePost(postId).catch(console.error);
+  };
+
+  const handleChangeVisibility = async (postId: string, current: "public" | "friends") => {
+    const next: "public" | "friends" = current === "public" ? "friends" : "public";
+    const label = next === "public" ? "Public" : "Followers Only";
+    // Optimistic update
+    setPosts((prev) => prev.map((p) => p.id === postId ? { ...p, visibility: next } : p));
+    try {
+      await updatePostVisibility(postId, next);
+    } catch {
+      // Rollback on failure
+      setPosts((prev) => prev.map((p) => p.id === postId ? { ...p, visibility: current } : p));
+      Alert.alert("Could not update", "Please try again.");
+      return;
+    }
+    Alert.alert("Visibility updated", `This post is now visible to ${label === "Public" ? "everyone" : "your followers only"}.`);
   };
 
   const handleInvite = async () => {
@@ -1191,8 +1385,7 @@ export default function SocialScreen() {
           {([
             ["public",    "globe",        "Public"],
             ["following", "people",       "Following"],
-            ["stakes",    "trending-up",  "Stakes"],
-            ["backed",    "ribbon",       "Backed"],
+            ["stakes",    "storefront",   "Marketplace"],
           ] as const).map(([key, icon, label]) => (
             <TouchableOpacity
               key={key}
@@ -1200,8 +1393,7 @@ export default function SocialScreen() {
                 if (!user && key !== "public") {
                   const meta: Record<string, { title: string; description: string; icon: any }> = {
                     following: { icon: "people-outline", title: "Follow Players", description: "Sign in to follow players and see their sessions, results and big wins." },
-                    stakes:    { icon: "trending-up-outline", title: "Staking Marketplace", description: "Sign in to buy and sell poker action with players in the community." },
-                    backed:    { icon: "ribbon-outline", title: "Your Backed Players", description: "Sign in to track sessions from players you've staked and backed." },
+                    stakes:    { icon: "storefront-outline", title: "Staking Marketplace", description: "Sign in to buy and sell poker action, track your investments and manage your listings." },
                   };
                   setSignInSheet(meta[key]);
                   return;
@@ -1226,86 +1418,102 @@ export default function SocialScreen() {
       <View style={{ flex: 1 }}>
 
         {tab === "stakes" ? (
-          /* ── Stakes marketplace feed ── */
-          <FlatList
+          /* ── Marketplace — adapts to buyer / seller / both ── */
+          <ScrollView
             key="stakes"
-            data={stakeDeals}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <StakeDealCard
-                deal={item}
-                currentUserId={userId}
-                followingIds={followingIds}
-                claimRefreshKey={claimRefreshKey}
-                onBuy={setBuyModalDeal}
-                onFollow={handleFollow}
-                onPressProfile={handlePressProfile}
-              />
-            )}
-            onRefresh={() => { setRefreshingStakes(true); loadStakes(true); }}
-            refreshing={refreshingStakes}
             onScroll={handleScroll}
             scrollEventThrottle={16}
             contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 120 }}
-            ListEmptyComponent={
-              loadingStakes ? (
-                <View style={styles.centered}><ActivityIndicator size="large" color={BRAND} /></View>
-              ) : (
-                <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
-                  <Ionicons name="trending-up-outline" size={44} color={colors.text.tertiary} />
-                  <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No active stake deals</Text>
-                  <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>
-                    Players selling action will appear here. Add a tournament to your schedule to sell stakes.
-                  </Text>
-                </View>
-              )
-            }
-          />
-        ) : tab === "backed" ? (
-          /* ── Backed players feed ── */
-          <FlatList
-            key="backed"
-            data={backedPosts}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <PostCard
-                post={item}
-                currentUserId={userId}
-                isFollowing={followingIds.has(item.user_id)}
-                onReact={handleReact}
-                onDelete={handleDelete}
-                onComment={setCommentsPost}
-                onFollow={handleFollow}
-                onPressProfile={handlePressProfile}
-                onBuyStake={setBuyDealIdFromPost}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshingStakes}
+                onRefresh={() => { setRefreshingStakes(true); loadStakes(true); }}
+                tintColor={BRAND}
               />
-            )}
-            onRefresh={() => { setRefreshingBacked(true); loadBacked(true); }}
-            refreshing={refreshingBacked}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 120 }}
-            ListHeaderComponent={
-              <View style={{ marginBottom: 8, paddingHorizontal: 2 }}>
-                <Text style={{ fontSize: 13, color: colors.text.tertiary, lineHeight: 19 }}>
-                  Posts from players you've confirmed stakes with. Pull to refresh for the latest updates.
-                </Text>
-              </View>
             }
-            ListEmptyComponent={
-              loadingBacked ? (
-                <View style={styles.centered}><ActivityIndicator size="large" color={BRAND} /></View>
-              ) : (
-                <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
-                  <Ionicons name="ribbon-outline" size={44} color={colors.text.tertiary} />
-                  <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No updates yet</Text>
-                  <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>
-                    When you have confirmed stakes in a player's tournament, their posts will appear here.
+          >
+            {loadingStakes ? (
+              <View style={styles.centered}><ActivityIndicator size="large" color={BRAND} /></View>
+            ) : (
+              <>
+                {/* ── Seller: My Listings ── */}
+                {myListings.length > 0 && (
+                  <>
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text.tertiary, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 10 }}>
+                      My Listings
+                    </Text>
+                    {myListings.map((deal) => (
+                      <View key={deal.id} style={{ marginBottom: 12 }}>
+                        <StakeDealCard
+                          deal={deal}
+                          currentUserId={userId}
+                          followingIds={followingIds}
+                          claimRefreshKey={claimRefreshKey}
+                          onBuy={setBuyModalDeal}
+                          onFollow={handleFollow}
+                          onPressProfile={handlePressProfile}
+                        />
+                      </View>
+                    ))}
+                  </>
+                )}
+
+                {/* ── Buyer: My Investments ── */}
+                {backedPosts.length > 0 && (
+                  <>
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text.tertiary, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 10, marginTop: myListings.length > 0 ? 4 : 0 }}>
+                      My Investments
+                    </Text>
+                    {backedPosts.map((post) => (
+                      <PostCard
+                        key={post.id}
+                        post={post}
+                        currentUserId={userId}
+                        isFollowing={followingIds.has(post.user_id)}
+                        onReact={handleReact}
+                        onDelete={handleDelete}
+                        onComment={setCommentsPost}
+                        onFollow={handleFollow}
+                        onPressProfile={handlePressProfile}
+                        onBuyStake={setBuyDealIdFromPost}
+                        onChangeVisibility={handleChangeVisibility}
+                      />
+                    ))}
+                  </>
+                )}
+
+                {/* ── Browse: all public deals ── */}
+                {(myListings.length > 0 || backedPosts.length > 0) && stakeDeals.length > 0 && (
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text.tertiary, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 10, marginTop: 4 }}>
+                    Browse
                   </Text>
-                </View>
-              )
-            }
-          />
+                )}
+                {stakeDeals.length > 0 ? (
+                  stakeDeals.map((deal) => (
+                    <View key={deal.id} style={{ marginBottom: 12 }}>
+                      <StakeDealCard
+                        deal={deal}
+                        currentUserId={userId}
+                        followingIds={followingIds}
+                        claimRefreshKey={claimRefreshKey}
+                        onBuy={setBuyModalDeal}
+                        onFollow={handleFollow}
+                        onPressProfile={handlePressProfile}
+                      />
+                    </View>
+                  ))
+                ) : myListings.length === 0 && backedPosts.length === 0 ? (
+                  <View style={[styles.emptyCard, { borderColor: colors.border.default }]}>
+                    <Ionicons name="storefront-outline" size={44} color={colors.text.tertiary} />
+                    <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No active Marketplace deals</Text>
+                    <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>
+                      Players selling action will appear here. Add a tournament to your schedule to list on Marketplace.
+                    </Text>
+                  </View>
+                ) : null}
+              </>
+            )}
+          </ScrollView>
         ) : (
           /* ── Public / Following post feed ── */
           <FlatList
@@ -1323,6 +1531,7 @@ export default function SocialScreen() {
                 onFollow={handleFollow}
                 onPressProfile={handlePressProfile}
                 onBuyStake={setBuyDealIdFromPost}
+                onChangeVisibility={handleChangeVisibility}
               />
             )}
             onRefresh={() => { setRefreshing(true); loadData(true); }}
@@ -1332,7 +1541,9 @@ export default function SocialScreen() {
             contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 120 }}
             ListHeaderComponent={
               tab === "public" ? (
-                <View style={[styles.welcomeCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+                <>
+                  <OnlineMembersStrip members={activeMembers} colors={colors} currentUserId={user?.id} />
+                  <View style={[styles.welcomeCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
                   <View style={styles.welcomeTop}>
                     <View style={styles.welcomeIconWrap}>
                       <Text style={{ fontSize: 22 }}>🃏</Text>
@@ -1349,7 +1560,7 @@ export default function SocialScreen() {
                     {[
                       { icon: "create-outline", label: "Post Sessions", desc: "Share results, big pots & bluffs" },
                       { icon: "people-outline", label: "Follow Players", desc: "Track the players you back or admire" },
-                      { icon: "trending-up-outline", label: "Buy & Sell Stakes", desc: "Find or offer action on tournaments" },
+                      { icon: "storefront-outline", label: "Buy & Sell on Marketplace", desc: "Find or offer action on tournaments" },
                     ].map((f) => (
                       <View key={f.label} style={styles.welcomeFeatureRow}>
                         <View style={[styles.welcomeFeatureIcon, { backgroundColor: `${BRAND}12` }]}>
@@ -1363,6 +1574,7 @@ export default function SocialScreen() {
                     ))}
                   </View>
                 </View>
+                </>
               ) : null
             }
             ListEmptyComponent={
@@ -1400,7 +1612,15 @@ export default function SocialScreen() {
           dealId={buyModalDeal.id}
           userId={userId}
           onClose={() => { setBuyModalDeal(null); setClaimRefreshKey((k) => k + 1); loadStakes(true); }}
-          onDealCreated={() => { setBuyModalDeal(null); setClaimRefreshKey((k) => k + 1); loadStakes(true); }}
+          onDealCreated={(id) => {
+            setBuyModalDeal(null);
+            setClaimRefreshKey((k) => k + 1);
+            // id is "" when a deal is deleted — remove it immediately then reload
+            if (id === "" && buyModalDeal) {
+              setStakeDeals((prev) => prev.filter((d) => d.id !== buyModalDeal.id));
+            }
+            loadStakes(true);
+          }}
         />
       )}
 
@@ -1411,7 +1631,7 @@ export default function SocialScreen() {
           dealId={buyDealIdFromPost}
           userId={userId}
           onClose={() => setBuyDealIdFromPost(null)}
-          onDealCreated={() => setBuyDealIdFromPost(null)}
+          onDealCreated={() => { setBuyDealIdFromPost(null); loadStakes(true); }}
         />
       )}
 
@@ -1522,7 +1742,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   composeCancelText: { fontSize: 15 },
@@ -1536,16 +1756,25 @@ const styles = StyleSheet.create({
   composeImage: { width: "100%", height: 200, borderRadius: 14 },
   composeImageRemove: { position: "absolute", top: 8, right: 8 },
   composeHint: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
+    flexDirection: "column",
+    gap: 4,
     marginHorizontal: 16,
     marginBottom: 12,
-    padding: 12,
-    borderRadius: 10,
+    padding: 4,
+    borderRadius: 12,
     borderWidth: 1,
   },
   composeHintText: { flex: 1, fontSize: 13, lineHeight: 18 },
+  visibilityOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
   composeToolbar: {
     flexDirection: "row",
     alignItems: "center",
@@ -1608,7 +1837,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 10,
   },
   commentsSendBtn: {
-    backgroundColor: "#7C3AED",
+    backgroundColor: "#0891B2",
     paddingHorizontal: 16, paddingVertical: 10, borderRadius: 22,
   },
   commentsSendBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },

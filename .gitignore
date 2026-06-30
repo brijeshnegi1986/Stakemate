@@ -48,3 +48,7 @@ app-example
 
 # IPA build artifacts
 *.ipa
+
+.env.local
+
+.env.local

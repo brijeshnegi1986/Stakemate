@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { pullFromCloud, pushAllToCloud, clearLocalUserData } from "@/lib/sync";
+import { updateLastSeen } from "@/lib/social";
 import { getSetting, setSetting } from "@/db/database";
 import { registerAndSavePushToken } from "@/lib/notifications";
 import { Session, User } from "@supabase/supabase-js";
@@ -96,29 +97,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           hasPulledRef.current = true;
           setIsSyncing(true);
 
-          const storedUserId = getSetting("current_user_id");
-          const isAccountSwitch = !!storedUserId && storedUserId !== session.user.id;
-          setSetting("current_user_id", session.user.id);
+          // Synchronous SQLite calls can throw (e.g. transient lock/migration timing).
+          // This callback runs inside Supabase's native event dispatch — an uncaught
+          // throw here escalates to a native fatal crash, so guard it explicitly.
+          try {
+            const storedUserId = getSetting("current_user_id");
+            const isAccountSwitch = !!storedUserId && storedUserId !== session.user.id;
+            setSetting("current_user_id", session.user.id);
 
-          if (isAccountSwitch) {
-            // Account switch: old account's data was already pushed during sign-out.
-            // Safe to clear local now and restore the new account from cloud.
-            clearLocalUserData();
-            pullFromCloud(session.user.id)
-              .catch(console.error)
-              .finally(() => setIsSyncing(false));
-          } else {
-            // Same account (app update / reinstall / token refresh):
-            // Push any local data that may not have synced, then restore from cloud.
-            pushAllToCloud(session.user.id)
-              .catch(console.error)
-              .finally(() =>
-                pullFromCloud(session.user.id)
-                  .catch(console.error)
-                  .finally(() => setIsSyncing(false))
-              );
+            if (isAccountSwitch) {
+              // Account switch: old account's data was already pushed during sign-out.
+              // Safe to clear local now and restore the new account from cloud.
+              clearLocalUserData();
+              pullFromCloud(session.user.id)
+                .catch(console.error)
+                .finally(() => setIsSyncing(false));
+            } else {
+              // Same account (app update / reinstall / token refresh):
+              // Push any local data that may not have synced, then restore from cloud.
+              pushAllToCloud(session.user.id)
+                .catch(console.error)
+                .finally(() =>
+                  pullFromCloud(session.user.id)
+                    .catch(console.error)
+                    .finally(() => setIsSyncing(false))
+                );
+            }
+          } catch (e) {
+            console.error("Auth sync error", e);
+            setIsSyncing(false);
           }
           registerAndSavePushToken(session.user.id).catch(console.error);
+          updateLastSeen(session.user.id).catch(console.error);
         }
       } else {
         setProfile(null);

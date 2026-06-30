@@ -37,8 +37,8 @@ export function dealStatusLabel(status: StakeDealStatus): string {
     case "paused":    return "Paused";
     case "filled":
     case "sold_out":  return "Sold Out";
-    case "closed":    return "Closed";
-    case "cancelled": return "Cancelled";
+    case "closed":    return "Sold";
+    case "cancelled": return "Deleted";
   }
 }
 
@@ -72,6 +72,10 @@ export type StakeDeal = {
   visibility: DealVisibility;
   local_tournament_id: number | null;
   created_at: string;
+  result_type?: "cashed" | "busted" | null;
+  result_cash?: number | null;
+  is_settled?: boolean;
+  reentry_covered?: "yes" | "no" | "ask";
   claims?: StakeClaim[];
   seller_profile?: {
     id: string;
@@ -109,6 +113,7 @@ export type CreateStakeDealInput = {
   markup?: number;
   min_piece?: number;
   notes?: string | null;
+  reentry_covered?: "yes" | "no" | "ask";
   visibility?: DealVisibility;
   local_tournament_id?: number | null;
 };
@@ -129,6 +134,7 @@ export async function createStakeDeal(input: CreateStakeDealInput): Promise<Stak
       markup:               input.markup ?? 1.0,
       min_piece:            input.min_piece ?? 1,
       notes:                input.notes ?? null,
+      reentry_covered:      input.reentry_covered ?? "ask",
       visibility:           "draft",   // always start as draft
       local_tournament_id:  input.local_tournament_id ?? null,
       action_claimed:       0,
@@ -261,6 +267,11 @@ export async function unpublishStakeDeal(dealId: string): Promise<void> {
     .update({ status: "draft", visibility: "draft" })
     .eq("id", dealId);
   if (error) throw error;
+  // Remove the community post so it no longer shows on the feed
+  await supabase
+    .from("social_posts")
+    .delete()
+    .eq("stake_deal_id", dealId);
 }
 
 export async function pauseStakeDeal(dealId: string): Promise<void> {
@@ -293,6 +304,11 @@ export async function cancelStakeDeal(dealId: string): Promise<void> {
     .update({ status: "cancelled" })
     .eq("id", dealId);
   if (error) throw error;
+  // Delete any community posts that advertised this deal so they don't linger on the feed
+  await supabase
+    .from("social_posts")
+    .delete()
+    .eq("stake_deal_id", dealId);
 }
 
 // ─── Feed ─────────────────────────────────────────────────────────────────────
@@ -431,6 +447,34 @@ export async function updateClaimStatus(
   return { percentClaimed: claim?.percent_claimed ?? 0 };
 }
 
+export async function removeConfirmedClaim(claimId: string, dealId: string, percent: number): Promise<{ newActionClaimed: number }> {
+  const { error } = await supabase
+    .from("stake_claims")
+    .update({ status: "cancelled" })
+    .eq("id", claimId);
+  if (error) throw error;
+
+  const { data: deal } = await supabase
+    .from("stake_deals")
+    .select("action_claimed, total_action_selling, status")
+    .eq("id", dealId)
+    .single();
+
+  const newActionClaimed = Math.max(0, (deal?.action_claimed ?? percent) - percent);
+  const wasClosedOut = ["sold_out", "filled", "closed"].includes((deal as any)?.status ?? "");
+
+  await supabase
+    .from("stake_deals")
+    .update({
+      action_claimed: newActionClaimed,
+      // Re-open if the deal was closed/sold_out due to this claim filling it
+      ...(wasClosedOut ? { status: "active" } : {}),
+    })
+    .eq("id", dealId);
+
+  return { newActionClaimed };
+}
+
 export async function withdrawClaim(claimId: string, dealId: string, percent: number): Promise<void> {
   const { error } = await supabase
     .from("stake_claims")
@@ -490,4 +534,68 @@ export async function shareStakeDealExternal(deal: {
     .join("\n");
 
   await Share.share({ message: lines });
+}
+
+// ─── Result & Settlement ──────────────────────────────────────────────────────
+
+export async function recordDealResult(
+  dealId: string,
+  resultType: "cashed" | "busted",
+  cashAmount?: number,
+): Promise<void> {
+  const { error } = await supabase
+    .from("stake_deals")
+    .update({
+      result_type: resultType,
+      result_cash: resultType === "cashed" ? (cashAmount ?? null) : null,
+    })
+    .eq("id", dealId);
+  if (error) throw error;
+}
+
+export async function markDealSettled(dealId: string): Promise<void> {
+  const { error } = await supabase
+    .from("stake_deals")
+    .update({ is_settled: true })
+    .eq("id", dealId);
+  if (error) throw error;
+}
+
+export async function getMuaBalance(stakerId: string, playerId: string): Promise<number> {
+  const { data } = await supabase
+    .from("staking_mua")
+    .select("balance")
+    .eq("staker_id", stakerId)
+    .eq("player_id", playerId)
+    .maybeSingle();
+  return data?.balance ?? 0;
+}
+
+export async function upsertMuaBalance(
+  stakerId: string,
+  playerId: string,
+  delta: number,
+): Promise<void> {
+  const current = await getMuaBalance(stakerId, playerId);
+  const newBalance = Math.max(0, current + delta);
+  await supabase
+    .from("staking_mua")
+    .upsert({ staker_id: stakerId, player_id: playerId, balance: newBalance, updated_at: new Date().toISOString() },
+      { onConflict: "staker_id,player_id" });
+}
+
+// Calculate each confirmed backer's cash payout given a result
+export function calculatePayouts(
+  claims: StakeClaim[],
+  totalActionSelling: number,
+  resultCash: number,
+): { claim: StakeClaim; share: number }[] {
+  return claims
+    .filter((c) => c.status === "confirmed")
+    .map((c) => ({
+      claim: c,
+      share: totalActionSelling > 0
+        ? parseFloat(((c.percent_claimed / 100) * resultCash).toFixed(2))
+        : 0,
+    }));
 }

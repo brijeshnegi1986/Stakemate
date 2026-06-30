@@ -204,6 +204,7 @@ export function HandAnalysisModal({ visible, notes, noteId, savedAnalysis, onClo
     <Modal
       visible={visible}
       animationType="slide"
+      presentationStyle="pageSheet"
       onRequestClose={onClose}
       onShow={handleOpen}
     >
@@ -211,7 +212,7 @@ export function HandAnalysisModal({ visible, notes, noteId, savedAnalysis, onClo
         {/* Header */}
         <View style={{
           flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-          paddingHorizontal: 16, paddingTop: insets.top + 12, paddingBottom: 14,
+          paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14,
           borderBottomWidth: 1, borderColor: colors.border.default,
         }}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>

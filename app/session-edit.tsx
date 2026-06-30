@@ -1,10 +1,11 @@
-import { VenueSelector } from "@/components/VenueSelector";
+import { SegmentedControl } from "@/components/SegmentedControl";
+import { BuyInSheet, DurationSheet, FieldRow, StateSheet, StakesSheet, VenueSheet } from "@/components/SessionPickers";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { useAuth } from "@/context/AuthContext";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import { useMemo, useRef, useState } from "react";
 import {
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -13,36 +14,37 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { getRebuysTotal, updateSession } from "../db/database";
+import { getRebuysTotal, updateSession } from "@/db/database";
+import { syncSessionToCloud } from "@/lib/sync";
 
 export default function SessionEditScreen() {
   const { session: sessionParam } = useLocalSearchParams();
   const editing = sessionParam ? JSON.parse(sessionParam as string) : null;
-  const { colors, spacing, radius, typography, inputTypo } = usePokerTheme();
+  const { colors, spacing, typography, inputTypo } = usePokerTheme();
+  const { user } = useAuth();
 
   const isTournament = (editing?.type ?? "cash") === "tournament";
 
-  // ── Shared ──
-  const [buyIn, setBuyIn]             = useState(editing ? String(editing.buyIn) : "");
-  const [duration, setDuration]       = useState<number | null>(editing?.duration ?? null);
-  const [stateRegion, setStateRegion] = useState<string>(editing?.state ?? "NSW");
-  const [venue, setVenue]             = useState<string>(editing?.venue ?? "");
-  const [notes, setNotes]             = useState<string>(editing?.notes ?? "");
-
-  // ── Cash ──
-  const cashOutRef = useRef<TextInput>(null);
-  const [cashOut, setCashOut]   = useState(!isTournament ? String(editing?.cashOut ?? "") : "");
-  const [stakes, setStakes]     = useState<string>(editing?.stakes ?? "1/2");
-  const [focusedField, setFocusedField] = useState<"buyIn" | "cashOut" | null>(null);
-
-  // ── Tournament ──
+  const [buyIn, setBuyIn]               = useState(editing ? String(editing.buyIn) : "");
+  const [cashOut, setCashOut]           = useState(!isTournament ? String(editing?.cashOut ?? "") : "");
+  const [stakes, setStakes]             = useState<string>(editing?.stakes ?? "1/2");
+  const [duration, setDuration]         = useState<number | null>(editing?.duration ?? null);
+  const [stateRegion, setStateRegion]   = useState<string>(editing?.state ?? "NSW");
+  const [venue, setVenue]               = useState<string>(editing?.venue ?? "");
   const [tournamentName, setTournamentName] = useState(editing?.tournamentName ?? "");
-  const [entries, setEntries]   = useState(editing?.entries ? String(editing.entries) : "");
-  const [position, setPosition] = useState(editing?.position ? String(editing.position) : "");
-  const [payout, setPayout]     = useState(editing?.payout  ? String(editing.payout)  : "");
+  const [entries, setEntries]           = useState(editing?.entries ? String(editing.entries) : "");
+  const [position, setPosition]         = useState(editing?.position ? String(editing.position) : "");
+  const [payout, setPayout]             = useState(editing?.payout ? String(editing.payout) : "");
+  const [notes, setNotes]               = useState<string>(editing?.notes ?? "");
 
-  // ── Profit preview (includes existing rebuys which can't be edited here) ──
+  const [buyInOpen,    setBuyInOpen]    = useState(false);
+  const [stakesOpen,   setStakesOpen]   = useState(false);
+  const [durationOpen, setDurationOpen] = useState(false);
+  const [stateOpen,    setStateOpen]    = useState(false);
+  const [venueOpen,    setVenueOpen]    = useState(false);
+
   const rebuysTotal = getRebuysTotal(editing ?? {});
+
   const profit = useMemo(() => {
     const b = parseFloat(buyIn);
     if (isNaN(b)) return null;
@@ -61,6 +63,7 @@ export default function SessionEditScreen() {
 
   const handleSave = () => {
     if (!isValid || !editing) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
     const base = {
       buyIn:    parseFloat(buyIn),
@@ -90,216 +93,252 @@ export default function SessionEditScreen() {
           stakes,
         });
       }
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.replace("/(tabs)/history");
-    } catch (e) { console.log(e); }
+      if (user?.id) syncSessionToCloud(user.id, editing.id).catch(console.error);
+      router.canGoBack() ? router.back() : router.replace("/(tabs)/history");
+    } catch (e) { console.error(e); }
   };
 
-  const profitColor = profit === null ? colors.text.disabled : profit >= 0 ? colors.text.success : colors.text.danger;
-  const profitLabel = profit === null ? "—" : `${profit >= 0 ? "+" : "-"}$${Math.abs(profit).toFixed(2)}`;
+  const profitColor =
+    profit === null ? colors.text.disabled
+    : profit >= 0   ? colors.text.success
+    :                 colors.text.danger;
 
-  const labelStyle = {
-    color: colors.text.tertiary,
-    ...typography.caption,
-    letterSpacing: 1,
-    textTransform: "uppercase" as const,
-    fontWeight: "600" as const,
-    marginBottom: spacing.sm,
+  const profitLabel =
+    profit === null ? "—"
+    : `${profit >= 0 ? "+" : "-"}$${Math.abs(profit).toFixed(2)}`;
+
+  const inputCard = {
+    backgroundColor: colors.bg.primary,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: colors.border.default,
+    overflow: "hidden" as const,
+    shadowColor: "#000" as const,
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
   };
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.bg.secondary }}
+      style={{ flex: 1, backgroundColor: colors.bg.primary }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={{ flex: 1 }}>
         <ScrollView
-          contentContainerStyle={{ padding: spacing.lg, paddingBottom: 140 }}
+          contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* ── Type badge (read-only) ── */}
-          <View style={{ flexDirection: "row", justifyContent: "center", marginBottom: spacing["2xl"] }}>
-            <View style={{
-              backgroundColor: colors.bg.tertiary,
-              borderRadius: radius.full,
-              paddingHorizontal: spacing.lg,
-              paddingVertical: spacing.sm,
-              borderWidth: 1,
-              borderColor: colors.border.default,
-            }}>
-              <Text style={{ color: colors.text.secondary, fontWeight: "700", ...typography.label }}>
-                {isTournament ? "Tournament" : "Cash Game"}
-              </Text>
-            </View>
-          </View>
+          {/* Type toggle — disabled in edit mode */}
+          <SegmentedControl
+            options={[
+              { value: "cash",       label: "Cash Game",  icon: "cash-outline"   },
+              { value: "tournament", label: "Tournament",  icon: "trophy-outline" },
+            ]}
+            selected={isTournament ? "tournament" : "cash"}
+            disabled
+            onChange={() => {}}
+            style={{ marginBottom: spacing["2xl"] }}
+          />
 
-          {/* ── Profit preview card ── */}
+          {/* Profit preview */}
           <View style={{
-            backgroundColor: colors.bg.secondary,
-            borderRadius: radius.lg,
+            backgroundColor: colors.bg.tertiary,
+            borderRadius: 8,
             borderWidth: 1,
-            borderColor: profit === null ? colors.border.subtle : profit >= 0 ? colors.border.success : colors.border.danger,
+            borderColor: profit === null ? colors.border.default : profit >= 0 ? colors.border.success : colors.border.danger,
             padding: spacing["2xl"],
             alignItems: "center",
             marginBottom: spacing["2xl"],
           }}>
-            <Text style={{ color: colors.text.tertiary, ...typography.caption, letterSpacing: 1, textTransform: "uppercase", marginBottom: spacing.sm }}>
-              Profit
+            <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600", marginBottom: spacing.sm }}>
+              Updated Profit
             </Text>
-            <Text style={{ ...typography.display, fontWeight: "700", color: profitColor }}>
-              {profitLabel}
+            <Text style={{ ...typography.display, fontWeight: "700", color: profitColor }}>{profitLabel}</Text>
+            <Text style={{ color: profit === null ? colors.text.disabled : colors.text.tertiary, ...typography.caption, marginTop: spacing.xs, textAlign: "center" }}>
+              {profit === null
+                ? isTournament ? "Enter buy-in & payout to see your result" : "Enter buy-in & cash-out to see your result"
+                : profit >= 0 ? "Winning session" : "Better luck next time"}
             </Text>
-            {profit !== null && (
-              <Text style={{ color: colors.text.tertiary, ...typography.caption, marginTop: spacing.xs }}>
-                {profit >= 0 ? "Winning session" : "Better luck next time"}
-              </Text>
-            )}
           </View>
 
-          {/* ═══════════════ CASH FIELDS ═══════════════ */}
+          {/* ═══ CASH FIELDS ═══ */}
           {!isTournament && (
-            <>
-              <Text style={labelStyle}>Money</Text>
-              <View style={{
-                backgroundColor: colors.surface.raised,
-                borderRadius: radius.lg,
-                borderWidth: focusedField ? 1.5 : 1,
-                borderColor: focusedField ? colors.border.brand : colors.border.default,
-                overflow: "hidden",
-                marginBottom: spacing["2xl"],
-              }}>
-                <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingVertical: spacing.md, backgroundColor: focusedField === "buyIn" ? colors.state.hover : "transparent" }}>
-                  <Text style={{ color: colors.text.secondary, ...typography.bodySm, width: 72 }}>Buy-in</Text>
-                  <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: spacing.xs }}>$</Text>
-                  <TextInput
-                    keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.text.disabled}
-                    value={buyIn} onChangeText={setBuyIn} returnKeyType="next"
-                    onSubmitEditing={() => cashOutRef.current?.focus()}
-                    onFocus={() => setFocusedField("buyIn")} onBlur={() => setFocusedField(null)}
-                    style={{ flex: 1, color: colors.text.primary, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
-                  />
+            <View style={{ ...inputCard, marginBottom: spacing["2xl"] }}>
+              <FieldRow
+                icon="cash-outline"
+                label="Buy-in"
+                value={buyIn ? `$${parseFloat(buyIn).toLocaleString()}` : ""}
+                placeholder="Set buy-in"
+                onPress={() => setBuyInOpen(true)}
+                colors={colors}
+              />
+              <View style={{ height: 1, backgroundColor: colors.border.subtle, marginHorizontal: spacing.lg }} />
+              <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingVertical: spacing.md }}>
+                <View style={{ width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#155DFC12", marginRight: 12 }}>
+                  <Text style={{ fontSize: 16 }}>💰</Text>
                 </View>
-                <View style={{ height: 1, backgroundColor: colors.border.subtle, marginHorizontal: spacing.lg }} />
-                <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingVertical: spacing.md, backgroundColor: focusedField === "cashOut" ? colors.state.hover : "transparent" }}>
-                  <Text style={{ color: colors.text.secondary, ...typography.bodySm, width: 72 }}>Cash-out</Text>
-                  <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: spacing.xs }}>$</Text>
-                  <TextInput
-                    ref={cashOutRef}
-                    keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.text.disabled}
-                    value={cashOut} onChangeText={setCashOut} returnKeyType="done"
-                    onFocus={() => setFocusedField("cashOut")} onBlur={() => setFocusedField(null)}
-                    style={{ flex: 1, color: colors.text.primary, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
-                  />
-                </View>
+                <Text style={{ fontSize: 14, fontWeight: "500", width: 70, color: colors.text.tertiary }}>Cash-out</Text>
+                <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: 4 }}>$</Text>
+                <TextInput
+                  keyboardType="decimal-pad"
+                  placeholder="0.00"
+                  placeholderTextColor={colors.text.disabled}
+                  value={cashOut}
+                  onChangeText={setCashOut}
+                  returnKeyType="done"
+                  style={{ flex: 1, color: colors.text.primary, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
+                />
               </View>
-
-              <Text style={labelStyle}>Stakes</Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing["2xl"] }}>
-                {["1/1", "1/2", "2/3", "5/5", "10/10"].map((s) => (
-                  <Chip key={s} label={s} selected={stakes === s} onPress={() => setStakes(s)}
-                    colors={colors} spacing={spacing} radius={radius} typography={typography} />
-                ))}
-              </View>
-            </>
+              <View style={{ height: 1, backgroundColor: colors.border.subtle, marginHorizontal: spacing.lg }} />
+              <FieldRow
+                icon="swap-horizontal-outline"
+                label="Stakes"
+                value={stakes}
+                placeholder="Choose stakes"
+                onPress={() => setStakesOpen(true)}
+                colors={colors}
+                isLast
+              />
+            </View>
           )}
 
-          {/* ═══════════════ TOURNAMENT FIELDS ═══════════════ */}
+          {/* ═══ TOURNAMENT FIELDS ═══ */}
           {isTournament && (
             <>
-              <Text style={labelStyle}>Tournament Name</Text>
               <View style={{
-                backgroundColor: colors.surface.raised, borderRadius: radius.lg, borderWidth: 1,
+                ...inputCard,
                 borderColor: tournamentName.length > 0 ? colors.border.brand : colors.border.default,
-                paddingHorizontal: spacing.lg, marginBottom: spacing["2xl"],
+                paddingHorizontal: spacing.lg,
+                marginBottom: spacing["2xl"],
               }}>
                 <TextInput
-                  placeholder="Tournament name" placeholderTextColor={colors.text.disabled}
-                  value={tournamentName} onChangeText={setTournamentName} returnKeyType="next"
+                  placeholder="Tournament name e.g. Sunday Major"
+                  placeholderTextColor={colors.text.disabled}
+                  value={tournamentName}
+                  onChangeText={setTournamentName}
+                  returnKeyType="next"
                   style={{ color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body }}
                 />
               </View>
 
-              <Text style={labelStyle}>Buy-in</Text>
-              <View style={{
-                backgroundColor: colors.surface.raised, borderRadius: radius.lg, borderWidth: 1,
-                borderColor: buyIn.length > 0 ? colors.border.brand : colors.border.default,
-                flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, marginBottom: spacing["2xl"],
-              }}>
-                <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: spacing.xs }}>$</Text>
-                <TextInput
-                  keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.text.disabled}
-                  value={buyIn} onChangeText={setBuyIn} returnKeyType="next"
-                  style={{ flex: 1, color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
-                />
-              </View>
-
+              {/* Buy-in + Payout in one row */}
               <View style={{ flexDirection: "row", gap: spacing.md, marginBottom: spacing["2xl"] }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={labelStyle}>Entries</Text>
-                  <View style={{ backgroundColor: colors.surface.raised, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border.default, paddingHorizontal: spacing.lg }}>
+                  <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600", marginBottom: spacing.sm }}>Buy-in</Text>
+                  <View style={{ ...inputCard, borderColor: buyIn.length > 0 ? colors.border.brand : colors.border.default, flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg }}>
+                    <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: spacing.xs }}>$</Text>
                     <TextInput
-                      keyboardType="number-pad" placeholder="—" placeholderTextColor={colors.text.disabled}
-                      value={entries} onChangeText={setEntries} returnKeyType="next"
-                      style={{ color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, textAlign: "right" }}
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      placeholderTextColor={colors.text.disabled}
+                      value={buyIn}
+                      onChangeText={setBuyIn}
+                      returnKeyType="next"
+                      style={{ flex: 1, color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
                     />
                   </View>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={labelStyle}>Position</Text>
-                  <View style={{ backgroundColor: colors.surface.raised, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border.default, paddingHorizontal: spacing.lg }}>
+                  <View style={{ flexDirection: "row", alignItems: "baseline", gap: 4, marginBottom: spacing.sm }}>
+                    <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600" }}>Payout</Text>
+                    <Text style={{ color: colors.text.disabled, fontSize: 10, fontWeight: "400" }}>0 if busted</Text>
+                  </View>
+                  <View style={{ ...inputCard, borderColor: payout.length > 0 && parseFloat(payout) > 0 ? colors.border.success : colors.border.default, flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg }}>
+                    <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: spacing.xs }}>$</Text>
                     <TextInput
-                      keyboardType="number-pad" placeholder="—" placeholderTextColor={colors.text.disabled}
-                      value={position} onChangeText={setPosition} returnKeyType="next"
-                      style={{ color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, textAlign: "right" }}
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      placeholderTextColor={colors.text.disabled}
+                      value={payout}
+                      onChangeText={setPayout}
+                      returnKeyType="done"
+                      style={{ flex: 1, color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
                     />
                   </View>
                 </View>
               </View>
 
-              <Text style={labelStyle}>Payout</Text>
-              <View style={{
-                backgroundColor: colors.surface.raised, borderRadius: radius.lg, borderWidth: 1,
-                borderColor: parseFloat(payout) > 0 ? colors.border.success : colors.border.default,
-                flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, marginBottom: spacing["2xl"],
-              }}>
-                <Text style={{ color: colors.text.disabled, ...typography.body, marginRight: spacing.xs }}>$</Text>
-                <TextInput
-                  keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.text.disabled}
-                  value={payout} onChangeText={setPayout} returnKeyType="done"
-                  style={{ flex: 1, color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, fontWeight: "600", textAlign: "right" }}
-                />
+              {/* Entries + Position (optional) */}
+              <View style={{ flexDirection: "row", gap: spacing.md, marginBottom: spacing["2xl"] }}>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "baseline", gap: 4, marginBottom: spacing.sm }}>
+                    <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600" }}>Entries</Text>
+                    <Text style={{ color: colors.text.disabled, fontSize: 10, fontWeight: "400" }}>optional</Text>
+                  </View>
+                  <View style={{ ...inputCard, paddingHorizontal: spacing.lg }}>
+                    <TextInput
+                      keyboardType="number-pad"
+                      placeholder="120"
+                      placeholderTextColor={colors.text.disabled}
+                      value={entries}
+                      onChangeText={setEntries}
+                      returnKeyType="next"
+                      style={{ color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, textAlign: "right" }}
+                    />
+                  </View>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "baseline", gap: 4, marginBottom: spacing.sm }}>
+                    <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600" }}>Position</Text>
+                    <Text style={{ color: colors.text.disabled, fontSize: 10, fontWeight: "400" }}>optional</Text>
+                  </View>
+                  <View style={{ ...inputCard, paddingHorizontal: spacing.lg }}>
+                    <TextInput
+                      keyboardType="number-pad"
+                      placeholder="12"
+                      placeholderTextColor={colors.text.disabled}
+                      value={position}
+                      onChangeText={setPosition}
+                      returnKeyType="next"
+                      style={{ color: colors.text.primary, paddingVertical: spacing.md, ...inputTypo.body, textAlign: "right" }}
+                    />
+                  </View>
+                </View>
               </View>
             </>
           )}
 
-          {/* ── Duration (shared) ── */}
-          <Text style={labelStyle}>Duration</Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing["2xl"] }}>
-            {[1, 2, 3, 4, 5, 6, 8].map((h) => (
-              <Chip key={h} label={h === 8 ? "8h+" : `${h}h`}
-                selected={duration === h} onPress={() => setDuration(duration === h ? null : h)}
-                colors={colors} spacing={spacing} radius={radius} typography={typography} />
-            ))}
+          {/* ── Duration, State, Venue ── */}
+          <View style={{ ...inputCard, marginBottom: spacing["2xl"] }}>
+            <FieldRow
+              icon="time-outline"
+              label="Duration"
+              value={duration ? (duration === 8 ? "8h+" : `${duration}h`) : ""}
+              placeholder="How long?"
+              onPress={() => setDurationOpen(true)}
+              colors={colors}
+            />
+            <FieldRow
+              icon="map-outline"
+              label="State"
+              value={stateRegion}
+              placeholder="Choose state"
+              onPress={() => setStateOpen(true)}
+              colors={colors}
+            />
+            <FieldRow
+              icon="location-outline"
+              label="Venue"
+              value={venue}
+              placeholder="Choose venue"
+              onPress={() => setVenueOpen(true)}
+              colors={colors}
+              isLast
+            />
           </View>
 
-          {/* ── Venue / State (shared) ── */}
-          <VenueSelector
-            stateRegion={stateRegion}
-            setStateRegion={setStateRegion}
-            venue={venue}
-            setVenue={setVenue}
-          />
-
-          {/* ── Notes (shared) ── */}
-          <Text style={[labelStyle, { marginTop: spacing["2xl"] }]}>Notes</Text>
+          {/* ── Notes ── */}
+          <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600", marginBottom: spacing.sm }}>
+            Notes
+          </Text>
           <View style={{
-            backgroundColor: colors.surface.raised,
-            borderRadius: radius.lg,
-            borderWidth: 1,
+            ...inputCard,
             borderColor: notes.length > 0 ? colors.border.brand : colors.border.default,
             padding: spacing.lg,
-            minHeight: 100,
+            marginBottom: spacing["2xl"],
           }}>
             <TextInput
               multiline
@@ -316,38 +355,53 @@ export default function SessionEditScreen() {
               }}
             />
           </View>
+
+          <BuyInSheet    visible={buyInOpen}    value={buyIn}       onChange={setBuyIn}       onClose={() => setBuyInOpen(false)}    />
+          <StakesSheet   visible={stakesOpen}   value={stakes}      onChange={setStakes}      onClose={() => setStakesOpen(false)}   />
+          <DurationSheet visible={durationOpen} value={duration}    onChange={setDuration}    onClose={() => setDurationOpen(false)} />
+          <StateSheet    visible={stateOpen}    value={stateRegion} onChange={setStateRegion} onClose={() => setStateOpen(false)}    />
+          <VenueSheet
+            visible={venueOpen}
+            venue={venue}
+            state={stateRegion}
+            onChangeVenue={setVenue}
+            onChangeState={setStateRegion}
+            onClose={() => setVenueOpen(false)}
+            hideStateChips
+          />
         </ScrollView>
 
-        <View style={{ padding: spacing.lg, borderTopWidth: 1, borderTopColor: colors.border.default, backgroundColor: colors.bg.primary }}>
+        {/* Sticky save button */}
+        <View style={{
+          position: "absolute", bottom: 0, left: 0, right: 0,
+          padding: spacing.lg,
+          paddingBottom: Platform.OS === "ios" ? 32 : spacing.lg,
+          backgroundColor: colors.bg.primary,
+          borderTopWidth: 1,
+          borderTopColor: colors.border.default,
+        }}>
+          {!isValid && (
+            <Text style={{ color: colors.text.disabled, ...typography.caption, textAlign: "center", marginBottom: spacing.sm }}>
+              {isTournament ? "Enter buy-in and tournament name to continue" : "Enter buy-in and cash-out to continue"}
+            </Text>
+          )}
           <TouchableOpacity
             onPress={handleSave}
             disabled={!isValid}
-            style={{ padding: spacing.lg, borderRadius: radius.md, alignItems: "center", backgroundColor: isValid ? colors.bg.brand : colors.state.disabled }}
+            activeOpacity={0.85}
+            style={{
+              padding: spacing.lg,
+              borderRadius: 10,
+              alignItems: "center",
+              backgroundColor: isValid ? "#155DFC" : colors.state.disabled,
+            }}
           >
-            <Text style={{ color: isValid ? colors.text.onBrand : colors.text.disabled, fontWeight: "700", ...typography.body }}>
+            <Text style={{ color: isValid ? "#fff" : colors.text.disabled, fontWeight: "700", ...typography.body }}>
               Update Session
             </Text>
           </TouchableOpacity>
         </View>
       </View>
     </KeyboardAvoidingView>
-  );
-}
-
-function Chip({ label, selected, onPress, colors, spacing, radius, typography }: any) {
-  return (
-    <TouchableOpacity
-      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress(); }}
-      style={{
-        paddingVertical: spacing.sm, paddingHorizontal: spacing.lg,
-        borderRadius: radius.full,
-        backgroundColor: selected ? colors.bg.brand : colors.bg.tertiary,
-        borderWidth: 1, borderColor: selected ? colors.border.brand : colors.border.default,
-      }}
-    >
-      <Text style={{ color: selected ? colors.text.onBrand : colors.text.primary, ...typography.label, fontWeight: "500" }}>
-        {label}
-      </Text>
-    </TouchableOpacity>
   );
 }
