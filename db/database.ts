@@ -52,6 +52,19 @@ export const initDB = () => {
   try { db.execSync(`ALTER TABLE notes_history ADD COLUMN hand_analysis TEXT`); } catch (_) {}
   try { db.execSync(`ALTER TABLE notes_history ADD COLUMN metadata TEXT DEFAULT NULL`); } catch (_) {}
 
+  // Player notes
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS player_notes (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT    NOT NULL,
+      styles     TEXT    NOT NULL DEFAULT '[]',
+      notes      TEXT    NOT NULL DEFAULT '',
+      venue      TEXT    NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
   // Scheduled tournament events (calendar)
   db.execSync(`
     CREATE TABLE IF NOT EXISTS tournament_events (
@@ -67,6 +80,7 @@ export const initDB = () => {
   try { db.execSync(`ALTER TABLE tournament_events ADD COLUMN image_url TEXT DEFAULT ''`); } catch {}
   try { db.execSync(`ALTER TABLE tournament_events ADD COLUMN stake_deal_id TEXT DEFAULT ''`); } catch {}
   try { db.execSync(`ALTER TABLE tournament_events ADD COLUMN source TEXT DEFAULT 'custom'`); } catch {}
+  try { db.execSync(`ALTER TABLE tournament_events ADD COLUMN start_time TEXT DEFAULT ''`); } catch {}
 
   // Settings key-value store
   db.execSync(`
@@ -474,7 +488,8 @@ export const deleteNoteEntry = (id: number): void => {
 export type TournamentEvent = {
   id: number;
   name: string;
-  date: string; // YYYY-MM-DD
+  date: string;       // YYYY-MM-DD
+  start_time?: string; // HH:MM (24h), optional
   venue: string;
   buyin: string;
   notes: string;
@@ -486,15 +501,20 @@ export type TournamentEvent = {
 
 export const addTournamentEvent = (event: Omit<TournamentEvent, "id" | "created_at">): number => {
   const result = db.runSync(
-    `INSERT INTO tournament_events (name, date, venue, buyin, notes, image_url, source, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [event.name, event.date, event.venue, event.buyin, event.notes, event.image_url ?? "", event.source ?? "custom", Date.now()]
+    `INSERT INTO tournament_events (name, date, start_time, venue, buyin, notes, image_url, source, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [event.name, event.date, event.start_time ?? "", event.venue, event.buyin, event.notes, event.image_url ?? "", event.source ?? "custom", Date.now()]
   );
   return result.lastInsertRowId;
 };
 
 export const getTournamentEvents = (): TournamentEvent[] =>
-  db.getAllSync(`SELECT * FROM tournament_events ORDER BY date ASC`) as TournamentEvent[];
+  db.getAllSync(
+    `SELECT * FROM tournament_events
+     ORDER BY date ASC,
+              CASE WHEN start_time IS NULL OR start_time = '' THEN 1 ELSE 0 END ASC,
+              start_time ASC`
+  ) as TournamentEvent[];
 
 export const deleteTournamentEvent = (id: number): void => {
   db.runSync(`DELETE FROM tournament_events WHERE id = ?`, [id]);
@@ -502,6 +522,43 @@ export const deleteTournamentEvent = (id: number): void => {
 
 export const setTournamentStakeDeal = (id: number, dealId: string): void => {
   db.runSync(`UPDATE tournament_events SET stake_deal_id = ? WHERE id = ?`, [dealId, id]);
+};
+
+// ─── Player Notes ─────────────────────────────────────────────────────────────
+
+export type PlayerNote = {
+  id: number;
+  name: string;
+  styles: string[];   // stored as JSON
+  notes: string;
+  venue: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export const addPlayerNote = (note: Omit<PlayerNote, "id" | "created_at" | "updated_at">): number => {
+  const now = Date.now();
+  const result = db.runSync(
+    `INSERT INTO player_notes (name, styles, notes, venue, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    [note.name.trim(), JSON.stringify(note.styles), note.notes.trim(), note.venue.trim(), now, now]
+  );
+  return result.lastInsertRowId;
+};
+
+export const updatePlayerNote = (id: number, note: Omit<PlayerNote, "id" | "created_at" | "updated_at">): void => {
+  db.runSync(
+    `UPDATE player_notes SET name = ?, styles = ?, notes = ?, venue = ?, updated_at = ? WHERE id = ?`,
+    [note.name.trim(), JSON.stringify(note.styles), note.notes.trim(), note.venue.trim(), Date.now(), id]
+  );
+};
+
+export const deletePlayerNote = (id: number): void => {
+  db.runSync(`DELETE FROM player_notes WHERE id = ?`, [id]);
+};
+
+export const getPlayerNotes = (): PlayerNote[] => {
+  const rows = db.getAllSync(`SELECT * FROM player_notes ORDER BY updated_at DESC`) as any[];
+  return rows.map((r) => ({ ...r, styles: JSON.parse(r.styles || "[]") }));
 };
 
 // Auto-initialize on import so getSetting is always safe to call

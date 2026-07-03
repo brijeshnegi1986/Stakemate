@@ -25,6 +25,10 @@ type Profile = {
   twitch_handle: string | null;
   hendon_mob_url: string | null;
   poker_index_url: string | null;
+  live_earnings: number | null;
+  live_cashes: number | null;
+  live_wins: number | null;
+  top_10_results: number | null;
 };
 
 type AuthContextType = {

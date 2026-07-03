@@ -462,6 +462,10 @@ export type FullProfile = SocialProfile & {
   instagram_handle: string | null;
   youtube_handle: string | null;
   twitch_handle: string | null;
+  live_earnings: number | null;
+  live_cashes: number | null;
+  live_wins: number | null;
+  top_10_results: number | null;
 };
 
 export async function getProfileWithCounts(
@@ -471,7 +475,7 @@ export async function getProfileWithCounts(
   const [profileRes, followerRes, followingRes, isFollowingRes, dealsRes] = await Promise.all([
     supabase
       .from("profiles")
-      .select("id, username, display_name, avatar_url, bio, location, created_at, last_seen_at, hendon_mob_url, poker_index_url, twitter_handle, instagram_handle, youtube_handle, twitch_handle")
+      .select("id, username, display_name, avatar_url, bio, location, created_at, last_seen_at, hendon_mob_url, poker_index_url, twitter_handle, instagram_handle, youtube_handle, twitch_handle, live_earnings, live_cashes, live_wins, top_10_results")
       .eq("id", profileId)
       .single(),
     supabase

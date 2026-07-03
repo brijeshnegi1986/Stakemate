@@ -2,6 +2,7 @@ import * as AppleAuthentication from "expo-apple-authentication";
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -55,20 +56,22 @@ export function SignInSheet({ visible, onClose, title, description, icon = "lock
         activeOpacity={1}
         onPress={onClose}
       />
-      <View style={[styles.sheet, { backgroundColor: colors.bg.primary, paddingBottom: insets.bottom + 20 }]}>
+      <View style={[styles.sheet, { paddingBottom: insets.bottom + 20 }]}>
         {/* Handle */}
-        <View style={[styles.handle, { backgroundColor: colors.border.default }]} />
+        <View style={styles.handle} />
 
-        {/* Icon */}
-        <View style={[styles.iconWrap, { backgroundColor: `${BRAND}14` }]}>
-          <Ionicons name={icon} size={28} color={BRAND} />
-        </View>
+        {/* App icon */}
+        <Image
+          source={require("@/assets/images/icon.png")}
+          style={styles.appIcon}
+          contentFit="contain"
+        />
 
         {/* Text */}
-        <Text style={[styles.title, { color: colors.text.primary }]}>
+        <Text style={styles.title}>
           {title ?? "Sign in to continue"}
         </Text>
-        <Text style={[styles.sub, { color: colors.text.tertiary }]}>
+        <Text style={styles.sub}>
           {description ?? "Create a free account to unlock this feature and keep your data safe."}
         </Text>
 
@@ -106,21 +109,21 @@ export function SignInSheet({ visible, onClose, title, description, icon = "lock
           onPress={handleGoogle}
           disabled={signingIn !== null}
           activeOpacity={0.88}
-          style={[styles.googleBtn, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default }]}
+          style={styles.googleBtn}
         >
           {signingIn === "google" ? (
             <ActivityIndicator color={DARK} size="small" />
           ) : (
             <>
               <Ionicons name="logo-google" size={18} color="#4285F4" />
-              <Text style={[styles.googleBtnText, { color: colors.text.primary }]}>Continue with Google</Text>
+              <Text style={styles.googleBtnText}>Continue with Google</Text>
             </>
           )}
         </TouchableOpacity>
 
         {/* Dismiss */}
         <TouchableOpacity onPress={onClose} activeOpacity={0.6} style={styles.skipBtn}>
-          <Text style={[styles.skipText, { color: colors.text.tertiary }]}>Maybe later</Text>
+          <Text style={styles.skipText}>Maybe later</Text>
         </TouchableOpacity>
       </View>
     </Modal>
@@ -129,26 +132,28 @@ export function SignInSheet({ visible, onClose, title, description, icon = "lock
 
 const styles = StyleSheet.create({
   sheet: {
+    backgroundColor: "#ffffff",
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 24,
     alignItems: "center",
-    gap: 0,
   },
   handle: {
     width: 36, height: 4, borderRadius: 2,
+    backgroundColor: "#e2e8f0",
     marginBottom: 22,
   },
-  iconWrap: {
-    width: 60, height: 60, borderRadius: 18,
-    alignItems: "center", justifyContent: "center",
-    marginBottom: 16,
+  appIcon: {
+    width: 60, height: 60, borderRadius: 14,
+    marginBottom: 16, overflow: "hidden",
   },
   title: {
     fontSize: 20, fontWeight: "800", textAlign: "center", marginBottom: 8,
+    color: "#0f172b",
   },
   sub: {
     fontSize: 14, textAlign: "center", lineHeight: 20, marginBottom: 28,
+    color: "#62748e",
   },
   appleBtn: {
     width: "100%", height: 50, borderRadius: 14,
@@ -160,10 +165,12 @@ const styles = StyleSheet.create({
   googleBtn: {
     width: "100%", height: 50, borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#f8fafc",
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
     marginBottom: 6,
   },
-  googleBtnText: { fontSize: 16, fontWeight: "600" },
+  googleBtnText: { fontSize: 16, fontWeight: "600", color: "#0f172b" },
   skipBtn: { paddingVertical: 12, marginTop: 4 },
-  skipText: { fontSize: 14 },
+  skipText: { fontSize: 14, color: "#90a1b9" },
 });

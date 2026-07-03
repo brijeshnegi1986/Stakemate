@@ -82,12 +82,12 @@ function PageSheet({
     >
       <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
         {/* Navigation bar */}
-        <View style={[styles.navBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default, paddingTop: 12 }]}>
-          <View style={{ width: 60 }} />
-          <Text style={[styles.navTitle, { color: colors.text.primary }]}>{title}</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 60, alignItems: "flex-end", paddingRight: 4 }}>
-            <Text style={[styles.navCancel, { color: BRAND }]}>Cancel</Text>
+        <View style={[styles.navBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
+            <Ionicons name="close" size={32} color={colors.text.secondary} />
           </TouchableOpacity>
+          <Text style={[styles.navTitle, { color: colors.text.primary }]}>{title}</Text>
+          <View style={styles.navSide} />
         </View>
         {children}
       </View>
@@ -485,12 +485,12 @@ export function VenueSheet({
     >
       <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg.secondary }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         {/* Nav bar */}
-        <View style={[styles.navBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default, paddingTop: 12 }]}>
-          <View style={{ width: 60 }} />
-          <Text style={[styles.navTitle, { color: colors.text.primary }]}>Venue</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 60, alignItems: "flex-end", paddingRight: 4 }}>
-            <Text style={[styles.navCancel, { color: BRAND }]}>Cancel</Text>
+        <View style={[styles.navBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
+            <Ionicons name="close" size={32} color={colors.text.secondary} />
           </TouchableOpacity>
+          <Text style={[styles.navTitle, { color: colors.text.primary }]}>Venue</Text>
+          <View style={styles.navSide} />
         </View>
 
         {/* State filter (when not hidden) */}
@@ -653,12 +653,12 @@ const styles = StyleSheet.create({
   navBar: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  navTitle:  { fontSize: 17, fontWeight: "700" },
+  navSide:   { width: 44, alignItems: "flex-start", justifyContent: "center" },
+  navTitle:  { flex: 1, fontSize: 17, fontWeight: "600", textAlign: "center", color: "#0f172b" },
   navCancel: { fontSize: 16, fontWeight: "500" },
 
   // iOS-style grouped list

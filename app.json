@@ -11,11 +11,12 @@
       "supportsTablet": true,
       "deploymentTarget": "17.0",
       "bundleIdentifier": "com.stakemate.pokerroll",
-      "buildNumber": "1.15",
+      "buildNumber": "1.28",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryAddUsageDescription": "Allow $(PRODUCT_NAME) to save photos to your library"
-      }
+      },
+      "appleTeamId": "F379Z5P54U"
     },
     "android": {
       "package": "com.stakemate.pokerroll",

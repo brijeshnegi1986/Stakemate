@@ -1,10 +1,11 @@
 import { HandReviewLauncher } from "@/components/HandReviewLauncher";
 import { PaywallModal } from "@/components/PaywallModal";
+import { exportSessionsCSV } from "@/lib/exportCSV";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Alert, Animated, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 function MenuRow({
@@ -34,10 +35,22 @@ function MenuRow({
 const BRAND = "#155DFC";
 
 export default function MoreScreen() {
-  const { colors, spacing } = usePokerTheme();
+  const { colors, spacing, isDark } = usePokerTheme();
   const insets = useSafeAreaInsets();
   const [showPaywall, setShowPaywall]         = useState(false);
   const [showHandReview, setShowHandReview]   = useState(false);
+  const [exporting, setExporting]             = useState(false);
+
+  async function handleExportCSV() {
+    setExporting(true);
+    try {
+      await exportSessionsCSV();
+    } catch (e: any) {
+      Alert.alert("Export failed", e?.message ?? "Could not export sessions. Please try again.");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const headerTranslateY    = useRef(new Animated.Value(0)).current;
   const headerContentMargin = useRef(new Animated.Value(0)).current;
@@ -100,11 +113,11 @@ export default function MoreScreen() {
       <TouchableOpacity
         onPress={() => setShowPaywall(true)}
         activeOpacity={0.88}
-        style={[styles.upgradeBtn, { backgroundColor: "#D97706" }]}
+        style={[styles.upgradeBtn, { backgroundColor: "#7CF3D0", borderWidth: isDark ? 0 : 1.5, borderColor: "#0D9488" }]}
       >
-        <Ionicons name="star" size={20} color="#FEF3C7" />
+        <Ionicons name="star" size={20} color="#002196" />
         <Text style={styles.upgradeBtnText}>Upgrade to Pro / Elite</Text>
-        <Ionicons name="chevron-forward" size={20} color="rgba(254,243,199,0.7)" />
+        <Ionicons name="chevron-forward" size={20} color="#002196" />
       </TouchableOpacity>
 
       {/* ── Tools ── */}
@@ -117,10 +130,40 @@ export default function MoreScreen() {
           onPress={() => router.push("/explore")}
         />
         <MenuRow
+          icon="swap-horizontal-outline"
+          label="Currency Converter"
+          iconColor="#49E6BA"
+          onPress={() => router.push("/currency-converter")}
+        />
+        <MenuRow
           icon="color-wand-outline"
           label="AI Hand Review"
           iconColor="#0891B2"
           onPress={() => setShowHandReview(true)}
+        />
+        <MenuRow
+          icon="document-text-outline"
+          label="Hand Notes"
+          iconColor="#6366F1"
+          onPress={() => router.push("/(tabs)/notes")}
+        />
+        <MenuRow
+          icon="people-outline"
+          label="Player Notes"
+          iconColor="#0891B2"
+          onPress={() => router.push("/player-notes")}
+        />
+        <MenuRow
+          icon="storefront-outline"
+          label="Marketplace"
+          iconColor="#0891B2"
+          onPress={() => router.push({ pathname: "/(tabs)/social", params: { openTab: "stakes" } } as any)}
+        />
+        <MenuRow
+          icon="download-outline"
+          label={exporting ? "Exporting…" : "Export Sessions"}
+          iconColor="#22C55E"
+          onPress={exporting ? () => {} : handleExportCSV}
           isLast
         />
       </View>
@@ -128,6 +171,18 @@ export default function MoreScreen() {
       {/* ── General ── */}
       <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>General</Text>
       <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+        <MenuRow
+          icon="information-circle-outline"
+          label="About Stakemate"
+          iconColor={BRAND}
+          onPress={() => router.push("/about")}
+        />
+        <MenuRow
+          icon="help-circle-outline"
+          label="FAQ"
+          iconColor={BRAND}
+          onPress={() => router.push("/faq")}
+        />
         <MenuRow
           icon="chatbubble-outline"
           label="Send Feedback"
@@ -209,7 +264,7 @@ const styles = StyleSheet.create({
   },
   upgradeBtnText: {
     flex: 1,
-    color: "#fff",
+    color: "#002196",
     fontSize: 16,
     fontWeight: "700",
   },

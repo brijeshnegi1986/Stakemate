@@ -9,7 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { presentCodeRedemptionSheetIOS } from "expo-iap";
 import { Image } from "expo-image";
 import { router } from "expo-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -120,18 +120,17 @@ export function PaywallModal({
 
         {/* ── Hero ── */}
         <View style={[styles.hero, { backgroundColor: meta.color }]}>
-          <TouchableOpacity onPress={onClose} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="close" size={18} color="rgba(255,255,255,0.8)" />
+          <TouchableOpacity onPress={onClose} style={styles.closeBtn} hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}>
+            <Ionicons name="close" size={32} color="rgba(255,255,255,0.8)" />
           </TouchableOpacity>
 
-          {/* SM wordmark */}
+          {/* Wordmark */}
           <View style={styles.heroMark}>
             <Image
-              source={require("@/assets/images/stakemate-monogram.png")}
-              style={{ width: 19, height: 30 }}
+              source={require("@/assets/images/stakemate-logo_light.png")}
+              style={{ width: 82, height: 82 * (247 / 902) }}
               contentFit="contain"
             />
-            <Text style={styles.heroAppName}>Stakemate</Text>
           </View>
 
           {/* Plan label */}
@@ -300,19 +299,21 @@ const styles = StyleSheet.create({
 
   // Hero
   hero: {
-    paddingTop: 20,
+    paddingTop: 72,       // space for absolutely-positioned close btn + content gap
     paddingHorizontal: 24,
     paddingBottom: 28,
+    position: "relative",
   },
   closeBtn: {
-    alignSelf: "flex-end",
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    position: "absolute",
+    top: 16,
+    right: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: "rgba(255,255,255,0.15)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 12,
   },
   heroMark: {
     flexDirection: "row",

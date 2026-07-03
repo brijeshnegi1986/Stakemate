@@ -609,26 +609,36 @@ function PostCard({
           </View>
 
           {/* Stats row */}
-          <View style={{ flexDirection: "row", borderTopWidth: 1, borderTopColor: dealColor + "20" }}>
-            {[
-              { label: "Buy-in",    value: dealSnap.buy_in ? `$${dealSnap.buy_in.toLocaleString()}` : "—" },
-              { label: "Selling",   value: `${dealSnap.total_action_selling}%` },
-              { label: dealClosed ? "Claimed" : "Available", value: dealClosed ? `${dealSnap.action_claimed}%` : `${Math.max(0, dealSnap.total_action_selling - dealSnap.action_claimed)}%` },
-              { label: "Price/1%",  value: dealSnap.price_per_percent ? `$${dealSnap.price_per_percent}` : "—" },
-            ].map((stat, i, arr) => (
-              <View
-                key={stat.label}
-                style={{
-                  flex: 1, alignItems: "center", paddingVertical: 10,
-                  borderRightWidth: i < arr.length - 1 ? 1 : 0,
-                  borderRightColor: "#0891B220",
-                }}
-              >
-                <Text style={{ fontSize: 13, fontWeight: "700", color: i === 2 ? "#0891B2" : colors.text.primary }}>{stat.value}</Text>
-                <Text style={{ fontSize: 10, color: colors.text.tertiary, marginTop: 2 }}>{stat.label}</Text>
+          {(() => {
+            const minPiece = dealSnap.min_piece ?? 1;
+            const priceForMin = dealSnap.price_per_percent != null
+              ? `$${(dealSnap.price_per_percent * minPiece * (dealSnap.markup ?? 1)).toLocaleString("en-AU", { maximumFractionDigits: 2 })}`
+              : "—";
+            const stats = [
+              { label: "Buy-in", value: dealSnap.buy_in ? `$${dealSnap.buy_in.toLocaleString("en-AU")}` : "—", sub: (dealSnap.num_entries ?? 1) > 1 ? `× ${dealSnap.num_entries} entries` : null, highlight: false },
+              { label: "Selling", value: `${dealSnap.total_action_selling}%`, sub: `Min ${minPiece}%`, highlight: false },
+              { label: dealClosed ? "Claimed" : "Available", value: dealClosed ? `${dealSnap.action_claimed}%` : `${Math.max(0, dealSnap.total_action_selling - dealSnap.action_claimed)}%`, highlight: true },
+              { label: `Price/${minPiece}%`, value: priceForMin, highlight: false },
+            ];
+            return (
+              <View style={{ flexDirection: "row", borderTopWidth: 1, borderTopColor: dealColor + "20" }}>
+                {stats.map((stat, i, arr) => (
+                  <View
+                    key={stat.label}
+                    style={{
+                      flex: 1, alignItems: "center", paddingVertical: 10,
+                      borderRightWidth: i < arr.length - 1 ? 1 : 0,
+                      borderRightColor: "#0891B220",
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: "700", color: stat.highlight ? "#0891B2" : colors.text.primary }}>{stat.value}</Text>
+                    <Text style={{ fontSize: 10, color: colors.text.tertiary, marginTop: 2 }}>{stat.label}</Text>
+                    {"sub" in stat && stat.sub ? <Text style={{ fontSize: 9, color: "#0891B2", marginTop: 1 }}>{stat.sub}</Text> : null}
+                  </View>
+                ))}
               </View>
-            ))}
-          </View>
+            );
+          })()}
 
           {/* Min piece + markup row */}
           {(dealSnap.min_piece > 1 || dealSnap.markup !== 1) ? (
@@ -888,19 +898,45 @@ function StakeDealCard({
       </View>
 
       {/* Stats strip */}
-      <View style={[sDealStyles.statsRow, { borderColor: colors.border.subtle }]}>
-        {[
-          { label: "Buy-in",    value: deal.buy_in ? `$${deal.buy_in}` : "—" },
-          { label: "Selling",   value: `${deal.total_action_selling}%` },
-          { label: "Price/1%",  value: deal.price_per_percent ? `$${deal.price_per_percent}` : "—" },
-          { label: "Markup",    value: deal.markup !== 1 ? `${deal.markup}×` : "Face" },
-        ].map((s, i, arr) => (
-          <View key={s.label} style={[sDealStyles.statCell, i < arr.length - 1 && { borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border.subtle }]}>
-            <Text style={[sDealStyles.statValue, { color: colors.text.primary }]}>{s.value}</Text>
-            <Text style={[sDealStyles.statLabel, { color: colors.text.tertiary }]}>{s.label}</Text>
+      {(() => {
+        const minPiece = deal.min_piece ?? 1;
+        const priceForMin = deal.price_per_percent != null
+          ? `$${(deal.price_per_percent * minPiece * (deal.markup ?? 1)).toLocaleString("en-AU", { maximumFractionDigits: 2 })}`
+          : "—";
+        const stats = [
+          {
+            label: "Buy-in",
+            value: deal.buy_in ? `$${deal.buy_in.toLocaleString("en-AU")}` : "—",
+            sub: (deal.num_entries ?? 1) > 1 ? `× ${deal.num_entries} entries` : null,
+          },
+          {
+            label: "Selling",
+            value: `${deal.total_action_selling}%`,
+            sub: `Min ${minPiece}%`,
+          },
+          {
+            label: `Price / ${minPiece}%`,
+            value: priceForMin,
+            sub: deal.markup !== 1 ? `${deal.markup}× markup` : "Face value",
+          },
+          {
+            label: "Available",
+            value: `${Math.max(0, deal.total_action_selling - deal.action_claimed).toFixed(1)}%`,
+            sub: null,
+          },
+        ];
+        return (
+          <View style={[sDealStyles.statsRow, { borderColor: colors.border.subtle }]}>
+            {stats.map((s, i) => (
+              <View key={s.label} style={[sDealStyles.statCell, i < stats.length - 1 && { borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border.subtle }]}>
+                <Text style={[sDealStyles.statValue, { color: colors.text.primary }]}>{s.value}</Text>
+                <Text style={[sDealStyles.statLabel, { color: colors.text.tertiary }]}>{s.label}</Text>
+                {s.sub ? <Text style={[sDealStyles.statLabel, { color: PURPLE, fontSize: 9, marginTop: 1 }]}>{s.sub}</Text> : null}
+              </View>
+            ))}
           </View>
-        ))}
-      </View>
+        );
+      })()}
 
       {/* Progress bar */}
       <View style={sDealStyles.progressSection}>
@@ -1056,7 +1092,16 @@ const AVATAR_SIZE          = 62;
 const ONLINE_THRESHOLD_MS  = 5  * 60 * 1000;        // 5 min  → green dot
 const RECENT_THRESHOLD_MS  = 2  * 60 * 60 * 1000;   // 2 hrs → normal opacity
 
-function OnlineMembersStrip({ members, colors, currentUserId }: { members: ActiveMember[]; colors: any; currentUserId?: string }) {
+function OnlineMembersStrip({
+  members, colors, currentUserId, followingIds, onFollow, onPressProfile,
+}: {
+  members: ActiveMember[];
+  colors: any;
+  currentUserId?: string;
+  followingIds: Set<string>;
+  onFollow: (userId: string, currently: boolean) => void;
+  onPressProfile: (userId: string) => void;
+}) {
   const visible = members.filter((m) => m.id !== currentUserId);
   if (visible.length === 0) return null;
 
@@ -1064,45 +1109,76 @@ function OnlineMembersStrip({ members, colors, currentUserId }: { members: Activ
     <View style={{ marginBottom: 10 }}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 16, paddingRight: 4 }}>
         {visible.map((m) => {
-          const lastSeen = m.last_seen_at ? Date.now() - new Date(m.last_seen_at).getTime() : Infinity;
-          const isOnline = lastSeen < ONLINE_THRESHOLD_MS;
-          const isRecent = lastSeen < RECENT_THRESHOLD_MS;
-          const opacity  = isRecent ? 1 : 0.22;
-          const name     = m.display_name || m.username || "?";
-          const initials = name[0].toUpperCase();
+          const lastSeen  = m.last_seen_at ? Date.now() - new Date(m.last_seen_at).getTime() : Infinity;
+          const isOnline  = lastSeen < ONLINE_THRESHOLD_MS;
+          const isRecent  = lastSeen < RECENT_THRESHOLD_MS;
+          const opacity   = isRecent ? 1 : 0.22;
+          const name      = m.display_name || m.username || "?";
+          const initials  = name[0].toUpperCase();
+          const isFollowing = followingIds.has(m.id);
 
-          // Ring: bright green for online, subtle grey for recent, none for inactive
           const ringColor = isOnline ? GREEN : isRecent ? colors.border.default : "transparent";
           const ringWidth = isOnline ? 2.5 : isRecent ? 1.5 : 0;
 
           return (
-            <View key={m.id} style={{ alignItems: "center", gap: 5, opacity }}>
+            <TouchableOpacity
+              key={m.id}
+              onPress={() => onPressProfile(m.id)}
+              activeOpacity={0.8}
+              style={{ alignItems: "center", gap: 5, opacity }}
+            >
               {/* Avatar with status ring */}
-              <View style={{
-                width: AVATAR_SIZE + 6,
-                height: AVATAR_SIZE + 6,
-                borderRadius: (AVATAR_SIZE + 6) / 2,
-                borderWidth: ringWidth,
-                borderColor: ringColor,
-                alignItems: "center",
-                justifyContent: "center",
-              }}>
+              <View style={{ position: "relative" }}>
                 <View style={{
-                  width: AVATAR_SIZE,
-                  height: AVATAR_SIZE,
-                  borderRadius: AVATAR_SIZE / 2,
-                  overflow: "hidden",
-                  backgroundColor: `${BRAND}22`,
+                  width: AVATAR_SIZE + 6,
+                  height: AVATAR_SIZE + 6,
+                  borderRadius: (AVATAR_SIZE + 6) / 2,
+                  borderWidth: ringWidth,
+                  borderColor: ringColor,
                   alignItems: "center",
                   justifyContent: "center",
                 }}>
-                  {m.avatar_url ? (
-                    <Image source={{ uri: m.avatar_url }} style={{ width: AVATAR_SIZE, height: AVATAR_SIZE }} contentFit="cover" />
-                  ) : (
-                    <Text style={{ color: BRAND, fontSize: AVATAR_SIZE * 0.38, fontWeight: "800" }}>{initials}</Text>
-                  )}
+                  <View style={{
+                    width: AVATAR_SIZE,
+                    height: AVATAR_SIZE,
+                    borderRadius: AVATAR_SIZE / 2,
+                    overflow: "hidden",
+                    backgroundColor: `${BRAND}22`,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}>
+                    {m.avatar_url ? (
+                      <Image source={{ uri: m.avatar_url }} style={{ width: AVATAR_SIZE, height: AVATAR_SIZE }} contentFit="cover" />
+                    ) : (
+                      <Text style={{ color: BRAND, fontSize: AVATAR_SIZE * 0.38, fontWeight: "800" }}>{initials}</Text>
+                    )}
+                  </View>
                 </View>
+
+                {/* Follow "+" badge for non-followed members */}
+                {!isFollowing && currentUserId && (
+                  <TouchableOpacity
+                    onPress={(e) => { e.stopPropagation?.(); onFollow(m.id, false); }}
+                    hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                    style={{
+                      position: "absolute",
+                      bottom: 0,
+                      right: 0,
+                      width: 18,
+                      height: 18,
+                      borderRadius: 9,
+                      backgroundColor: BRAND,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderWidth: 1.5,
+                      borderColor: colors.bg.secondary,
+                    }}
+                  >
+                    <Ionicons name="add" size={11} color="#fff" />
+                  </TouchableOpacity>
+                )}
               </View>
+
               {/* Name */}
               <Text
                 style={{ fontSize: 11, fontWeight: isRecent ? "600" : "400", color: isRecent ? colors.text.secondary : colors.text.disabled, maxWidth: AVATAR_SIZE + 12, textAlign: "center" }}
@@ -1110,7 +1186,7 @@ function OnlineMembersStrip({ members, colors, currentUserId }: { members: Activ
               >
                 {name.split(" ")[0]}
               </Text>
-            </View>
+            </TouchableOpacity>
           );
         })}
       </ScrollView>
@@ -1124,7 +1200,7 @@ export default function SocialScreen() {
   const { colors } = usePokerTheme();
   const { user, profile } = useAuth();
   const insets = useSafeAreaInsets();
-  const { openDealId } = useLocalSearchParams<{ openDealId?: string }>();
+  const { openDealId, openTab } = useLocalSearchParams<{ openDealId?: string; openTab?: Tab }>();
 
   const [tab, setTab]                     = useState<Tab>("public");
   const [activeMembers, setActiveMembers] = useState<ActiveMember[]>([]);
@@ -1217,6 +1293,11 @@ export default function SocialScreen() {
     }
   }, [openDealId]);
 
+  // Auto-switch tab when navigated from More page
+  useEffect(() => {
+    if (openTab) setTab(openTab);
+  }, [openTab]);
+
   const loadData = useCallback(async (silent = false) => {
     if (!userId) { setLoading(false); return; }
     if (!silent) setLoading(true);
@@ -1305,6 +1386,14 @@ export default function SocialScreen() {
     Alert.alert("Visibility updated", `This post is now visible to ${label === "Public" ? "everyone" : "your followers only"}.`);
   };
 
+  const handleCompose = () => {
+    if (!user) {
+      setSignInSheet({ icon: "create-outline", title: "Create a Post", description: "Sign in to share your sessions, results and big wins with the community." });
+      return;
+    }
+    setComposeVisible(true);
+  };
+
   const handleInvite = async () => {
     try {
       await Share.share({ message: "Join me on Stakemate — the best poker bankroll tracker! https://stakemate.app" });
@@ -1358,7 +1447,7 @@ export default function SocialScreen() {
               <Text style={styles.headerSub}>Stakemate players worldwide</Text>
             </View>
             <View style={{ flexDirection: "row", gap: 10 }}>
-              <TouchableOpacity onPress={() => setComposeVisible(true)} style={styles.headerIconBtn} activeOpacity={0.8}>
+              <TouchableOpacity onPress={handleCompose} style={styles.headerIconBtn} activeOpacity={0.8}>
                 <Ionicons name="create-outline" size={18} color="#fff" />
               </TouchableOpacity>
               <TouchableOpacity onPress={handleInvite} style={styles.inviteBtn} activeOpacity={0.8}>
@@ -1542,7 +1631,14 @@ export default function SocialScreen() {
             ListHeaderComponent={
               tab === "public" ? (
                 <>
-                  <OnlineMembersStrip members={activeMembers} colors={colors} currentUserId={user?.id} />
+                  <OnlineMembersStrip
+                    members={activeMembers}
+                    colors={colors}
+                    currentUserId={user?.id}
+                    followingIds={followingIds}
+                    onFollow={handleFollow}
+                    onPressProfile={handlePressProfile}
+                  />
                   <View style={[styles.welcomeCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
                   <View style={styles.welcomeTop}>
                     <View style={styles.welcomeIconWrap}>
@@ -1594,7 +1690,7 @@ export default function SocialScreen() {
                   <Ionicons name="newspaper-outline" size={44} color={colors.text.tertiary} />
                   <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>Nothing here yet</Text>
                   <Text style={[styles.emptySub, { color: colors.text.tertiary }]}>Be the first to post or share a session.</Text>
-                  <TouchableOpacity onPress={() => setComposeVisible(true)} style={[styles.emptyAction, { backgroundColor: BRAND }]}>
+                  <TouchableOpacity onPress={handleCompose} style={[styles.emptyAction, { backgroundColor: BRAND }]}>
                     <Ionicons name="create-outline" size={14} color="#fff" />
                     <Text style={styles.emptyActionText}>Create Post</Text>
                   </TouchableOpacity>

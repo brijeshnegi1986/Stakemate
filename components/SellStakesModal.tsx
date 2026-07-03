@@ -1843,6 +1843,7 @@ export function SellStakesModal({
         venue:                event.venue || null,
         tournament_date:      event.date,
         buy_in:               effectiveBuyIn,
+        num_entries:          entries,
         total_action_selling: pct,
         price_per_percent:    price,
         markup:               mkp,
@@ -1985,7 +1986,7 @@ export function SellStakesModal({
             onPublished={(updated) => { setDeal(updated); setView("seller_dash"); }}
             onKeepDraft={() => setView("seller_dash")}
           />
-        ) : view === "seller_edit" && deal && event ? (
+        ) : view === "seller_edit" && deal ? (
           <PackageForm
             event={eventForForm}
             deal={deal}

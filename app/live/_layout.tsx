@@ -9,10 +9,10 @@ export default function LiveLayout() {
   const modalClose = () => (
     <TouchableOpacity
       onPress={() => { if (router.canGoBack()) router.back(); else router.replace("/(tabs)"); }}
-      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-      style={{ marginLeft: 4 }}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      style={{ alignItems: "center", justifyContent: "center" }}
     >
-      <Ionicons name="close" size={24} color={colors.text.secondary} />
+      <Ionicons name="close" size={32} color={colors.text.secondary} />
     </TouchableOpacity>
   );
 

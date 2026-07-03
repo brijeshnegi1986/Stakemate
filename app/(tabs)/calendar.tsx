@@ -996,6 +996,21 @@ export default function CalendarScreen() {
             onScroll={(e) => { handleCalScroll(e); handleTourneyScroll(e); }}
             scrollEventThrottle={16}
           >
+            {/* Elite members teaser — above the list */}
+            {!isElite && (
+              <TouchableOpacity
+                onPress={() => setShowPaywall(true)}
+                activeOpacity={0.85}
+                style={[styles.eliteTeaser, { backgroundColor: PURPLE + "12", borderColor: PURPLE + "30", marginHorizontal: 16, marginBottom: 12 }]}
+              >
+                <Ionicons name="trophy" size={16} color={PURPLE} />
+                <Text style={[styles.eliteTeaserText, { color: colors.text.secondary }]}>
+                  <Text style={{ fontWeight: "700", color: PURPLE }}>Elite members</Text> can publish tournaments to the community.
+                </Text>
+                <Ionicons name="chevron-forward" size={14} color={PURPLE} />
+              </TouchableOpacity>
+            )}
+
             {/* Official tournaments */}
             {loadingOfficial ? (
               <View style={styles.centered}>
@@ -1125,20 +1140,6 @@ export default function CalendarScreen() {
             )}
 
 
-            {/* Non-Elite teaser */}
-            {!isElite && (
-              <TouchableOpacity
-                onPress={() => setShowPaywall(true)}
-                activeOpacity={0.85}
-                style={[styles.eliteTeaser, { backgroundColor: PURPLE + "12", borderColor: PURPLE + "30", marginHorizontal: 16 }]}
-              >
-                <Ionicons name="trophy" size={16} color={PURPLE} />
-                <Text style={[styles.eliteTeaserText, { color: colors.text.secondary }]}>
-                  <Text style={{ fontWeight: "700", color: PURPLE }}>Elite organisers</Text> can publish tournaments to the community.
-                </Text>
-                <Ionicons name="chevron-forward" size={14} color={PURPLE} />
-              </TouchableOpacity>
-            )}
           </ScrollView>
           </View>
         </View>
@@ -3392,13 +3393,13 @@ function SeriesDetailModal({
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
         {/* Header */}
-        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }}>
+        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ marginLeft: 4 }}>
-            <Ionicons name="close" size={24} color={colors.text.secondary} />
+            <Ionicons name="close" size={32} color={colors.text.secondary} />
           </TouchableOpacity>
-          <View style={{ flex: 1, alignItems: "center", gap: 2 }}>
+          <View style={{ flex: 1, alignItems: "center", gap: 3 }}>
             <Text style={{ fontSize: 17, fontWeight: "600", color: colors.text.primary }} numberOfLines={1}>{group.name}</Text>
-            <Text style={[styles.officialDetailText, { color: colors.text.tertiary }]}>{filtered.length} of {group.tournaments.length} events · {dateRange}</Text>
+            <Text style={{ fontSize: 13, color: colors.text.tertiary, textAlign: "center" }} numberOfLines={2}>{filtered.length} of {group.tournaments.length} events · {dateRange}</Text>
           </View>
           <View style={{ width: 36 }} />
         </View>
@@ -3560,17 +3561,18 @@ function OfficialTournamentCard({
       return;
     }
     const eventId = addTournamentEvent({
-      name:      tournament.name,
-      date:      tournament.tournament_date,
-      venue:     [tournament.venue_info?.name, tournament.city].filter(Boolean).join(", "),
-      buyin:     tournament.buy_in != null ? `$${tournament.buy_in.toLocaleString()}` : "",
-      notes:     [
+      name:       tournament.name,
+      date:       tournament.tournament_date,
+      start_time: tournament.tournament_time ?? "",
+      venue:      [tournament.venue_info?.name, tournament.city].filter(Boolean).join(", "),
+      buyin:      tournament.buy_in != null ? `$${tournament.buy_in.toLocaleString()}` : "",
+      notes:      [
         tournament.format,
         tournament.guarantee != null ? `GTD $${tournament.guarantee.toLocaleString()}` : null,
         timeLabel ? `Starts ${timeLabel}` : null,
       ].filter(Boolean).join(" · "),
-      image_url: tournament.series_info?.banner_url ?? tournament.banner_url ?? "",
-      source:    "directory",
+      image_url:  tournament.series_info?.banner_url ?? tournament.banner_url ?? "",
+      source:     "directory",
     });
     if (cardUser?.id) syncEventToCloud(cardUser.id, eventId).catch(console.error);
     setSavedEventId(eventId);

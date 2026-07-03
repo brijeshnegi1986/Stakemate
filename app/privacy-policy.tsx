@@ -82,7 +82,7 @@ Requests are processed within 30 days. To exercise any right, email privacy@stak
 ];
 
 export default function PrivacyPolicyScreen() {
-  const { colors, spacing } = usePokerTheme();
+  const { colors, spacing, isDark } = usePokerTheme();
   const insets = useSafeAreaInsets();
 
   return (
@@ -93,7 +93,7 @@ export default function PrivacyPolicyScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <StakemateLogo size={32} variant="blue" />
+        <StakemateLogo size={32} variant={isDark ? "light" : "dark"} />
         <Text style={[styles.title, { color: colors.text.primary }]}>Privacy Policy</Text>
         <Text style={[styles.updated, { color: colors.text.tertiary }]}>
           Last updated: {LAST_UPDATED}

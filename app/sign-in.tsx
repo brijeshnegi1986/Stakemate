@@ -1,7 +1,7 @@
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { StakemateLogo } from "@/components/StakemateLogo";
+import { Image } from "expo-image";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Linking from "expo-linking";
 import { router } from "expo-router";
@@ -61,20 +61,22 @@ export default function SignInScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: colors.bg.primary }]}>
-      {/* Close button */}
-      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          style={[styles.closeBtn, { backgroundColor: colors.bg.secondary }]}
-        >
-          <MaterialCommunityIcons name="close" size={20} color={colors.text.secondary} />
-        </TouchableOpacity>
-      </View>
+      {/* Close button — absolutely positioned, equal padding from corner */}
+      <TouchableOpacity
+        onPress={() => router.back()}
+        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+        style={[styles.closeBtn, { top: insets.top + 16, backgroundColor: colors.bg.secondary }]}
+      >
+        <MaterialCommunityIcons name="close" size={32} color={colors.text.secondary} />
+      </TouchableOpacity>
 
       {/* Main content */}
       <View style={styles.content}>
-        <StakemateLogo size={72} style={{ marginBottom: 28 }} />
+        <Image
+          source={require("@/assets/images/icon.png")}
+          style={{ width: 60, height: 60, borderRadius: 14, marginBottom: 28, overflow: "hidden" }}
+          contentFit="contain"
+        />
 
         <Text style={[styles.title, { color: colors.text.primary }]}>
           Sign in to Stakemate
@@ -171,18 +173,15 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
   },
-  topBar: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    paddingHorizontal: 20,
-    paddingBottom: 8,
-  },
   closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    position: "absolute",
+    right: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: "center",
     justifyContent: "center",
+    zIndex: 10,
   },
   content: {
     flex: 1,

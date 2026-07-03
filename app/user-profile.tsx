@@ -212,6 +212,72 @@ function buildSocialLinks(profile: FullProfile): SocialLink[] {
   return links;
 }
 
+function LiveStatsCard({ profile, colors }: { profile: FullProfile; colors: any }) {
+  const hasStats = profile.live_earnings != null || profile.live_cashes != null
+    || profile.live_wins != null || profile.top_10_results != null;
+  if (!hasStats) return null;
+
+  const stats = [
+    {
+      icon: "cash-outline" as const,
+      color: "#22C55E",
+      label: "Live Earnings",
+      value: profile.live_earnings != null
+        ? `$${Number(profile.live_earnings).toLocaleString("en-AU", { maximumFractionDigits: 0 })}`
+        : null,
+    },
+    {
+      icon: "trophy-outline" as const,
+      color: "#F59E0B",
+      label: "Cashes",
+      value: profile.live_cashes != null ? String(profile.live_cashes) : null,
+    },
+    {
+      icon: "medal-outline" as const,
+      color: "#EF4444",
+      label: "Wins",
+      value: profile.live_wins != null ? String(profile.live_wins) : null,
+    },
+    {
+      icon: "podium-outline" as const,
+      color: "#8B5CF6",
+      label: "Top 10",
+      value: profile.top_10_results != null ? String(profile.top_10_results) : null,
+    },
+  ].filter((s) => s.value !== null);
+
+  return (
+    <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+      <Text style={{ fontSize: 11, fontWeight: "700", color: colors.text.tertiary, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
+        Live Tournament Stats
+      </Text>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        {stats.map((s) => (
+          <View
+            key={s.label}
+            style={{
+              flex: 1,
+              backgroundColor: colors.bg.primary,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: colors.border.default,
+              padding: 10,
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: s.color + "18", alignItems: "center", justifyContent: "center" }}>
+              <Ionicons name={s.icon} size={14} color={s.color} />
+            </View>
+            <Text style={{ fontSize: 14, fontWeight: "800", color: colors.text.primary }}>{s.value}</Text>
+            <Text style={{ fontSize: 10, color: colors.text.tertiary, fontWeight: "500" }}>{s.label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function SocialLinksRow({ profile, colors }: { profile: FullProfile; colors: any }) {
   const links = buildSocialLinks(profile);
   if (links.length === 0) return null;
@@ -452,6 +518,7 @@ export default function UserProfileScreen() {
         </View>
 
         <SocialLinksRow profile={profileData} colors={colors} />
+        <LiveStatsCard profile={profileData} colors={colors} />
 
         {!isOwnProfile && (
           <View style={pStyles.actions}>

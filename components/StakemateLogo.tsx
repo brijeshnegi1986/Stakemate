@@ -1,28 +1,29 @@
 import { Image, type ImageStyle, type StyleProp } from "react-native";
 
-const LOGO_ASPECT = 168 / 271;
-const HORIZONTAL_ASPECT = 1062 / 546;
+const BRAND_ASPECT = 902 / 247;
 
 type Props = {
   size?: number;
   style?: StyleProp<ImageStyle>;
-  variant?: "default" | "blue";
+  // "light" → use on dark backgrounds (faded lavender/mint logo)
+  // "dark"  → use on light backgrounds (navy/mint logo)
+  variant?: "light" | "dark";
 };
 
-export function StakemateLogo({ size = 48, style, variant = "default" }: Props) {
-  if (variant === "blue") {
+export function StakemateLogo({ size = 48, style, variant = "dark" }: Props) {
+  if (variant === "light") {
     return (
       <Image
-        source={require("@/assets/images/Stakemate-logo-blue.png")}
-        style={[{ width: size * HORIZONTAL_ASPECT, height: size }, style]}
+        source={require("@/assets/images/stakemate-logo_light.png")}
+        style={[{ width: size * BRAND_ASPECT, height: size }, style]}
         resizeMode="contain"
       />
     );
   }
   return (
     <Image
-      source={require("@/assets/images/stakemate-monogram.png")}
-      style={[{ width: size * LOGO_ASPECT, height: size }, style]}
+      source={require("@/assets/images/stakemate-logo_dark.png")}
+      style={[{ width: size * BRAND_ASPECT, height: size }, style]}
       resizeMode="contain"
     />
   );

@@ -20,6 +20,7 @@ Sentry.init({
 });
 
 import { AuthProvider } from "@/context/AuthContext";
+import { SubscriptionProvider } from "@/context/SubscriptionContext";
 import { AppThemeProvider, useThemeContext } from "@/store/ThemeContext";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack, ThemeProvider } from "expo-router";
@@ -55,14 +56,14 @@ function RootLayoutContent() {
     },
   };
 
-  // Shared close button for modals (iOS standard: bare xmark, no circle bg)
+  // Shared close button for modals
   const modalClose = () => (
     <TouchableOpacity
       onPress={() => router.back()}
-      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-      style={{ marginLeft: 4 }}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      style={{ alignItems: "center", justifyContent: "center" }}
     >
-      <Ionicons name="close" size={24} color={themeColors.text.secondary} />
+      <Ionicons name="close" size={32} color={themeColors.text.secondary} />
     </TouchableOpacity>
   );
 
@@ -111,6 +112,10 @@ function RootLayoutContent() {
           <Stack.Screen name="settings"       options={modalOptions("Settings")} />
           <Stack.Screen name="privacy-policy" options={modalOptions("Privacy Policy")} />
           <Stack.Screen name="terms"          options={modalOptions("Terms of Service")} />
+          <Stack.Screen name="about"              options={modalOptions("About Stakemate")} />
+          <Stack.Screen name="faq"              options={modalOptions("FAQ")} />
+          <Stack.Screen name="currency-converter" options={modalOptions("Currency Converter")} />
+          <Stack.Screen name="player-notes"       options={modalOptions("Player Notes")} />
 
           <Stack.Screen name="session-detail" options={pushOptions("Session Detail")} />
           <Stack.Screen name="session-edit"   options={pushOptions("Edit Session")} />
@@ -129,7 +134,9 @@ export default Sentry.wrap(function RootLayout() {
   return (
     <AppThemeProvider>
       <AuthProvider>
-        <RootLayoutContent />
+        <SubscriptionProvider>
+          <RootLayoutContent />
+        </SubscriptionProvider>
       </AuthProvider>
     </AppThemeProvider>
   );

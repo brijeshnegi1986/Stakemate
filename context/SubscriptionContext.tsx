@@ -4,7 +4,7 @@ import {
   PRODUCT_PRO_MONTHLY,
   PRODUCT_PRO_YEARLY,
 } from "@/constants/subscription";
-import { ErrorCode, useIAP } from "expo-iap";
+import { ErrorCode, useIAP, type ProductSubscription } from "expo-iap";
 import {
   ReactNode,
   createContext,
@@ -22,6 +22,7 @@ interface SubscriptionState {
   isPro: boolean;
   isElite: boolean;
   isLoading: boolean;
+  subscriptions: ProductSubscription[];
   purchaseSubscription: (productId: string) => Promise<void>;
   restorePurchases: () => Promise<void>;
 }
@@ -34,6 +35,17 @@ const ALL_SKUS = [
 ];
 const ELITE_SKUS = new Set([PRODUCT_ELITE_MONTHLY, PRODUCT_ELITE_YEARLY]);
 const PRO_SKUS   = new Set([PRODUCT_PRO_MONTHLY,   PRODUCT_PRO_YEARLY]);
+
+// The native iOS purchase sheet sometimes cancels via a Swift Task
+// CancellationError instead of StoreKit's clean `.userCancelled` result
+// (e.g. when dismissed via the "X" icon rather than the Cancel button).
+// That gets wrapped as a generic error with code `purchase-error`, so we
+// also treat cancellation-flavored messages as a silent cancel.
+function isLikelyCancellation(error: any): boolean {
+  if (error?.code === ErrorCode.UserCancelled) return true;
+  const message = String(error?.message ?? "").toLowerCase();
+  return message.includes("cancel");
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -49,6 +61,7 @@ const SubscriptionContext = createContext<SubscriptionState>({
   isPro: false,
   isElite: false,
   isLoading: false,
+  subscriptions: [],
   purchaseSubscription: async () => {},
   restorePurchases: async () => {},
 });
@@ -60,6 +73,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const {
     connected,
     activeSubscriptions,
+    subscriptions,
     fetchProducts,
     requestPurchase,
     finishTransaction,
@@ -71,7 +85,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       await getActiveSubscriptions(ALL_SKUS);
     },
     onPurchaseError: (error) => {
-      if (error.code !== ErrorCode.UserCancelled) {
+      if (!isLikelyCancellation(error)) {
         Alert.alert("Purchase failed", error.message ?? "Something went wrong. Please try again.");
       }
     },
@@ -94,7 +108,6 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   }, [connected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const purchaseSubscription = useCallback(async (productId: string) => {
-    Alert.alert("Debug", `Tapped purchase. connected=${connected}, sku=${productId}`);
     setIsLoading(true);
     try {
       await withTimeout(
@@ -103,7 +116,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
           request: {
             apple: {
               sku: productId,
-              andDangerouslyFinishTransactionAutomaticallyIOS: false,
+              andDangerouslyFinishTransactionAutomatically: false,
             },
           },
         }),
@@ -111,26 +124,25 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         "requestPurchase"
       );
     } catch (error: any) {
-      if (error?.code !== ErrorCode.UserCancelled) {
-        Alert.alert("Purchase failed", `connected=${connected}\n${error?.message ?? error}`);
+      if (!isLikelyCancellation(error)) {
+        Alert.alert("Purchase failed", error?.message ?? "Something went wrong. Please try again.");
       }
     } finally {
       setIsLoading(false);
     }
-  }, [requestPurchase, connected]);
+  }, [requestPurchase]);
 
   const restorePurchases = useCallback(async () => {
-    Alert.alert("Debug", `Tapped restore. connected=${connected}`);
     setIsLoading(true);
     try {
       await withTimeout(iapRestore(), 20000, "restorePurchases");
       await getActiveSubscriptions(ALL_SKUS);
-    } catch (error: any) {
-      Alert.alert("Restore failed", `connected=${connected}\n${error?.message ?? error}`);
+    } catch {
+      Alert.alert("Restore failed", "Could not restore purchases. Please try again.");
     } finally {
       setIsLoading(false);
     }
-  }, [iapRestore, getActiveSubscriptions, connected]);
+  }, [iapRestore, getActiveSubscriptions]);
 
   return (
     <SubscriptionContext.Provider
@@ -139,6 +151,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         isPro: tier === "pro" || tier === "elite",
         isElite: tier === "elite",
         isLoading,
+        subscriptions,
         purchaseSubscription,
         restorePurchases,
       }}

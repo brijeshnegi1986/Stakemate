@@ -4,9 +4,11 @@ import * as AppleAuthentication from "expo-apple-authentication";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import * as SecureStore from "expo-secure-store";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  Dimensions,
   Image,
   Modal,
   Platform,
@@ -15,12 +17,139 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+
+const SCREEN_HEIGHT = Dimensions.get("window").height;
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const BRAND = "#155DFC";
 const TEAL  = "#0CC8D4";
 const DARK  = "#0f172b";
 const MINT  = "#7CF3D0";
+
+// ─── Falling suits ────────────────────────────────────────────────────────────
+
+const SUITS = [
+  { symbol: "♠︎", color: "rgba(255,255,255,0.7)" },
+  { symbol: "♣︎", color: "rgba(255,255,255,0.7)" },
+  { symbol: "♦︎", color: "rgba(255,59,92,0.8)" },
+  { symbol: "♥︎", color: "rgba(255,107,157,0.8)" },
+];
+
+type Particle = {
+  id: number;
+  suit: { symbol: string; color: string };
+  x: number;         // left % (0-100)
+  size: number;      // font size
+  duration: number;  // fall duration ms
+  delay: number;     // initial delay ms
+  rotate: number;    // start rotation degrees
+  anim: Animated.Value;
+};
+
+function makeParticles(): Particle[] {
+  return Array.from({ length: 18 }, (_, i) => ({
+    id: i,
+    suit:     SUITS[i % 4],
+    x:        5 + (i * 23.7) % 90,
+    size:     20 + (i * 9) % 16,       // 20–35px
+    duration: 5000 + (i * 1337) % 5000, // 5–10s
+    delay:    (i * 600) % 6000,         // spread starts
+    rotate:   (i * 47) % 360,
+    anim:     new Animated.Value(0),
+  }));
+}
+
+function FallingSuits({ screenHeight }: { screenHeight: number }) {
+  const particles = useRef<Particle[]>(makeParticles()).current;
+
+  // Text zone sits roughly between 30%–65% of screen height
+  const TEXT_TOP    = screenHeight * 0.30;
+  const TEXT_BOTTOM = screenHeight * 0.65;
+
+  useEffect(() => {
+    const animations = particles.map((p) => {
+      const loop = Animated.loop(
+        Animated.sequence([
+          // Initial stagger delay
+          Animated.delay(p.delay),
+          // Phase 1: fast fall from top to just above text zone (0 → 0.35)
+          Animated.timing(p.anim, {
+            toValue: 0.35,
+            duration: p.duration * 0.25,
+            useNativeDriver: true,
+          }),
+          // Phase 2: slow drift through text (0.35 → 0.65) — "resting on text"
+          Animated.timing(p.anim, {
+            toValue: 0.65,
+            duration: p.duration * 0.55,
+            useNativeDriver: true,
+          }),
+          // Phase 3: slow fall off text to bottom (0.65 → 1)
+          Animated.timing(p.anim, {
+            toValue: 1,
+            duration: p.duration * 0.20,
+            useNativeDriver: true,
+          }),
+          // Reset instantly
+          Animated.timing(p.anim, {
+            toValue: 0,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      loop.start();
+      return loop;
+    });
+    return () => animations.forEach((a) => a.stop());
+  }, []);
+
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {particles.map((p) => {
+        const translateY = p.anim.interpolate({
+          inputRange:  [0,    0.35,      0.65,      1],
+          outputRange: [-30,  TEXT_TOP,  TEXT_BOTTOM, screenHeight + 30],
+        });
+        const opacity = p.anim.interpolate({
+          inputRange:  [0, 0.08, 0.35, 0.55, 0.65, 0.9,  1],
+          outputRange: [0, 0.9,  0.9,  0.6,  0.45, 0.2,  0],
+        });
+        // Slow gentle rotation — mostly still in text zone
+        const rotate = p.anim.interpolate({
+          inputRange:  [0,   0.35, 0.65, 1],
+          outputRange: [
+            `${p.rotate}deg`,
+            `${p.rotate + 60}deg`,
+            `${p.rotate + 75}deg`,  // barely rotates while on text
+            `${p.rotate + 140}deg`,
+          ],
+        });
+        // Slight horizontal drift while on text
+        const translateX = p.anim.interpolate({
+          inputRange:  [0, 0.35, 0.65, 1],
+          outputRange: [0, 0,    (p.id % 2 === 0 ? 6 : -6), (p.id % 2 === 0 ? 12 : -12)],
+        });
+        return (
+          <Animated.Text
+            key={p.id}
+            style={{
+              position: "absolute",
+              left: `${p.x}%` as any,
+              top: 0,
+              fontSize: p.size,
+              color: p.suit.color,
+              opacity,
+              transform: [{ translateY }, { translateX }, { rotate }],
+            }}
+          >
+            {p.suit.symbol}
+          </Animated.Text>
+        );
+      })}
+    </View>
+  );
+}
 
 export default function WelcomeScreen() {
   const { session, signInWithApple, signInWithGoogle } = useAuth();
@@ -29,6 +158,23 @@ export default function WelcomeScreen() {
   const [signingIn, setSigningIn] = useState<"apple" | "google" | null>(null);
   const [appleAvailable, setAppleAvailable] = useState(false);
   const [showSignInModal, setShowSignInModal] = useState(false);
+
+  // Entrance animation — logo scales up from 0.75 and fades in (matches index exit)
+  const logoOpacity   = useRef(new Animated.Value(0)).current;
+  const logoScale     = useRef(new Animated.Value(0.75)).current;
+  const contentOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      // Logo appears first (matches where index left off)
+      Animated.parallel([
+        Animated.timing(logoOpacity, { toValue: 1, duration: 350, useNativeDriver: true }),
+        Animated.spring(logoScale, { toValue: 1, tension: 120, friction: 8, useNativeDriver: true }),
+      ]),
+      // Then content fades in below
+      Animated.timing(contentOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+    ]).start();
+  }, []);
 
   useEffect(() => {
     if (Platform.OS === "ios") {
@@ -66,19 +212,25 @@ export default function WelcomeScreen() {
 
       {/* ── Gradient background ── */}
       <LinearGradient
-        colors={["#2E6BFF", "#155DFC", "#0D3796"]}
+        colors={["#009FEE", "#155DFC"]}
         locations={[0, 0.45, 1]}
         style={StyleSheet.absoluteFill}
         pointerEvents="none"
       />
 
+      {/* ── Falling suits ── */}
+      <FallingSuits screenHeight={SCREEN_HEIGHT} />
+
       {/* ── Content ── */}
       <View style={[styles.container, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 28 }]}>
 
-        {/* Logo */}
-        <View style={styles.logoRow}>
-          <Image source={require("@/assets/images/Stakemate-logo-white.png")} style={styles.logo} resizeMode="contain" />
-        </View>
+        {/* Logo — animates in from index screen scale */}
+        <Animated.View style={[styles.logoRow, { opacity: logoOpacity, transform: [{ scale: logoScale }] }]}>
+          <Image source={require("@/assets/images/stakemate-logo_light.png")} style={styles.logo} resizeMode="contain" />
+        </Animated.View>
+
+        {/* Hero + CTA — fade in after logo */}
+        <Animated.View style={{ flex: 1, opacity: contentOpacity, justifyContent: "space-between" }}>
 
         {/* Hero — centered */}
         <View style={styles.hero}>
@@ -109,6 +261,7 @@ export default function WelcomeScreen() {
             <Text style={styles.skipText}>Skip for now</Text>
           </TouchableOpacity>
         </View>
+        </Animated.View>
       </View>
 
       {/* ── Sign-in Modal ── */}
@@ -132,11 +285,11 @@ export default function WelcomeScreen() {
           {/* Handle */}
           <View style={styles.modalHandle} />
 
-          {/* SM icon badge */}
+          {/* Logo badge */}
           <View style={styles.modalIconBadge}>
             <Image
-              source={require("@/assets/images/stakemate-monogram.png")}
-              style={{ width: 17, height: 28 }}
+              source={require("@/assets/images/icon.png")}
+              style={{ width: 60, height: 60, borderRadius: 14 }}
               resizeMode="contain"
             />
           </View>
@@ -225,25 +378,26 @@ const styles = StyleSheet.create({
   logoRow: {
     alignItems: "center",
     justifyContent: "center",
+    paddingTop: 12,
   },
   logo: {
-    width: 220,
-    height: 174,
+    width: 260,
+    height: 260 * (247 / 902),
   },
 
   hero: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 8,
+    paddingVertical: 24,
   },
 
   headline: {
-    fontSize: 48,
+    fontSize: 46,
     fontWeight: "900",
     textAlign: "center",
-    lineHeight: 54,
-    marginBottom: 14,
+    lineHeight: 52,
+    marginBottom: 16,
     color: "#fff",
   },
   headlineDark: { color: DARK },
@@ -258,7 +412,8 @@ const styles = StyleSheet.create({
   },
 
   bodyWrap: {
-    paddingVertical: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
   },
   body: {
     fontSize: 15,
@@ -341,19 +496,12 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   modalIconBadge: {
-    width: 52,
-    height: 52,
+    width: 60,
+    height: 60,
     borderRadius: 14,
-    backgroundColor: BRAND,
-    alignItems: "center",
-    justifyContent: "center",
     alignSelf: "center",
     marginBottom: 16,
-    shadowColor: BRAND,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    overflow: "hidden",
   },
   modalTitle: {
     color: DARK,

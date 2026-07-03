@@ -233,8 +233,11 @@ export async function fetchAppNotifications(userId: string): Promise<AppNotifica
   );
 }
 
-export function markAllRead(): void {
+export async function markAllRead(userId: string): Promise<void> {
   setSetting(LAST_READ_KEY, new Date().toISOString());
+  // Keep the server-side notifications table (used for push badge counts) in sync,
+  // otherwise rows read in-app stay read=false forever and inflate the next push's badge.
+  await supabase.from("notifications").update({ read: true }).eq("user_id", userId).eq("read", false);
 }
 
 export async function getUnreadCount(userId: string): Promise<number> {

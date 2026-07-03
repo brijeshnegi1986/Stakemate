@@ -62,6 +62,7 @@ export type StakeDeal = {
   venue: string | null;
   tournament_date: string | null;
   buy_in: number | null;
+  num_entries: number;
   total_action_selling: number;
   price_per_percent: number | null;
   markup: number;
@@ -108,6 +109,7 @@ export type CreateStakeDealInput = {
   venue?: string | null;
   tournament_date?: string | null;
   buy_in?: number | null;
+  num_entries?: number;
   total_action_selling: number;
   price_per_percent?: number | null;
   markup?: number;
@@ -129,6 +131,7 @@ export async function createStakeDeal(input: CreateStakeDealInput): Promise<Stak
       venue:                input.venue ?? null,
       tournament_date:      input.tournament_date ?? null,
       buy_in:               input.buy_in ?? null,
+      num_entries:          input.num_entries ?? 1,
       total_action_selling: input.total_action_selling,
       price_per_percent:    input.price_per_percent ?? null,
       markup:               input.markup ?? 1.0,

@@ -88,7 +88,7 @@ Our total liability to you for any claim arising from these Terms or your use of
 ];
 
 export default function TermsScreen() {
-  const { colors, spacing } = usePokerTheme();
+  const { colors, spacing, isDark } = usePokerTheme();
   const insets = useSafeAreaInsets();
 
   return (
@@ -99,7 +99,7 @@ export default function TermsScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <StakemateLogo size={32} variant="blue" />
+        <StakemateLogo size={32} variant={isDark ? "light" : "dark"} />
         <Text style={[styles.title, { color: colors.text.primary }]}>Terms of Service</Text>
         <Text style={[styles.updated, { color: colors.text.tertiary }]}>
           Last updated: {LAST_UPDATED}

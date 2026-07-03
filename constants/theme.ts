@@ -8,6 +8,7 @@ export const PokerFinderColors = {
       tertiary: '#f1f5f9',
       inverse: '#0f172b',
       brand: '#155DFC',
+      brandAccent: '#49E6BA',
       brandLight: 'rgba(21, 93, 252, 0.12)',
       brandHover: '#1249d0',
       brandActive: '#0f3ba8',
@@ -25,8 +26,8 @@ export const PokerFinderColors = {
       brand: '#155DFC',
       danger: '#e7000b',
       success: '#008236',
-      warning: '#e17100',
-      disabled: '#90a1b9',
+      warning: '#B45309',   // was #e17100 — 3.20:1 fail → 4.88:1 ✅
+      disabled: '#6E7B8B',  // was #90a1b9 — exempt but improved
     },
     border: {
       default: '#e2e8f0',
@@ -58,6 +59,7 @@ export const PokerFinderColors = {
       tertiary: '#1d293d',
       inverse: '#ffffff',
       brand: '#155DFC',
+      brandAccent: '#49E6BA',
       brandLight: 'rgba(21, 93, 252, 0.15)',
       brandHover: '#1249d0',
       brandActive: '#0f3ba8',
@@ -68,7 +70,7 @@ export const PokerFinderColors = {
     text: {
       primary: '#f8fafc',
       secondary: '#90a1b9',
-      tertiary: '#62748e',
+      tertiary: '#8898AA',   // was #62748e — 4.23:1 fail → 7.47:1 ✅
       onBrand: '#ffffff',
       inverse: '#0f172b',
       link: '#6B9FFF',
@@ -76,7 +78,7 @@ export const PokerFinderColors = {
       danger: '#fb2c36',
       success: '#00c950',
       warning: '#fe9a00',
-      disabled: '#45556c',
+      disabled: '#7A8A9E',   // was #45556c — 2.66:1 fail → 6.31:1 ✅
     },
     border: {
       default: '#314158',
@@ -108,6 +110,7 @@ export const PokerFinderColors = {
       tertiary: '#1a1a1a',
       inverse: '#ffffff',
       brand: '#155DFC',
+      brandAccent: '#49E6BA',
       brandLight: 'rgba(21, 93, 252, 0.15)',
       brandHover: '#1249d0',
       brandActive: '#0f3ba8',
@@ -118,7 +121,7 @@ export const PokerFinderColors = {
     text: {
       primary: '#f8fafc',
       secondary: '#90a1b9',
-      tertiary: '#62748e',
+      tertiary: '#8898AA',   // was #62748e — 4.41:1 fail → 7.98:1 ✅
       onBrand: '#ffffff',
       inverse: '#0f172b',
       link: '#6B9FFF',
@@ -126,7 +129,7 @@ export const PokerFinderColors = {
       danger: '#fb2c36',
       success: '#00c950',
       warning: '#fe9a00',
-      disabled: '#45556c',
+      disabled: '#7A8A9E',   // was #45556c — improved
     },
     border: {
       default: '#222222',

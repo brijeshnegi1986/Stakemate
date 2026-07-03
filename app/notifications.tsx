@@ -1,19 +1,22 @@
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { AppNotification, fetchAppNotifications, markAllRead } from "@/lib/appNotifications";
+import { getStakeDeal } from "@/lib/stakes";
 import * as Notifications from "expo-notifications";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { Swipeable } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const BRAND = "#155DFC";
@@ -88,33 +91,56 @@ export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (!profile?.id) { setLoading(false); return; }
-    fetchAppNotifications(profile.id)
-      .then((data) => {
-        setNotifications(data);
-        markAllRead();
-        Notifications.setBadgeCountAsync(0).catch(() => {});
-        setNotifications(data.map((n) => ({ ...n, read: true })));
-      })
-      .catch((e) => { console.error("[NotificationsScreen] error:", e); })
-      .finally(() => setLoading(false));
-  }, [profile?.id]);
+  // Re-fetch every time the screen gains focus so deleted posts/deals disappear
+  useFocusEffect(
+    useCallback(() => {
+      // Always clear the badge immediately when user opens this screen
+      Notifications.setBadgeCountAsync(0).catch(() => {});
 
-  function handlePress(n: AppNotification) {
+      if (!profile?.id) { setLoading(false); return; }
+      setLoading(true);
+      fetchAppNotifications(profile.id)
+        .then((data) => {
+          setNotifications(data);
+          markAllRead(profile.id).catch(() => {});
+          setNotifications(data.map((n) => ({ ...n, read: true })));
+        })
+        .catch((e) => { console.error("[NotificationsScreen] error:", e); })
+        .finally(() => setLoading(false));
+    }, [profile?.id])
+  );
+
+  function handleDelete(id: string) {
+    setNotifications((prev) => {
+      const updated = prev.filter((n) => n.id !== id);
+      const unreadCount = updated.filter((n) => !n.read).length;
+      Notifications.setBadgeCountAsync(unreadCount).catch(() => {});
+      return updated;
+    });
+  }
+
+  async function handlePress(n: AppNotification) {
     if (
       n.type === "stake_claim_pending" ||
       n.type === "stake_claim_confirmed" ||
       n.type === "stake_claim_rejected"
     ) {
-      router.back();
-      setTimeout(() => {
-        if (n.data.dealId) {
-          router.push({ pathname: "/(tabs)/social", params: { openDealId: n.data.dealId } } as any);
-        } else {
-          router.push("/(tabs)/social" as any);
+      if (n.data.dealId) {
+        const deal = await getStakeDeal(n.data.dealId).catch(() => null);
+        if (!deal) {
+          // Deal was deleted — remove this notification and inform user
+          handleDelete(n.id);
+          Alert.alert("Deal no longer available", "This staking deal has been removed.");
+          return;
         }
-      }, 300);
+        router.back();
+        setTimeout(() => {
+          router.push({ pathname: "/(tabs)/social", params: { openDealId: n.data.dealId } } as any);
+        }, 300);
+      } else {
+        router.back();
+        setTimeout(() => router.push("/(tabs)/social" as any), 300);
+      }
     } else if (n.type === "post_comment" || n.type === "tournament_post") {
       router.back();
       setTimeout(() => router.push("/(tabs)/social" as any), 300);
@@ -173,45 +199,57 @@ export default function NotificationsScreen() {
               </View>
 
               {group.items.map((n) => (
-                <TouchableOpacity
+                <Swipeable
                   key={n.id}
-                  onPress={() => handlePress(n)}
-                  activeOpacity={0.7}
-                  style={[
-                    styles.row,
-                    {
-                      backgroundColor: !n.read ? `${BRAND}0A` : colors.bg.primary,
-                      borderBottomColor: colors.border.subtle,
-                      borderLeftWidth: !n.read ? 3 : 0,
-                      borderLeftColor: BRAND,
-                    },
-                  ]}
+                  renderRightActions={() => (
+                    <TouchableOpacity
+                      onPress={() => handleDelete(n.id)}
+                      style={styles.deleteAction}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="trash-outline" size={20} color="#fff" />
+                    </TouchableOpacity>
+                  )}
                 >
-                  {/* Icon / avatar */}
-                  <View style={[styles.iconWrap, { backgroundColor: notifIconBg(n.type) }]}>
-                    {n.actor?.avatar_url ? (
-                      <Image
-                        source={{ uri: n.actor.avatar_url }}
-                        style={{ width: 44, height: 44, borderRadius: 22 }}
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <Ionicons name={notifIcon(n.type)} size={20} color={notifIconColor(n.type)} />
-                    )}
-                  </View>
-
-                  {/* Content */}
-                  <View style={{ flex: 1, gap: 2 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                      <Text style={[styles.rowTitle, { color: colors.text.primary, fontWeight: !n.read ? "700" : "600" }]}>{n.title}</Text>
-                      {!n.read && <View style={[styles.unreadDot, { backgroundColor: BRAND }]} />}
+                  <TouchableOpacity
+                    onPress={() => handlePress(n)}
+                    activeOpacity={0.7}
+                    style={[
+                      styles.row,
+                      {
+                        backgroundColor: !n.read ? `${BRAND}0A` : colors.bg.primary,
+                        borderBottomColor: colors.border.subtle,
+                        borderLeftWidth: !n.read ? 3 : 0,
+                        borderLeftColor: BRAND,
+                      },
+                    ]}
+                  >
+                    {/* Icon / avatar */}
+                    <View style={[styles.iconWrap, { backgroundColor: notifIconBg(n.type) }]}>
+                      {n.actor?.avatar_url ? (
+                        <Image
+                          source={{ uri: n.actor.avatar_url }}
+                          style={{ width: 44, height: 44, borderRadius: 22 }}
+                          contentFit="cover"
+                        />
+                      ) : (
+                        <Ionicons name={notifIcon(n.type)} size={20} color={notifIconColor(n.type)} />
+                      )}
                     </View>
-                    <Text style={[styles.rowBody, { color: colors.text.secondary }]} numberOfLines={2}>{n.body}</Text>
-                    <Text style={[styles.rowTime, { color: colors.text.tertiary }]}>{timeAgo(n.created_at)}</Text>
-                  </View>
 
-                  <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
-                </TouchableOpacity>
+                    {/* Content */}
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <Text style={[styles.rowTitle, { color: colors.text.primary, fontWeight: !n.read ? "700" : "600" }]}>{n.title}</Text>
+                        {!n.read && <View style={[styles.unreadDot, { backgroundColor: BRAND }]} />}
+                      </View>
+                      <Text style={[styles.rowBody, { color: colors.text.secondary }]} numberOfLines={2}>{n.body}</Text>
+                      <Text style={[styles.rowTime, { color: colors.text.tertiary }]}>{timeAgo(n.created_at)}</Text>
+                    </View>
+
+                    <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+                  </TouchableOpacity>
+                </Swipeable>
               ))}
             </View>
           ))}
@@ -327,5 +365,11 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 4,
+  },
+  deleteAction: {
+    backgroundColor: "#EF4444",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 72,
   },
 });

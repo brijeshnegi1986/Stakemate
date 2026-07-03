@@ -2,6 +2,8 @@ import { StakesSheet, StateSheet, VenueSheet } from "@/components/SessionPickers
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { useThemeContext, type ThemePreference } from "@/store/ThemeContext";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import Constants from "expo-constants";
+import { exportSessionsCSV } from "@/lib/exportCSV";
 import * as Calendar from "expo-calendar";
 import * as Location from "expo-location";
 import { useFocusEffect } from "expo-router";
@@ -25,7 +27,9 @@ import {
   setSetting,
 } from "@/db/database";
 
-const APP_VERSION = "1.0.0";
+const version   = Constants.expoConfig?.version ?? "1.0.0";
+const buildNum  = Constants.expoConfig?.ios?.buildNumber ?? Constants.expoConfig?.android?.versionCode?.toString() ?? "";
+const APP_VERSION = buildNum ? `${version} (${buildNum})` : version;
 const STAKES_OPTIONS = ["1/1", "1/2", "2/3", "5/5", "5/10", "10/20", "25/50"];
 const STATE_OPTIONS = ["NSW", "VIC", "QLD", "WA", "SA", "ACT"];
 const VIEW_OPTIONS: { value: string; label: string; sublabel: string; icon: any }[] = [
@@ -38,6 +42,10 @@ const CURRENCY_OPTIONS: { value: string; label: string; flag: string; sublabel: 
   { value: "USD", label: "USD", flag: "🇺🇸", sublabel: "US Dollar" },
   { value: "GBP", label: "GBP", flag: "🇬🇧", sublabel: "British Pound" },
   { value: "NZD", label: "NZD", flag: "🇳🇿", sublabel: "New Zealand Dollar" },
+  { value: "ZAR", label: "ZAR", flag: "🇿🇦", sublabel: "South African Rand" },
+  { value: "EUR", label: "EUR", flag: "🇮🇪", sublabel: "Euro (Ireland)" },
+  { value: "SGD", label: "SGD", flag: "🇸🇬", sublabel: "Singapore Dollar" },
+  { value: "HKD", label: "HKD", flag: "🇭🇰", sublabel: "Hong Kong Dollar" },
 ];
 
 const THEME_OPTIONS: {
@@ -170,6 +178,19 @@ export default function SettingsScreen() {
       ]
     );
   };
+
+  const [exporting, setExporting] = useState(false);
+
+  async function handleExportCSV() {
+    setExporting(true);
+    try {
+      await exportSessionsCSV();
+    } catch (e: any) {
+      Alert.alert("Export failed", e?.message ?? "Could not export sessions. Please try again.");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const handleResetStreak = () => {
     Alert.alert(
@@ -449,13 +470,6 @@ export default function SettingsScreen() {
           destructive
           colors={colors} spacing={spacing} typography={typography}
         />
-        <View style={divider} />
-        <Row
-          label="Export Data"
-          sublabel="CSV — coming soon"
-          value="Soon"
-          colors={colors} spacing={spacing} typography={typography}
-        />
       </View>
 
       {/* ── STAKES pageSheet ── */}
@@ -490,7 +504,7 @@ export default function SettingsScreen() {
         <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
           <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
             <TouchableOpacity onPress={() => setCurrencyModalVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
-              <Text style={[styles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
+              <Ionicons name="close" size={32} color={colors.text.secondary} />
             </TouchableOpacity>
             <Text style={[styles.navTitle, { color: colors.text.primary }]}>Select Currency</Text>
             <View style={styles.navSide} />
@@ -524,7 +538,7 @@ export default function SettingsScreen() {
         <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
           <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
             <TouchableOpacity onPress={() => setThemeModalVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
-              <Text style={[styles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
+              <Ionicons name="close" size={32} color={colors.text.secondary} />
             </TouchableOpacity>
             <Text style={[styles.navTitle, { color: colors.text.primary }]}>Select Theme</Text>
             <View style={styles.navSide} />
@@ -558,7 +572,7 @@ export default function SettingsScreen() {
         <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
           <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
             <TouchableOpacity onPress={() => setViewModalVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
-              <Text style={[styles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
+              <Ionicons name="close" size={32} color={colors.text.secondary} />
             </TouchableOpacity>
             <Text style={[styles.navTitle, { color: colors.text.primary }]}>Default Dashboard View</Text>
             <View style={styles.navSide} />
@@ -622,14 +636,12 @@ const styles = StyleSheet.create({
   navHeader: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 14,
+    paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  navSide:   { width: 72 },
-  navTitle:  { fontSize: 17, fontWeight: "700" },
+  navSide:   { width: 44, alignItems: "flex-start", justifyContent: "center" },
+  navTitle:  { flex: 1, fontSize: 17, fontWeight: "600", textAlign: "center" },
   navCancel: { fontSize: 16 },
   settingRow: {
     flexDirection: "row",

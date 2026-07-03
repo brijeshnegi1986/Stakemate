@@ -3,11 +3,11 @@ import { SeriesCarousel } from "@/components/SeriesCarousel";
 import { SignInSheet } from "@/components/SignInSheet";
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { fetchAppNotifications, getUnreadCount } from "@/lib/appNotifications";
-import * as Notifications from "expo-notifications";
+import { getUnreadCount } from "@/lib/appNotifications";
 import { getMyStakeClaims, getMyStakeDeals, MyStakeClaim, StakeDeal } from "@/lib/stakes";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
+import * as Notifications from "expo-notifications";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -38,6 +38,10 @@ const CURRENCY_META: Record<string, { flag: string; symbol: string }> = {
   USD: { flag: "🇺🇸", symbol: "$" },
   GBP: { flag: "🇬🇧", symbol: "£" },
   NZD: { flag: "🇳🇿", symbol: "$" },
+  ZAR: { flag: "🇿🇦", symbol: "R" },
+  EUR: { flag: "🇮🇪", symbol: "€" },
+  SGD: { flag: "🇸🇬", symbol: "S$" },
+  HKD: { flag: "🇭🇰", symbol: "HK$" },
 };
 
 function getBigBlind(stakes: string): number | null {
@@ -219,7 +223,7 @@ export default function HomeScreen() {
         <View style={[styles.topBar, { backgroundColor: BRAND, paddingTop: insets.top + 10 }]}>
           <View style={styles.topBarLeft}>
             <Image
-              source={require("@/assets/images/stakemate-monogram.png")}
+              source={require("@/assets/images/logo-icon.png")}
               style={styles.smIcon}
               contentFit="contain"
             />
@@ -639,65 +643,52 @@ export default function HomeScreen() {
 
           {/* ── Hand Notes ── */}
           <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Hand Notes</Text>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-                  <TouchableOpacity onPress={() => router.navigate({ pathname: "/(tabs)/notes", params: { new: "1" } } as any)}>
-                    <Ionicons name="add-circle-outline" size={22} color={BRAND} />
-                  </TouchableOpacity>
-                  {recentNotes.length > 0 && (
-                    <TouchableOpacity onPress={() => router.navigate("/(tabs)/notes")}>
-                      <Text style={[styles.seeAll, { color: BRAND }]}>See all</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Hand Notes</Text>
+              {recentNotes.length > 0 && (
+                <TouchableOpacity onPress={() => router.navigate("/(tabs)/notes")}>
+                  <Text style={[styles.seeAll, { color: BRAND }]}>See all</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {recentNotes.length === 0 ? (
+              <TouchableOpacity
+                onPress={() => router.push({ pathname: "/(tabs)/notes", params: { new: "1" } } as any)}
+                activeOpacity={0.8}
+                style={[styles.emptyCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}
+              >
+                <Ionicons name="document-text-outline" size={36} color={BRAND} />
+                <Text style={[styles.emptyTitle, { color: colors.text.primary }]}>No hand notes yet</Text>
+                <Text style={[styles.emptyText, { color: colors.text.tertiary }]}>Tap to add your first note.</Text>
+              </TouchableOpacity>
+            ) : (
               <View style={[styles.listCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-                {recentNotes.length === 0 ? (
-                  <View style={{ alignItems: "center", paddingVertical: 24, gap: 6 }}>
-                    <Text style={[styles.noteMeta, { color: colors.text.tertiary, textAlign: "center" }]}>
-                      No hand notes yet.{"\n"}Tap + above to add your first note.
-                    </Text>
-                  </View>
-                ) : null}
                 {recentNotes.map((note, i) => {
                   const isLast = i === recentNotes.length - 1;
                   const title = note.title || note.raw_notes?.split("\n")[0]?.slice(0, 60) || "Untitled note";
                   const preview = (note.enhanced_notes || note.raw_notes || "").replace(/\n+/g, " ").slice(0, 80);
-                  const dateStr = note.session_date ? new Date(note.session_date).toLocaleDateString("en-AU", { day: "numeric", month: "short" }) : "";
                   return (
-                    <View
+                    <TouchableOpacity
                       key={note.id}
-                      style={[
-                        styles.noteCard,
-                        !isLast && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle },
-                      ]}
+                      onPress={() => router.navigate("/(tabs)/notes")}
+                      activeOpacity={0.7}
+                      style={[styles.noteRow, !isLast && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.subtle }]}
                     >
-                      {/* Main row */}
-                      <TouchableOpacity
-                        onPress={() => router.navigate("/(tabs)/notes")}
-                        activeOpacity={0.7}
-                        style={styles.noteRow}
-                      >
-                        <View style={[styles.noteIcon, { backgroundColor: "#6366F1" + "22" }]}>
-                          <Ionicons name="document-text-outline" size={16} color="#6366F1" />
-                        </View>
-                        <View style={{ flex: 1, gap: 2 }}>
-                          <Text style={[styles.noteTitle, { color: colors.text.primary }]} numberOfLines={1}>{title}</Text>
-                          {preview ? (
-                            <Text style={[styles.noteMeta, { color: colors.text.tertiary }]} numberOfLines={2}>{preview}</Text>
-                          ) : null}
-                        </View>
-                        {dateStr ? (
-                          <Text style={[styles.noteDate, { color: colors.text.tertiary }]}>{dateStr}</Text>
-                        ) : null}
-                      </TouchableOpacity>
-
-                    </View>
+                      <View style={[styles.noteIcon, { backgroundColor: "#6366F1" + "22" }]}>
+                        <Ionicons name="document-text-outline" size={16} color="#6366F1" />
+                      </View>
+                      <View style={{ flex: 1, gap: 2 }}>
+                        <Text style={[styles.noteTitle, { color: colors.text.primary }]} numberOfLines={1}>{title}</Text>
+                        {preview ? <Text style={[styles.noteMeta, { color: colors.text.tertiary }]} numberOfLines={1}>{preview}</Text> : null}
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+                    </TouchableOpacity>
                   );
                 })}
               </View>
-            </View>
+            )}
+          </View>
 
           {/* ── Series promotional banners ── */}
           <SeriesCarousel />
@@ -721,18 +712,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
+    paddingLeft: 16,
+    paddingRight: 16,
     paddingBottom: 20,
   },
   topBarLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 8,
     flex: 1,
   },
   smIcon: {
-    width: 21,
-    height: 34,
+    width: 44 * (138 / 140),
+    height: 44,
   },
   topBarGreet: {
     fontSize: 11,

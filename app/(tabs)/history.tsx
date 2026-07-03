@@ -37,6 +37,10 @@ const CURRENCY_META: Record<string, { flag: string; symbol: string }> = {
   USD: { flag: "🇺🇸", symbol: "$" },
   GBP: { flag: "🇬🇧", symbol: "£" },
   NZD: { flag: "🇳🇿", symbol: "$" },
+  ZAR: { flag: "🇿🇦", symbol: "R" },
+  EUR: { flag: "🇮🇪", symbol: "€" },
+  SGD: { flag: "🇸🇬", symbol: "S$" },
+  HKD: { flag: "🇭🇰", symbol: "HK$" },
 };
 
 const SCREEN_W = Dimensions.get("window").width;
@@ -382,7 +386,7 @@ export default function StatsScreen() {
 
       {/* ── Banners — fixed above ScrollView, clear the status bar ── */}
       {isSyncing && (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingTop: insets.top, paddingHorizontal: 16, paddingBottom: 10, backgroundColor: "#EFF6FF" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingTop: insets.top + 10, paddingHorizontal: 16, paddingBottom: 10, backgroundColor: "#EFF6FF" }}>
           <ActivityIndicator size="small" color={BRAND} />
           <Text style={{ color: BRAND, fontSize: 13, fontWeight: "500" }}>Syncing your data…</Text>
         </View>
@@ -392,7 +396,7 @@ export default function StatsScreen() {
         <TouchableOpacity
           onPress={() => router.push("/welcome")}
           activeOpacity={0.85}
-          style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingTop: insets.top, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: "#FEF3C7", borderBottomWidth: 1, borderBottomColor: "#FDE68A" }}
+          style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingTop: insets.top + 10, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: "#FEF3C7", borderBottomWidth: 1, borderBottomColor: "#FDE68A" }}
         >
           <Ionicons name="cloud-offline-outline" size={18} color="#D97706" />
           <View style={{ flex: 1 }}>

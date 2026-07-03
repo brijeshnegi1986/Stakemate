@@ -63,7 +63,7 @@ function FieldRow({
   value: string;
   onChangeText: (t: string) => void;
   multiline?: boolean;
-  keyboardType?: "default" | "url" | "email-address";
+  keyboardType?: "default" | "url" | "email-address" | "numeric" | "number-pad";
   autoCapitalize?: "none" | "sentences" | "words";
   isLast?: boolean;
   editable?: boolean;
@@ -151,6 +151,10 @@ type ProfileSnapshot = {
   twitch: string;
   hendonMob: string;
   pokerIndex: string;
+  liveEarnings: string;
+  liveCashes: string;
+  liveWins: string;
+  top10: string;
 };
 
 export default function ProfileScreen() {
@@ -169,6 +173,10 @@ export default function ProfileScreen() {
   const [twitch, setTwitch]                 = useState(profile?.twitch_handle ?? "");
   const [hendonMob, setHendonMob]           = useState(profile?.hendon_mob_url ?? "");
   const [pokerIndex, setPokerIndex]         = useState(profile?.poker_index_url ?? "");
+  const [liveEarnings, setLiveEarnings]     = useState(profile?.live_earnings != null ? String(profile.live_earnings) : "");
+  const [liveCashes, setLiveCashes]         = useState(profile?.live_cashes != null ? String(profile.live_cashes) : "");
+  const [liveWins, setLiveWins]             = useState(profile?.live_wins != null ? String(profile.live_wins) : "");
+  const [top10, setTop10]                   = useState(profile?.top_10_results != null ? String(profile.top_10_results) : "");
   const [saving, setSaving]                 = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [appleAvailable, setAppleAvailable] = useState(false);
@@ -192,8 +200,12 @@ export default function ProfileScreen() {
     instagram   !== snapshot.instagram   ||
     youtube     !== snapshot.youtube     ||
     twitch      !== snapshot.twitch      ||
-    hendonMob   !== snapshot.hendonMob   ||
-    pokerIndex  !== snapshot.pokerIndex
+    hendonMob    !== snapshot.hendonMob   ||
+    pokerIndex   !== snapshot.pokerIndex  ||
+    liveEarnings !== snapshot.liveEarnings ||
+    liveCashes   !== snapshot.liveCashes  ||
+    liveWins     !== snapshot.liveWins    ||
+    top10        !== snapshot.top10
   );
 
   const isSignedIn = !!session;
@@ -201,7 +213,7 @@ export default function ProfileScreen() {
   const BOTTOM_PAD = TAB_BAR_H + 32;
 
   function handleEdit() {
-    setSnapshot({ displayName, username, bio, country, avatarUri, twitter, instagram, youtube, twitch, hendonMob, pokerIndex });
+    setSnapshot({ displayName, username, bio, country, avatarUri, twitter, instagram, youtube, twitch, hendonMob, pokerIndex, liveEarnings, liveCashes, liveWins, top10 });
     setIsEditing(true);
   }
 
@@ -218,6 +230,10 @@ export default function ProfileScreen() {
     setTwitch(snapshot.twitch);
     setHendonMob(snapshot.hendonMob);
     setPokerIndex(snapshot.pokerIndex);
+    setLiveEarnings(snapshot.liveEarnings);
+    setLiveCashes(snapshot.liveCashes);
+    setLiveWins(snapshot.liveWins);
+    setTop10(snapshot.top10);
     setIsEditing(false);
     setSnapshot(null);
   }
@@ -274,8 +290,12 @@ export default function ProfileScreen() {
       instagram_handle: instagram.trim() || null,
       youtube_handle: youtube.trim() || null,
       twitch_handle: twitch.trim() || null,
-      hendon_mob_url: hendonMob.trim() || null,
+      hendon_mob_url:  hendonMob.trim() || null,
       poker_index_url: pokerIndex.trim() || null,
+      live_earnings:   liveEarnings.trim() ? parseFloat(liveEarnings.trim()) : null,
+      live_cashes:     liveCashes.trim() ? parseInt(liveCashes.trim(), 10) : null,
+      live_wins:       liveWins.trim() ? parseInt(liveWins.trim(), 10) : null,
+      top_10_results:  top10.trim() ? parseInt(top10.trim(), 10) : null,
     });
     setSaving(false);
     if (error) {
@@ -405,11 +425,11 @@ export default function ProfileScreen() {
       <TouchableOpacity
         onPress={() => setShowPaywall(true)}
         activeOpacity={0.88}
-        style={[styles.upgradeBtn, { backgroundColor: "#D97706" }]}
+        style={[styles.upgradeBtn, { backgroundColor: "#7CF3D0", borderWidth: isDark ? 0 : 1.5, borderColor: "#0D9488" }]}
       >
-        <MaterialCommunityIcons name="star" size={20} color="#FEF3C7" />
+        <MaterialCommunityIcons name="star" size={20} color="#002196" />
         <Text style={styles.upgradeBtnText}>Upgrade to Pro / Elite</Text>
-        <MaterialCommunityIcons name="chevron-right" size={20} color="rgba(254,243,199,0.7)" />
+        <MaterialCommunityIcons name="chevron-right" size={20} color="#002196" />
       </TouchableOpacity>
 
       {/* ── Avatar ── */}
@@ -526,6 +546,48 @@ export default function ProfileScreen() {
           onChangeText={setPokerIndex}
           keyboardType="url"
           autoCapitalize="none"
+          isLast
+          editable={isEditing}
+        />
+      </View>
+
+      {/* ── Live Tournament Stats ── */}
+      <SectionHeader label="Live Tournament Stats" />
+      <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, padding: 0, overflow: "hidden" }]}>
+        <FieldRow
+          icon="currency-usd"
+          iconColor="#22C55E"
+          placeholder="Total live earnings (e.g. 125000)"
+          value={liveEarnings}
+          onChangeText={setLiveEarnings}
+          keyboardType="numeric"
+          editable={isEditing}
+        />
+        <FieldRow
+          icon="trophy-outline"
+          iconColor="#F59E0B"
+          placeholder="Number of cashes"
+          value={liveCashes}
+          onChangeText={setLiveCashes}
+          keyboardType="number-pad"
+          editable={isEditing}
+        />
+        <FieldRow
+          icon="medal-outline"
+          iconColor="#EF4444"
+          placeholder="Number of wins (1st place)"
+          value={liveWins}
+          onChangeText={setLiveWins}
+          keyboardType="number-pad"
+          editable={isEditing}
+        />
+        <FieldRow
+          icon="podium-gold"
+          iconColor="#8B5CF6"
+          placeholder="Number of top 10 finishes"
+          value={top10}
+          onChangeText={setTop10}
+          keyboardType="number-pad"
           isLast
           editable={isEditing}
         />
@@ -726,7 +788,7 @@ const styles = StyleSheet.create({
   },
   upgradeBtnText: {
     flex: 1,
-    color: "#fff",
+    color: "#002196",
     fontSize: 16,
     fontWeight: "700",
   },
