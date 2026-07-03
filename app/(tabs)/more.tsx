@@ -1,6 +1,7 @@
 import { HandReviewLauncher } from "@/components/HandReviewLauncher";
 import { PaywallModal } from "@/components/PaywallModal";
 import { exportSessionsCSV } from "@/lib/exportCSV";
+import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -36,6 +37,7 @@ const BRAND = "#155DFC";
 
 export default function MoreScreen() {
   const { colors, spacing, isDark } = usePokerTheme();
+  const { isPro, isElite } = useSubscription();
   const insets = useSafeAreaInsets();
   const [showPaywall, setShowPaywall]         = useState(false);
   const [showHandReview, setShowHandReview]   = useState(false);
@@ -109,16 +111,18 @@ export default function MoreScreen() {
         showsVerticalScrollIndicator={false}
       >
 
-      {/* ── Upgrade ── */}
-      <TouchableOpacity
-        onPress={() => setShowPaywall(true)}
-        activeOpacity={0.88}
-        style={[styles.upgradeBtn, { backgroundColor: "#7CF3D0", borderWidth: isDark ? 0 : 1.5, borderColor: "#0D9488" }]}
-      >
-        <Ionicons name="star" size={20} color="#002196" />
-        <Text style={styles.upgradeBtnText}>Upgrade to Pro / Elite</Text>
-        <Ionicons name="chevron-forward" size={20} color="#002196" />
-      </TouchableOpacity>
+      {/* ── Upgrade — only shown to free users ── */}
+      {!isPro && !isElite && (
+        <TouchableOpacity
+          onPress={() => setShowPaywall(true)}
+          activeOpacity={0.88}
+          style={[styles.upgradeBtn, { backgroundColor: "#7CF3D0", borderWidth: isDark ? 0 : 1.5, borderColor: "#0D9488" }]}
+        >
+          <Ionicons name="star" size={20} color="#002196" />
+          <Text style={styles.upgradeBtnText}>Upgrade to Pro / Elite</Text>
+          <Ionicons name="chevron-forward" size={20} color="#002196" />
+        </TouchableOpacity>
+      )}
 
       {/* ── Tools ── */}
       <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>Tools</Text>

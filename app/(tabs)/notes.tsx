@@ -196,18 +196,18 @@ export function NoteEditorModal({
       >
         {/* Header */}
         <View style={{
-          flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-          paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14,
-          borderBottomWidth: 1, borderColor: colors.border.default,
+          flexDirection: "row", alignItems: "center",
+          paddingHorizontal: 16, paddingVertical: 14,
+          borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border.default,
         }}>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <Text style={{ color: colors.text.brand, fontSize: 16, fontWeight: "600" }}>Cancel</Text>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 44 }}>
+            <Ionicons name="close" size={32} color={colors.text.secondary} />
           </TouchableOpacity>
-          <Text style={{ color: colors.text.primary, fontSize: 16, fontWeight: "800" }}>
+          <Text style={{ flex: 1, color: colors.text.primary, fontSize: 17, fontWeight: "600", textAlign: "center" }}>
             {isEdit ? "Edit Note" : "New Note"}
           </Text>
-          <TouchableOpacity onPress={handleSave} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <Text style={{ color: colors.text.brand, fontSize: 16, fontWeight: "800" }}>Save</Text>
+          <TouchableOpacity onPress={handleSave} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 44, alignItems: "flex-end" }}>
+            <Text style={{ color: colors.text.brand, fontSize: 16, fontWeight: "700" }}>Save</Text>
           </TouchableOpacity>
         </View>
 
@@ -445,12 +445,12 @@ function ShareNoteModal({
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
         {/* iOS nav header */}
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary }}>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 72 }}>
-            <Text style={{ fontSize: 16, color: colors.text.secondary }}>Cancel</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary }}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 44 }}>
+            <Ionicons name="close" size={32} color={colors.text.secondary} />
           </TouchableOpacity>
-          <Text style={{ fontSize: 17, fontWeight: "700", color: colors.text.primary }}>Share Hand Note</Text>
-          <View style={{ width: 72 }} />
+          <Text style={{ flex: 1, fontSize: 17, fontWeight: "600", color: colors.text.primary, textAlign: "center" }}>Share Hand Note</Text>
+          <View style={{ width: 44 }} />
         </View>
 
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">

@@ -1,5 +1,6 @@
 import { PaywallModal } from "@/components/PaywallModal";
 import { useAuth } from "@/context/AuthContext";
+import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -159,6 +160,7 @@ type ProfileSnapshot = {
 
 export default function ProfileScreen() {
   const { colors, spacing, radius, isDark } = usePokerTheme();
+  const { isPro, isElite } = useSubscription();
   const { user, profile, signOut, refreshProfile, session, signInWithApple, signInWithGoogle, restoreFromCloud, isSyncing } = useAuth();
   const insets = useSafeAreaInsets();
 
@@ -421,16 +423,18 @@ export default function ProfileScreen() {
     >
       <PaywallModal visible={showPaywall} onClose={() => setShowPaywall(false)} />
 
-      {/* ── Upgrade banner ── */}
-      <TouchableOpacity
-        onPress={() => setShowPaywall(true)}
-        activeOpacity={0.88}
-        style={[styles.upgradeBtn, { backgroundColor: "#7CF3D0", borderWidth: isDark ? 0 : 1.5, borderColor: "#0D9488" }]}
-      >
-        <MaterialCommunityIcons name="star" size={20} color="#002196" />
-        <Text style={styles.upgradeBtnText}>Upgrade to Pro / Elite</Text>
-        <MaterialCommunityIcons name="chevron-right" size={20} color="#002196" />
-      </TouchableOpacity>
+      {/* ── Upgrade banner — only shown to free users ── */}
+      {!isPro && !isElite && (
+        <TouchableOpacity
+          onPress={() => setShowPaywall(true)}
+          activeOpacity={0.88}
+          style={[styles.upgradeBtn, { backgroundColor: "#7CF3D0", borderWidth: isDark ? 0 : 1.5, borderColor: "#0D9488" }]}
+        >
+          <MaterialCommunityIcons name="star" size={20} color="#002196" />
+          <Text style={styles.upgradeBtnText}>Upgrade to Pro / Elite</Text>
+          <MaterialCommunityIcons name="chevron-right" size={20} color="#002196" />
+        </TouchableOpacity>
+      )}
 
       {/* ── Avatar ── */}
       <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, alignItems: "center" }]}>
