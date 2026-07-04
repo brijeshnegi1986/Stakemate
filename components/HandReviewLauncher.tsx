@@ -1,6 +1,8 @@
 import { HandAnalysisModal } from "./HandAnalysisModal";
+import { PaywallModal } from "./PaywallModal";
 import { SignInSheet } from "./SignInSheet";
 import { useAuth } from "@/context/AuthContext";
+import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useState } from "react";
@@ -21,6 +23,7 @@ const PURPLE = "#0891B2";
 
 export function HandReviewLauncher({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { user } = useAuth();
+  const { isElite } = useSubscription();
   const { colors } = usePokerTheme();
   const insets = useSafeAreaInsets();
   const [notes, setNotes]           = useState("");
@@ -42,6 +45,15 @@ export function HandReviewLauncher({ visible, onClose }: { visible: boolean; onC
         icon="color-wand-outline"
         title="AI Hand Review"
         description="Sign in to get instant AI coaching on your poker hands and decisions."
+      />
+    );
+  }
+
+  if (visible && !isElite) {
+    return (
+      <PaywallModal
+        visible={visible}
+        onClose={onClose}
       />
     );
   }

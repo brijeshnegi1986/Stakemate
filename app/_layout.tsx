@@ -116,6 +116,8 @@ function RootLayoutContent() {
           <Stack.Screen name="faq"              options={modalOptions("FAQ")} />
           <Stack.Screen name="currency-converter" options={modalOptions("Currency Converter")} />
           <Stack.Screen name="player-notes"       options={modalOptions("Player Notes")} />
+          <Stack.Screen name="icm-calculator"    options={modalOptions("ICM Calculator")} />
+          <Stack.Screen name="hand-equity"       options={modalOptions("Hand Equity")} />
 
           <Stack.Screen name="session-detail" options={pushOptions("Session Detail")} />
           <Stack.Screen name="session-edit"   options={pushOptions("Edit Session")} />

@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { getSessions, getTournamentEvents, getNoteHistory, db, Session, NoteEntry, TournamentEvent } from "@/db/database";
+import { getSessions, getTournamentEvents, getNoteHistory, getPlayerNotes, db, Session, NoteEntry, TournamentEvent, PlayerNote } from "@/db/database";
 
 // ── Clear all user-specific local data (used on account switch) ───────────────
 
@@ -7,15 +7,17 @@ export function clearLocalUserData(): void {
   db.execSync("DELETE FROM sessions WHERE status = 'completed' OR status IS NULL");
   db.execSync("DELETE FROM tournament_events");
   db.execSync("DELETE FROM notes_history");
+  db.execSync("DELETE FROM player_notes");
   // Leave the settings table — it holds app preferences, not user data
 }
 
 // ── Push local SQLite → Supabase ─────────────────────────────────────────────
 
 export async function pushAllToCloud(userId: string) {
-  const sessions = getSessions();
-  const events = getTournamentEvents();
-  const notes = getNoteHistory();
+  const sessions     = getSessions();
+  const events       = getTournamentEvents();
+  const notes        = getNoteHistory();
+  const playerNotes  = getPlayerNotes();
   const settingsRows = db.getAllSync("SELECT key, value FROM settings") as { key: string; value: string }[];
   const settings = Object.fromEntries(settingsRows.map((r) => [r.key, r.value]));
 
@@ -89,6 +91,22 @@ export async function pushAllToCloud(userId: string) {
     );
   }
 
+  if (playerNotes.length > 0) {
+    await supabase.from("player_notes").upsert(
+      playerNotes.map((p) => ({
+        user_id:    userId,
+        local_id:   p.id,
+        name:       p.name,
+        styles:     p.styles,
+        notes:      p.notes,
+        venue:      p.venue,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+      })),
+      { onConflict: "user_id,local_id", ignoreDuplicates: false }
+    );
+  }
+
   await supabase.from("user_settings").upsert(
     { user_id: userId, data: settings, updated_at: new Date().toISOString() },
     { onConflict: "user_id" }
@@ -149,18 +167,35 @@ export async function deleteEventFromCloud(userId: string, localId: number): Pro
   await supabase.from("tournament_events").delete().eq("user_id", userId).eq("local_id", localId);
 }
 
+export async function syncPlayerNoteToCloud(userId: string, localId: number): Promise<void> {
+  const p = db.getFirstSync(`SELECT * FROM player_notes WHERE id = ?`, [localId]) as PlayerNote | null;
+  if (!p) return;
+  await supabase.from("player_notes").upsert({
+    user_id: userId, local_id: p.id,
+    name: p.name, styles: p.styles,
+    notes: p.notes, venue: p.venue,
+    created_at: p.created_at, updated_at: p.updated_at,
+  }, { onConflict: "user_id,local_id" });
+}
+
+export async function deletePlayerNoteFromCloud(userId: string, localId: number): Promise<void> {
+  await supabase.from("player_notes").delete().eq("user_id", userId).eq("local_id", localId);
+}
+
 // ── Pull Supabase → local SQLite (called on sign-in / after reinstall) ───────
 
 export async function pullFromCloud(userId: string) {
   const [
-    { data: sessions, error: sessErr },
-    { data: events,   error: evtErr  },
-    { data: notes,    error: notesErr },
+    { data: sessions,    error: sessErr   },
+    { data: events,      error: evtErr    },
+    { data: notes,       error: notesErr  },
+    { data: playerNotes, error: pNotesErr },
     { data: settingsRow },
   ] = await Promise.all([
     supabase.from("sessions").select("*").eq("user_id", userId),
     supabase.from("tournament_events").select("*").eq("user_id", userId),
     supabase.from("notes_history").select("*").eq("user_id", userId),
+    supabase.from("player_notes").select("*").eq("user_id", userId),
     supabase.from("user_settings").select("data").eq("user_id", userId).maybeSingle(),
   ]);
 
@@ -219,6 +254,23 @@ export async function pullFromCloud(userId: string) {
           n.session_profit ?? 0, n.session_type ?? "", n.raw_notes,
           n.enhanced_notes ?? null, n.title ?? null, n.hand_analysis ?? null,
           n.metadata ?? null, n.created_at, n.updated_at,
+        ]
+      );
+    }
+  }
+
+  if (!pNotesErr && playerNotes && playerNotes.length > 0) {
+    db.execSync("DELETE FROM player_notes");
+    for (const p of playerNotes) {
+      db.runSync(
+        `INSERT OR REPLACE INTO player_notes
+           (id, name, styles, notes, venue, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          p.local_id, p.name,
+          typeof p.styles === "string" ? p.styles : JSON.stringify(p.styles),
+          p.notes ?? "", p.venue ?? "",
+          p.created_at, p.updated_at,
         ]
       );
     }

@@ -66,7 +66,7 @@ const PRO_FEATURES: { text: string; icon: string }[] = [
   { text: "Win/loss streak tracking",         icon: "flame-outline" },
   { text: "Tournament calendar",              icon: "calendar-outline" },
   { text: "Device calendar sync",             icon: "sync-outline" },
-  { text: "Social feed — view & interact",    icon: "globe-outline" },
+  { text: "Staking marketplace",              icon: "storefront-outline" },
   { text: "Dark mode",                        icon: "moon-outline" },
   { text: "PDF export",                       icon: "document-text-outline" },
   { text: "Currency conversion",              icon: "cash-outline" },

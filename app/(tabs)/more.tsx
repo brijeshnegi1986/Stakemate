@@ -1,12 +1,13 @@
 import { HandReviewLauncher } from "@/components/HandReviewLauncher";
 import { PaywallModal } from "@/components/PaywallModal";
 import { exportSessionsCSV } from "@/lib/exportCSV";
+import { exportSessionsPDF } from "@/lib/exportPDF";
 import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Animated, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Alert, Animated, Linking, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 function MenuRow({
@@ -37,13 +38,28 @@ const BRAND = "#155DFC";
 
 export default function MoreScreen() {
   const { colors, spacing, isDark } = usePokerTheme();
-  const { isPro, isElite } = useSubscription();
+  const { isPro, isElite, restorePurchases, isLoading: subLoading } = useSubscription();
   const insets = useSafeAreaInsets();
   const [showPaywall, setShowPaywall]         = useState(false);
   const [showHandReview, setShowHandReview]   = useState(false);
-  const [exporting, setExporting]             = useState(false);
+  const [exporting,    setExporting]    = useState(false);
+  const [exportingPDF, setExportingPDF] = useState(false);
+
+  async function handleShare() {
+    try {
+      await Share.share({
+        message:
+          "🃏 Check out Stakemate — the best poker bankroll tracker!\n\n" +
+          "Track sessions, analyse your game, join the community and find staking opportunities.\n\n" +
+          "Download free: https://apps.apple.com/app/id6772975225",
+        url: "https://apps.apple.com/app/id6772975225",
+        title: "Stakemate — Poker Bankroll Tracker",
+      });
+    } catch { /* user cancelled */ }
+  }
 
   async function handleExportCSV() {
+    if (!isPro && !isElite) { setShowPaywall(true); return; }
     setExporting(true);
     try {
       await exportSessionsCSV();
@@ -51,6 +67,18 @@ export default function MoreScreen() {
       Alert.alert("Export failed", e?.message ?? "Could not export sessions. Please try again.");
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function handleExportPDF() {
+    if (!isPro && !isElite) { setShowPaywall(true); return; }
+    setExportingPDF(true);
+    try {
+      await exportSessionsPDF();
+    } catch (e: any) {
+      Alert.alert("Export failed", e?.message ?? "Could not generate PDF. Please try again.");
+    } finally {
+      setExportingPDF(false);
     }
   }
 
@@ -111,15 +139,15 @@ export default function MoreScreen() {
         showsVerticalScrollIndicator={false}
       >
 
-      {/* ── Upgrade — only shown to free users ── */}
-      {!isPro && !isElite && (
+      {/* ── Upgrade — hidden only for Elite (nothing higher to upgrade to) ── */}
+      {!isElite && (
         <TouchableOpacity
           onPress={() => setShowPaywall(true)}
           activeOpacity={0.88}
           style={[styles.upgradeBtn, { backgroundColor: "#7CF3D0", borderWidth: isDark ? 0 : 1.5, borderColor: "#0D9488" }]}
         >
           <Ionicons name="star" size={20} color="#002196" />
-          <Text style={styles.upgradeBtnText}>Upgrade to Pro / Elite</Text>
+          <Text style={styles.upgradeBtnText}>{isPro ? "Upgrade to Elite" : "Upgrade to Pro / Elite"}</Text>
           <Ionicons name="chevron-forward" size={20} color="#002196" />
         </TouchableOpacity>
       )}
@@ -146,6 +174,18 @@ export default function MoreScreen() {
           onPress={() => setShowHandReview(true)}
         />
         <MenuRow
+          icon="calculator-outline"
+          label="ICM Calculator"
+          iconColor="#F59E0B"
+          onPress={() => router.push("/icm-calculator")}
+        />
+        <MenuRow
+          icon="stats-chart-outline"
+          label="Hand Equity"
+          iconColor="#EC4899"
+          onPress={() => router.push("/hand-equity")}
+        />
+        <MenuRow
           icon="document-text-outline"
           label="Hand Notes"
           iconColor="#6366F1"
@@ -164,8 +204,14 @@ export default function MoreScreen() {
           onPress={() => router.push({ pathname: "/(tabs)/social", params: { openTab: "stakes" } } as any)}
         />
         <MenuRow
+          icon="document-text-outline"
+          label={exportingPDF ? "Generating PDF…" : `Export PDF${!isPro && !isElite ? " 🔒" : ""}`}
+          iconColor="#EF4444"
+          onPress={exportingPDF ? () => {} : handleExportPDF}
+        />
+        <MenuRow
           icon="download-outline"
-          label={exporting ? "Exporting…" : "Export Sessions"}
+          label={exporting ? "Exporting…" : `Export CSV${!isPro && !isElite ? " 🔒" : ""}`}
           iconColor="#22C55E"
           onPress={exporting ? () => {} : handleExportCSV}
           isLast
@@ -175,6 +221,12 @@ export default function MoreScreen() {
       {/* ── General ── */}
       <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>General</Text>
       <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+        <MenuRow
+          icon="share-social-outline"
+          label="Share with Friends"
+          iconColor="#EC4899"
+          onPress={handleShare}
+        />
         <MenuRow
           icon="information-circle-outline"
           label="About Stakemate"
@@ -186,6 +238,12 @@ export default function MoreScreen() {
           label="FAQ"
           iconColor={BRAND}
           onPress={() => router.push("/faq")}
+        />
+        <MenuRow
+          icon="refresh-outline"
+          label={subLoading ? "Restoring…" : "Restore Purchases"}
+          iconColor={BRAND}
+          onPress={() => { if (!subLoading) restorePurchases(); }}
         />
         <MenuRow
           icon="chatbubble-outline"

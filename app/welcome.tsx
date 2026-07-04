@@ -295,7 +295,7 @@ export default function WelcomeScreen() {
           </View>
 
           <Text style={styles.modalTitle}>Create your account</Text>
-          <Text style={styles.modalSub}>Sign in to save your progress and sync across devices.</Text>
+          <Text style={styles.modalSub}>Free account — your sessions, notes and results are automatically backed up and synced across all your devices.</Text>
 
           {/* Apple — iOS only */}
           {Platform.OS === "ios" && (

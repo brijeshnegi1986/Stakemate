@@ -1,6 +1,6 @@
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
-import { AppNotification, fetchAppNotifications, markAllRead } from "@/lib/appNotifications";
+import { AppNotification, fetchAppNotifications, markAllRead, deleteNotificationFromCloud } from "@/lib/appNotifications";
 import { getStakeDeal } from "@/lib/stakes";
 import * as Notifications from "expo-notifications";
 import { Ionicons } from "@expo/vector-icons";
@@ -117,6 +117,10 @@ export default function NotificationsScreen() {
       Notifications.setBadgeCountAsync(unreadCount).catch(() => {});
       return updated;
     });
+    // Delete from Supabase notifications table (fire-and-forget)
+    if (profile?.id) {
+      deleteNotificationFromCloud(profile.id, id).catch(() => {});
+    }
   }
 
   async function handlePress(n: AppNotification) {

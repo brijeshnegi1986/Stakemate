@@ -1,9 +1,11 @@
 import { StakesSheet, StateSheet, VenueSheet } from "@/components/SessionPickers";
+import { PaywallModal } from "@/components/PaywallModal";
+import { useAuth } from "@/context/AuthContext";
+import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { useThemeContext, type ThemePreference } from "@/store/ThemeContext";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import Constants from "expo-constants";
-import { exportSessionsCSV } from "@/lib/exportCSV";
 import * as Calendar from "expo-calendar";
 import * as Location from "expo-location";
 import { useFocusEffect } from "expo-router";
@@ -61,7 +63,10 @@ const THEME_OPTIONS: {
 
 export default function SettingsScreen() {
   const { colors, spacing, radius, typography } = usePokerTheme();
+  const { user, isSyncing } = useAuth();
+  const { isPro, isElite } = useSubscription();
   const { preference: themePreference, setPreference: setThemePreference } = useThemeContext();
+  const [showPaywall, setShowPaywall] = useState(false);
   const [defaultStakes, setDefaultStakes] = useState("1/2");
   const [defaultState, setDefaultState]   = useState("NSW");
   const [defaultView, setDefaultView]     = useState("all");
@@ -179,19 +184,6 @@ export default function SettingsScreen() {
     );
   };
 
-  const [exporting, setExporting] = useState(false);
-
-  async function handleExportCSV() {
-    setExporting(true);
-    try {
-      await exportSessionsCSV();
-    } catch (e: any) {
-      Alert.alert("Export failed", e?.message ?? "Could not export sessions. Please try again.");
-    } finally {
-      setExporting(false);
-    }
-  }
-
   const handleResetStreak = () => {
     Alert.alert(
       "Reset Streak",
@@ -223,11 +215,41 @@ export default function SettingsScreen() {
   };
 
   return (
+    <>
+    <PaywallModal visible={showPaywall} onClose={() => setShowPaywall(false)} />
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.bg.secondary }}
       contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
       showsVerticalScrollIndicator={false}
     >
+      {/* ── DATA & BACKUP ── */}
+      <SectionLabel label="Data & Backup" colors={colors} spacing={spacing} typography={typography} />
+      <View style={[{ backgroundColor: colors.bg.primary, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border.default, padding: 16, marginBottom: spacing.lg, gap: 12 }]}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <View style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: user ? "#22C55E18" : "#F59E0B18", alignItems: "center", justifyContent: "center" }}>
+            <Ionicons name={user ? "cloud-done-outline" : "cloud-offline-outline"} size={20} color={user ? "#22C55E" : "#F59E0B"} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text.primary }}>
+              {user ? (isSyncing ? "Syncing…" : "Cloud backup active") : "No backup — device only"}
+            </Text>
+            <Text style={{ fontSize: 12, color: colors.text.tertiary, marginTop: 2, lineHeight: 16 }}>
+              {user
+                ? `Signed in as ${user.email ?? "your account"} · sessions, notes and results sync automatically across all your devices`
+                : "Your data exists only on this device. Sign in with a free account to back it up automatically."}
+            </Text>
+          </View>
+        </View>
+        {!user && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#F59E0B14", borderRadius: 8, padding: 10 }}>
+            <Ionicons name="warning-outline" size={14} color="#D97706" />
+            <Text style={{ flex: 1, fontSize: 12, color: "#D97706", lineHeight: 16 }}>
+              If you lose or change this device, all your session data will be lost permanently.
+            </Text>
+          </View>
+        )}
+      </View>
+
       {/* ── CURRENCY ── */}
       <SectionLabel label="Currency" colors={colors} spacing={spacing} typography={typography} />
       <View style={card}>
@@ -620,6 +642,7 @@ export default function SettingsScreen() {
         </View>
       </View>
     </ScrollView>
+    </>
   );
 }
 

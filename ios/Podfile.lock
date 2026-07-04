@@ -260,6 +260,8 @@ PODS:
     - RNWorklets
   - ExpoNotifications (56.0.18):
     - ExpoModulesCore
+  - ExpoPrint (56.0.4):
+    - ExpoModulesCore
   - ExpoRouter (56.2.11):
     - ExpoModulesCore
     - RNScreens
@@ -2539,6 +2541,7 @@ DEPENDENCIES:
   - ExpoModulesWorklets (from `../node_modules/expo-modules-core/ExpoModulesWorklets.podspec`)
   - ExpoModulesWorkletsAdapter (from `../node_modules/expo-modules-core`)
   - ExpoNotifications (from `../node_modules/expo-notifications/ios`)
+  - ExpoPrint (from `../node_modules/expo-print/ios/ExpoPrint.podspec`)
   - ExpoRouter (from `../node_modules/expo-router/ios`)
   - ExpoSecureStore (from `../node_modules/expo-secure-store/ios`)
   - ExpoSharing (from `../node_modules/expo-sharing/ios`)
@@ -2713,6 +2716,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/expo-modules-core"
   ExpoNotifications:
     :path: "../node_modules/expo-notifications/ios"
+  ExpoPrint:
+    :podspec: "../node_modules/expo-print/ios/ExpoPrint.podspec"
   ExpoRouter:
     :path: "../node_modules/expo-router/ios"
   ExpoSecureStore:
@@ -2941,6 +2946,7 @@ SPEC CHECKSUMS:
   ExpoModulesWorklets: 25d712f4e0a4eb37397d46c0ff5b450eca897fd1
   ExpoModulesWorkletsAdapter: c141a7854ac985cda989175ae6944c1bfe3ff91b
   ExpoNotifications: 87875dae0faded5284004bc1204990947d3f64e0
+  ExpoPrint: 8f6dc664a26f40baa7307a194eb6a45a3d8347eb
   ExpoRouter: 5539806fcab8d38c639c9c255a6d73caa839436a
   ExpoSecureStore: f1bd083c1b7b8d4142013ffcc0082d377d9f49f4
   ExpoSharing: 89ff19115095e3eb8355d3a2dd6a21875e4b25df

@@ -1,5 +1,7 @@
 import { SessionFAB } from "@/components/SessionFAB";
+import { PaywallModal } from "@/components/PaywallModal";
 import { useAuth } from "@/context/AuthContext";
+import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -293,6 +295,8 @@ function StatCard({ label, value, sub, icon, iconColor, valueColor, colors }: {
 export default function StatsScreen() {
   const { colors } = usePokerTheme();
   const { isSyncing, user } = useAuth();
+  const { isPro, isElite } = useSubscription();
+  const [showPaywall, setShowPaywall] = useState(false);
   const insets = useSafeAreaInsets();
 
   const [sessions, setSessions]           = useState<Session[]>([]);
@@ -383,6 +387,7 @@ export default function StatsScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: colors.bg.secondary }]}>
+      <PaywallModal visible={showPaywall} onClose={() => setShowPaywall(false)} />
 
       {/* ── Banners — fixed above ScrollView, clear the status bar ── */}
       {isSyncing && (
@@ -400,8 +405,8 @@ export default function StatsScreen() {
         >
           <Ionicons name="cloud-offline-outline" size={18} color="#D97706" />
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 13, fontWeight: "600", color: "#92400E" }}>Your data is not being backed up</Text>
-            <Text style={{ fontSize: 12, color: "#B45309", marginTop: 1 }}>Sign in to save your sessions to the cloud</Text>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: "#92400E" }}>Sessions saved on this device only</Text>
+            <Text style={{ fontSize: 12, color: "#B45309", marginTop: 1 }}>Sign in — free account backs up everything automatically</Text>
           </View>
           <Ionicons name="chevron-forward" size={14} color="#D97706" />
         </TouchableOpacity>

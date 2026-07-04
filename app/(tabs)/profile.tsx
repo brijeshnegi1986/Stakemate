@@ -10,7 +10,7 @@ import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-  ActionSheetIOS, Alert, Platform, ScrollView, StyleSheet,
+  ActionSheetIOS, Alert, Linking, Platform, ScrollView, StyleSheet,
   Text, TextInput, TouchableOpacity, View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -160,7 +160,7 @@ type ProfileSnapshot = {
 
 export default function ProfileScreen() {
   const { colors, spacing, radius, isDark } = usePokerTheme();
-  const { isPro, isElite } = useSubscription();
+  const { isPro, isElite, tier, restorePurchases, isLoading: subLoading } = useSubscription();
   const { user, profile, signOut, refreshProfile, session, signInWithApple, signInWithGoogle, restoreFromCloud, isSyncing } = useAuth();
   const insets = useSafeAreaInsets();
 
@@ -345,9 +345,9 @@ export default function ProfileScreen() {
           <View style={[styles.avatarCircle, { backgroundColor: colors.bg.secondary, borderColor: colors.border.default, marginBottom: 16 }]}>
             <MaterialCommunityIcons name="account-outline" size={48} color={colors.text.tertiary} />
           </View>
-          <Text style={[styles.authTitle, { color: colors.text.primary }]}>Unlock All Features</Text>
+          <Text style={[styles.authTitle, { color: colors.text.primary }]}>Your data is device-only</Text>
           <Text style={[styles.authSubtitle, { color: colors.text.secondary }]}>
-            Track sessions, log hands, get AI coaching, and sync across devices — all in one place.
+            Right now your sessions are saved only on this phone. If you lose or change your device, your data is gone.{"\n\n"}Sign in with a free account and every session, note, and result is automatically backed up to the cloud — and available on any device you sign in to.
           </Text>
           {Platform.OS === "ios" && (
             appleAvailable ? (
@@ -423,18 +423,64 @@ export default function ProfileScreen() {
     >
       <PaywallModal visible={showPaywall} onClose={() => setShowPaywall(false)} />
 
-      {/* ── Upgrade banner — only shown to free users ── */}
-      {!isPro && !isElite && (
+      {/* ── Upgrade banner — hidden only for Elite ── */}
+      {!isElite && (
         <TouchableOpacity
           onPress={() => setShowPaywall(true)}
           activeOpacity={0.88}
           style={[styles.upgradeBtn, { backgroundColor: "#7CF3D0", borderWidth: isDark ? 0 : 1.5, borderColor: "#0D9488" }]}
         >
           <MaterialCommunityIcons name="star" size={20} color="#002196" />
-          <Text style={styles.upgradeBtnText}>Upgrade to Pro / Elite</Text>
+          <Text style={styles.upgradeBtnText}>{isPro ? "Upgrade to Elite" : "Upgrade to Pro / Elite"}</Text>
           <MaterialCommunityIcons name="chevron-right" size={20} color="#002196" />
         </TouchableOpacity>
       )}
+
+      {/* ── Subscription status ── */}
+      {(() => {
+        const planConfig = {
+          elite: { label: "Elite", color: "#0891B2", badgeBg: "#0891B218", icon: "crown" as const,   desc: "Full access — AI coaching, all Pro features & more" },
+          pro:   { label: "Pro",   color: BRAND,     badgeBg: BRAND + "18",  icon: "star" as const,   desc: "Dark mode, tournament calendar, marketplace & exports" },
+          free:  { label: "Free",  color: "#49E6BA", badgeBg: "#49E6BA22",   icon: "account" as const, desc: "Unlimited sessions, analytics, notes & cloud backup" },
+        };
+        const plan = planConfig[tier] ?? planConfig.free;
+        return (
+          <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Text style={{ fontSize: 16, fontWeight: "800", color: colors.text.primary }}>Current Plan</Text>
+                  <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20, backgroundColor: plan.badgeBg, borderWidth: 1.5, borderColor: plan.color + "40" }}>
+                    <Text style={{ fontSize: 12, fontWeight: "800", color: plan.color }}>{plan.label}</Text>
+                  </View>
+                </View>
+                <Text style={{ fontSize: 13, color: colors.text.tertiary, marginTop: 2 }}>{plan.desc}</Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+              <TouchableOpacity
+                onPress={restorePurchases}
+                disabled={subLoading}
+                activeOpacity={0.7}
+                style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.bg.secondary, opacity: subLoading ? 0.5 : 1 }}
+              >
+                <MaterialCommunityIcons name="restore" size={16} color={colors.text.secondary} />
+                <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text.secondary }}>
+                  {subLoading ? "Restoring…" : "Restore"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => Linking.openURL("https://apps.apple.com/account/subscriptions")}
+                activeOpacity={0.7}
+                style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.bg.secondary }}
+              >
+                <MaterialCommunityIcons name="cog-outline" size={16} color={colors.text.secondary} />
+                <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text.secondary }}>Manage</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        );
+      })()}
 
       {/* ── Avatar ── */}
       <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, alignItems: "center" }]}>

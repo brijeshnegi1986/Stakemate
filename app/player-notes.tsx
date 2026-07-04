@@ -1,8 +1,12 @@
 import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { useAuth } from "@/context/AuthContext";
 import {
   addPlayerNote, deletePlayerNote, getPlayerNotes,
   PlayerNote, updatePlayerNote,
 } from "@/db/database";
+import {
+  syncPlayerNoteToCloud, deletePlayerNoteFromCloud,
+} from "@/lib/sync";
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useState } from "react";
 import {
@@ -34,13 +38,14 @@ const STYLE_TAGS: { label: string; abbr: string; color: string; desc: string }[]
 // ─── Form modal ────────────────────────────────────────────────────────────────
 
 function PlayerNoteForm({
-  visible, initial, onSave, onClose, colors,
+  visible, initial, onSave, onClose, colors, userId,
 }: {
   visible: boolean;
   initial: PlayerNote | null;
   onSave: () => void;
   onClose: () => void;
   colors: any;
+  userId?: string;
 }) {
   const insets = useSafeAreaInsets();
   const [name,          setName]          = useState(initial?.name   ?? "");
@@ -54,8 +59,10 @@ function PlayerNoteForm({
     if (!name.trim()) { Alert.alert("Name required", "Enter the player's name."); return; }
     if (initial) {
       updatePlayerNote(initial.id, { name, styles: selectedStyles, notes, venue });
+      if (userId) syncPlayerNoteToCloud(userId, initial.id).catch(() => {});
     } else {
-      addPlayerNote({ name, styles: selectedStyles, notes, venue });
+      const newId = addPlayerNote({ name, styles: selectedStyles, notes, venue });
+      if (userId) syncPlayerNoteToCloud(userId, newId).catch(() => {});
     }
     reset();
     onSave();
@@ -225,6 +232,7 @@ export default function PlayerNotesScreen() {
   const { colors } = usePokerTheme();
   const insets = useSafeAreaInsets();
 
+  const { user } = useAuth();
   const [notes,   setNotes]   = useState<PlayerNote[]>([]);
   const [search,  setSearch]  = useState("");
   const [editing, setEditing] = useState<PlayerNote | null>(null);
@@ -269,7 +277,11 @@ export default function PlayerNotesScreen() {
             note={item}
             colors={colors}
             onEdit={() => { setEditing(item); setForming(true); }}
-            onDelete={() => { deletePlayerNote(item.id); refresh(); }}
+            onDelete={() => {
+              deletePlayerNote(item.id);
+              if (user?.id) deletePlayerNoteFromCloud(user.id, item.id).catch(() => {});
+              refresh();
+            }}
           />
         )}
         ListEmptyComponent={
@@ -297,6 +309,7 @@ export default function PlayerNotesScreen() {
         visible={forming}
         initial={editing}
         colors={colors}
+        userId={user?.id}
         onSave={() => { setForming(false); setEditing(null); refresh(); }}
         onClose={() => { setForming(false); setEditing(null); }}
       />

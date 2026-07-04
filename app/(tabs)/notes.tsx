@@ -7,6 +7,8 @@ import {
 import { createPost } from "@/lib/social";
 import { syncNoteToCloud, deleteNoteFromCloud } from "@/lib/sync";
 import { useAuth } from "@/context/AuthContext";
+import { useSubscription } from "@/context/SubscriptionContext";
+import { PaywallModal } from "@/components/PaywallModal";
 import { HandAnalysisModal } from "@/components/HandAnalysisModal";
 import { SignInSheet } from "@/components/SignInSheet";
 import { CardText } from "@/components/CardText";
@@ -113,6 +115,8 @@ export function NoteEditorModal({
   colors: any;
 }) {
   const { user } = useAuth();
+  const { isElite } = useSubscription();
+  const [showPaywall, setShowPaywall] = useState(false);
   const isEdit = !!initial;
   const initMeta = initial ? (parseMetadata(initial) ?? {}) : {};
 
@@ -147,6 +151,10 @@ export function NoteEditorModal({
     if (!body.trim()) return;
     if (!user) {
       Alert.alert("Sign in required", "Sign in to use AI features.");
+      return;
+    }
+    if (!isElite) {
+      setShowPaywall(true);
       return;
     }
     setCompressing(true);
@@ -189,6 +197,8 @@ export function NoteEditorModal({
   }
 
   return (
+    <>
+    <PaywallModal visible={showPaywall} onClose={() => setShowPaywall(false)} />
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={{ flex: 1, backgroundColor: colors.bg.primary }}
@@ -379,6 +389,7 @@ export function NoteEditorModal({
         </ScrollView>
       </KeyboardAvoidingView>
     </Modal>
+    </>
   );
 }
 

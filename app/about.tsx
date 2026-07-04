@@ -7,23 +7,20 @@ import { router } from "expo-router";
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const BRAND = "#155DFC";
-const ACCENT = "#49E6BA";
+const BRAND  = "#155DFC";
+const MINT   = "#49E6BA";
+const PURPLE = "#0891B2";
 
-const version  = Constants.expoConfig?.version ?? "1.0.0";
-const buildNum = Constants.expoConfig?.ios?.buildNumber ?? "";
+const version     = Constants.expoConfig?.version ?? "1.0.0";
+const buildNum    = Constants.expoConfig?.ios?.buildNumber ?? "";
 const APP_VERSION = buildNum ? `${version} (${buildNum})` : version;
 
-type LinkRowProps = {
+function LinkRow({ icon, label, onPress, iconColor = BRAND, isLast }: {
   icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-  iconColor?: string;
-  isLast?: boolean;
-};
-
-function LinkRow({ icon, label, onPress, iconColor = BRAND, isLast }: LinkRowProps) {
-  const { colors, typography, spacing } = usePokerTheme();
+  label: string; onPress: () => void;
+  iconColor?: string; isLast?: boolean;
+}) {
+  const { colors } = usePokerTheme();
   return (
     <>
       <TouchableOpacity onPress={onPress} activeOpacity={0.65} style={styles.linkRow}>
@@ -38,19 +35,46 @@ function LinkRow({ icon, label, onPress, iconColor = BRAND, isLast }: LinkRowPro
   );
 }
 
-const FEATURES = [
-  { icon: "stats-chart-outline" as const,     text: "Session & bankroll tracking" },
-  { icon: "bar-chart-outline" as const,       text: "Analytics & win rate insights" },
-  { icon: "people-outline" as const,          text: "Community & social feed" },
-  { icon: "storefront-outline" as const,      text: "Staking marketplace" },
-  { icon: "hardware-chip-outline" as const,   text: "AI hand review & coaching" },
-  { icon: "calendar-outline" as const,        text: "Tournament calendar" },
-  { icon: "trophy-outline" as const,          text: "Series & event listings" },
+// Plan breakdown
+const PLANS = [
+  {
+    name: "Free",
+    color: "#64748B",
+    features: [
+      "Unlimited session tracking",
+      "Dark & Night mode",
+      "Live session timer & rebuys",
+      "Bankroll chart & analytics",
+      "Hand notes & player notes",
+      "Currency converter (8 currencies)",
+      "Community feed & posting",
+      "Cloud backup (sign-in required)",
+    ],
+  },
+  {
+    name: "Pro",
+    color: BRAND,
+    features: [
+      "Everything in Free",
+      "Tournament calendar & device sync",
+      "Staking marketplace",
+      "PDF & CSV export",
+    ],
+  },
+  {
+    name: "Elite",
+    color: PURPLE,
+    features: [
+      "Everything in Pro",
+      "AI Hand Review",
+      "AI Note enhance & compress",
+      "Publish tournaments to community",
+    ],
+  },
 ];
 
 export default function AboutScreen() {
-  const { colors, spacing } = usePokerTheme();
-  const { isDark } = usePokerTheme();
+  const { colors, isDark } = usePokerTheme();
   const insets = useSafeAreaInsets();
 
   return (
@@ -59,74 +83,58 @@ export default function AboutScreen() {
       contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
       showsVerticalScrollIndicator={false}
     >
-      {/* ── Hero ── */}
+      {/* Hero */}
       <View style={[styles.hero, { backgroundColor: BRAND }]}>
         <StakemateLogo variant="light" size={36} />
         <Text style={styles.tagline}>Built for the modern poker player.</Text>
       </View>
 
-      {/* ── Version pill ── */}
+      {/* Version pill */}
       <View style={styles.versionWrap}>
         <View style={[styles.versionPill, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
           <Text style={[styles.versionText, { color: colors.text.tertiary }]}>v{APP_VERSION}</Text>
         </View>
       </View>
 
-      {/* ── Mission ── */}
+      {/* Mission */}
       <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
         <Text style={[styles.cardTitle, { color: colors.text.primary }]}>Our Mission</Text>
         <Text style={[styles.cardBody, { color: colors.text.secondary }]}>
-          Stakemate is the all-in-one tool for poker players who take their game seriously.
-          Whether you're grinding live cash games, chasing tournament scores, or building a
-          staking portfolio — Stakemate gives you the data, the community, and the edge to
-          make better decisions at and away from the table.
+          Stakemate gives poker players the tools they've always needed in one place — a proper session tracker, bankroll analytics, a community to connect with, and AI coaching to improve their game.{"\n\n"}Whether you're grinding live cash games, chasing tournament scores, or building a staking portfolio, Stakemate helps you make better decisions at and away from the table.
         </Text>
       </View>
 
-      {/* ── Features ── */}
-      <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>What's inside</Text>
-      <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-        {FEATURES.map((f, i) => (
-          <View key={f.text} style={[styles.featureRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border.subtle }]}>
-            <View style={[styles.featureIcon, { backgroundColor: ACCENT + "22" }]}>
-              <Ionicons name={f.icon} size={16} color={ACCENT} />
+      {/* Plans */}
+      <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>Plans</Text>
+      <View style={{ marginHorizontal: 16, gap: 12, marginBottom: 20 }}>
+        {PLANS.map((plan) => (
+          <View key={plan.name} style={[styles.planCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, borderLeftColor: plan.color }]}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20, backgroundColor: plan.color + "18" }}>
+                <Text style={{ fontSize: 13, fontWeight: "800", color: plan.color }}>{plan.name}</Text>
+              </View>
             </View>
-            <Text style={[styles.featureText, { color: colors.text.primary }]}>{f.text}</Text>
+            {plan.features.map((f) => (
+              <View key={f} style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, marginBottom: 5 }}>
+                <Ionicons name="checkmark-circle" size={15} color={plan.color} style={{ marginTop: 1 }} />
+                <Text style={{ flex: 1, fontSize: 13, color: colors.text.secondary, lineHeight: 18 }}>{f}</Text>
+              </View>
+            ))}
           </View>
         ))}
       </View>
 
-      {/* ── Links ── */}
+      {/* Links */}
       <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>More</Text>
       <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
-        <LinkRow
-          icon="lock-closed-outline"
-          label="Privacy Policy"
-          iconColor={colors.text.secondary}
-          onPress={() => router.push("/privacy-policy")}
-        />
-        <LinkRow
-          icon="document-text-outline"
-          label="Terms of Service"
-          iconColor={colors.text.secondary}
-          onPress={() => router.push("/terms")}
-        />
-        <LinkRow
-          icon="chatbubble-outline"
-          label="Send Feedback"
-          iconColor={colors.text.secondary}
-          onPress={() => Linking.openURL("mailto:support@stakemate.app?subject=Feedback")}
-        />
-        <LinkRow
-          icon="star-outline"
-          label="Rate Stakemate"
-          iconColor="#f59e0b"
-          onPress={() => Linking.openURL("https://apps.apple.com/app/id6772975225")}
-          isLast
-        />
+        <LinkRow icon="lock-closed-outline" label="Privacy Policy"   iconColor={colors.text.secondary} onPress={() => router.push("/privacy-policy")} />
+        <LinkRow icon="document-text-outline" label="Terms of Service" iconColor={colors.text.secondary} onPress={() => router.push("/terms")} />
+        <LinkRow icon="help-circle-outline"   label="FAQ"              iconColor={BRAND}                 onPress={() => router.push("/faq")} />
+        <LinkRow icon="chatbubble-outline"    label="Send Feedback"    iconColor={colors.text.secondary} onPress={() => Linking.openURL("mailto:support@stakemate.app?subject=Feedback")} />
+        <LinkRow icon="star-outline"          label="Rate Stakemate"   iconColor="#f59e0b"               onPress={() => Linking.openURL("https://apps.apple.com/app/id6772975225")} isLast />
       </View>
 
-      {/* ── Footer ── */}
+      {/* Footer */}
       <Text style={[styles.footer, { color: colors.text.tertiary }]}>
         Made with ♠ for poker players worldwide.{"\n"}© {new Date().getFullYear()} Stakemate. All rights reserved.
       </Text>
@@ -135,107 +143,19 @@ export default function AboutScreen() {
 }
 
 const styles = StyleSheet.create({
-  hero: {
-    alignItems: "center",
-    paddingTop: 36,
-    paddingBottom: 32,
-    gap: 10,
-  },
-  tagline: {
-    color: "rgba(255,255,255,0.8)",
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  versionWrap: {
-    alignItems: "center",
-    marginTop: -14,
-    marginBottom: 20,
-  },
-  versionPill: {
-    paddingHorizontal: 14,
-    paddingVertical: 4,
-    borderRadius: 20,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  versionText: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  sectionLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-    marginBottom: 8,
-    marginLeft: 20,
-  },
-  card: {
-    marginHorizontal: 16,
-    marginBottom: 20,
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
-  },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    marginBottom: 8,
-    padding: 16,
-    paddingBottom: 0,
-  },
-  cardBody: {
-    fontSize: 14,
-    lineHeight: 22,
-    padding: 16,
-    paddingTop: 6,
-  },
-  featureRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 13,
-    paddingHorizontal: 16,
-  },
-  featureIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  featureText: {
-    fontSize: 14,
-    fontWeight: "500",
-    flex: 1,
-  },
-  linkRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-  },
-  linkIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  linkLabel: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: "500",
-  },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 62,
-  },
-  footer: {
-    textAlign: "center",
-    fontSize: 12,
-    lineHeight: 18,
-    paddingHorizontal: 32,
-    marginTop: 4,
-  },
+  hero:        { alignItems: "center", paddingTop: 36, paddingBottom: 32, gap: 10 },
+  tagline:     { color: "rgba(255,255,255,0.8)", fontSize: 14, fontWeight: "500" },
+  versionWrap: { alignItems: "center", marginTop: -14, marginBottom: 20 },
+  versionPill: { paddingHorizontal: 14, paddingVertical: 4, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth },
+  versionText: { fontSize: 12, fontWeight: "600" },
+  sectionLabel:{ fontSize: 12, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8, marginLeft: 20 },
+  card:        { marginHorizontal: 16, marginBottom: 20, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
+  cardTitle:   { fontSize: 15, fontWeight: "700", marginBottom: 8, padding: 16, paddingBottom: 0 },
+  cardBody:    { fontSize: 14, lineHeight: 22, padding: 16, paddingTop: 6 },
+  planCard:    { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderLeftWidth: 3, padding: 14 },
+  linkRow:     { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 14, paddingHorizontal: 16 },
+  linkIcon:    { width: 32, height: 32, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  linkLabel:   { flex: 1, fontSize: 15, fontWeight: "500" },
+  divider:     { height: StyleSheet.hairlineWidth, marginHorizontal: 16 },
+  footer:      { textAlign: "center", fontSize: 12, lineHeight: 18, paddingHorizontal: 32, marginTop: 4 },
 });

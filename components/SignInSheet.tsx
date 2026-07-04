@@ -72,7 +72,7 @@ export function SignInSheet({ visible, onClose, title, description, icon = "lock
           {title ?? "Sign in to continue"}
         </Text>
         <Text style={styles.sub}>
-          {description ?? "Create a free account to unlock this feature and keep your data safe."}
+          {description ?? "Create a free account to automatically back up your sessions, notes and results — and access them on any device."}
         </Text>
 
         {/* Apple */}

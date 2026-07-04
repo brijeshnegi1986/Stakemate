@@ -233,6 +233,32 @@ export async function fetchAppNotifications(userId: string): Promise<AppNotifica
   );
 }
 
+export async function deleteNotificationFromCloud(
+  userId: string,
+  notifId: string  // composite id e.g. "claim_abc", "comment_xyz", "follow_uid", "tourney_post_pid"
+): Promise<void> {
+  let query = supabase.from("notifications").delete().eq("user_id", userId);
+
+  if (notifId.startsWith("claim_")) {
+    const claimId = notifId.replace("claim_", "");
+    query = query.contains("data", { claimId });
+  } else if (notifId.startsWith("comment_")) {
+    const commentId = notifId.replace("comment_", "");
+    query = query.contains("data", { commentId });
+  } else if (notifId.startsWith("follow_")) {
+    const followerId = notifId.replace("follow_", "");
+    query = query.contains("data", { followerId });
+  } else if (notifId.startsWith("tourney_post_")) {
+    const tournamentPostId = notifId.replace("tourney_post_", "");
+    query = query.contains("data", { tournamentPostId });
+  } else {
+    // Fallback: try to delete by exact id match if it's a UUID
+    query = query.eq("id", notifId);
+  }
+
+  await query;
+}
+
 export async function markAllRead(userId: string): Promise<void> {
   setSetting(LAST_READ_KEY, new Date().toISOString());
   // Keep the server-side notifications table (used for push badge counts) in sync,
