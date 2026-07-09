@@ -4,7 +4,9 @@ import {
   PRODUCT_PRO_MONTHLY,
   PRODUCT_PRO_YEARLY,
 } from "@/constants/subscription";
+import { supabase } from "@/lib/supabase";
 import { ErrorCode, useIAP, type ProductSubscription } from "expo-iap";
+import { useAuth } from "./AuthContext";
 import {
   ReactNode,
   createContext,
@@ -67,6 +69,7 @@ const SubscriptionContext = createContext<SubscriptionState>({
 });
 
 export function SubscriptionProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [tier, setTier]         = useState<SubscriptionTier>("free");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -99,6 +102,17 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     else if (ids.some((id) => PRO_SKUS.has(id)))  setTier("pro");
     else                                            setTier("free");
   }, [activeSubscriptions]);
+
+  // Publish tier to the shared profile so other users can see a Pro/Elite badge.
+  // Cosmetic-only, client-authoritative (same trust model as last_seen_at) —
+  // never used to gate any paid feature.
+  useEffect(() => {
+    if (!user?.id) return;
+    supabase.from("profiles").update({ subscription_tier: tier }).eq("id", user.id).then(
+      () => {},
+      () => {}
+    );
+  }, [tier, user?.id]);
 
   // Once connected, load products and check existing subscription
   useEffect(() => {

@@ -56,6 +56,7 @@ const PLANS = [
     color: BRAND,
     features: [
       "Everything in Free",
+      "AI Hand Review",
       "Tournament calendar & device sync",
       "Staking marketplace",
       "PDF & CSV export",
@@ -66,7 +67,6 @@ const PLANS = [
     color: PURPLE,
     features: [
       "Everything in Pro",
-      "AI Hand Review",
       "AI Note enhance & compress",
       "Publish tournaments to community",
     ],
@@ -130,7 +130,7 @@ export default function AboutScreen() {
         <LinkRow icon="lock-closed-outline" label="Privacy Policy"   iconColor={colors.text.secondary} onPress={() => router.push("/privacy-policy")} />
         <LinkRow icon="document-text-outline" label="Terms of Service" iconColor={colors.text.secondary} onPress={() => router.push("/terms")} />
         <LinkRow icon="help-circle-outline"   label="FAQ"              iconColor={BRAND}                 onPress={() => router.push("/faq")} />
-        <LinkRow icon="chatbubble-outline"    label="Send Feedback"    iconColor={colors.text.secondary} onPress={() => Linking.openURL("mailto:support@stakemate.app?subject=Feedback")} />
+        <LinkRow icon="chatbubble-outline"    label="Send Feedback"    iconColor={colors.text.secondary} onPress={() => Linking.openURL("mailto:support@stakemate.com.au?subject=Feedback")} />
         <LinkRow icon="star-outline"          label="Rate Stakemate"   iconColor="#f59e0b"               onPress={() => Linking.openURL("https://apps.apple.com/app/id6772975225")} isLast />
       </View>
 

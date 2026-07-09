@@ -33,12 +33,24 @@ export default function TabLayout() {
           backgroundColor: colors.bg.primary,
           borderTopColor: colors.border.default,
         },
+        tabBarItemStyle: {
+          flex: 1,
+        },
         tabBarLabelStyle: {
           fontSize: 11,
           fontWeight: "600",
         },
       }}
     >
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: "Home",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons name={focused ? "grid" : "grid-outline"} size={size} color={color} />
+          ),
+        }}
+      />
       <Tabs.Screen
         name="history"
         options={{
@@ -54,15 +66,6 @@ export default function TabLayout() {
           title: "Community",
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons name={focused ? "people" : "people-outline"} size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Home",
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons name={focused ? "grid" : "grid-outline"} size={size} color={color} />
           ),
         }}
       />

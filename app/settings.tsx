@@ -8,7 +8,7 @@ import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import * as Calendar from "expo-calendar";
 import * as Location from "expo-location";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
@@ -19,6 +19,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -414,6 +415,25 @@ export default function SettingsScreen() {
 
       </View>
 
+      {/* ── HOME ── */}
+      <SectionLabel label="Home" colors={colors} spacing={spacing} typography={typography} />
+      <View style={card}>
+        <TouchableOpacity
+          onPress={() => router.push("/dashboard-customize")}
+          activeOpacity={0.7}
+          style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingVertical: spacing.md + 2, gap: spacing.md }}
+        >
+          <Ionicons name="options-outline" size={20} color={colors.text.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text.primary, ...typography.bodySm, fontWeight: "600" }}>Customize Dashboard</Text>
+            <Text style={{ color: colors.text.tertiary, ...typography.caption, marginTop: 1 }}>
+              Choose which sections appear on your home screen
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.text.tertiary} />
+        </TouchableOpacity>
+      </View>
+
       {/* ── CALENDAR ── */}
       <SectionLabel label="Calendar" colors={colors} spacing={spacing} typography={typography} />
       <View style={card}>
@@ -524,7 +544,7 @@ export default function SettingsScreen() {
       {/* ── CURRENCY MODAL ── */}
       <Modal visible={currencyModalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setCurrencyModalVisible(false)}>
         <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
-          <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
             <TouchableOpacity onPress={() => setCurrencyModalVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
               <Ionicons name="close" size={32} color={colors.text.secondary} />
             </TouchableOpacity>
@@ -558,7 +578,7 @@ export default function SettingsScreen() {
       {/* ── THEME MODAL ── */}
       <Modal visible={themeModalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setThemeModalVisible(false)}>
         <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
-          <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
             <TouchableOpacity onPress={() => setThemeModalVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
               <Ionicons name="close" size={32} color={colors.text.secondary} />
             </TouchableOpacity>
@@ -592,7 +612,7 @@ export default function SettingsScreen() {
       {/* ── VIEW MODAL ── */}
       <Modal visible={viewModalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setViewModalVisible(false)}>
         <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
-          <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
             <TouchableOpacity onPress={() => setViewModalVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
               <Ionicons name="close" size={32} color={colors.text.secondary} />
             </TouchableOpacity>
@@ -662,6 +682,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   navSide:   { width: 44, alignItems: "flex-start", justifyContent: "center" },
   navTitle:  { flex: 1, fontSize: 17, fontWeight: "600", textAlign: "center" },

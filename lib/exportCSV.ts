@@ -21,7 +21,7 @@ export async function exportSessionsCSV(): Promise<void> {
   const headers = [
     "Date", "Type", "Stakes / Tournament", "Venue", "State",
     "Buy-in", "Cash-out", "Profit", "Duration (hrs)",
-    "Entries", "Position", "Payout", "Notes",
+    "Entries", "Position", "Payout",
   ];
 
   const lines: string[] = [headers.join(",")];
@@ -40,7 +40,6 @@ export async function exportSessionsCSV(): Promise<void> {
       s.type === "tournament" ? (s.entries ?? "") : "",
       s.type === "tournament" ? (s.position ?? "") : "",
       s.type === "tournament" ? (s.payout ?? "") : "",
-      s.notes ?? "",
     ]));
   }
 

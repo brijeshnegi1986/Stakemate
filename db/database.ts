@@ -99,6 +99,91 @@ export const initDB = () => {
   for (const [key, value] of defaults) {
     db.runSync(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`, [key, value]);
   }
+
+  // Home games (host-run multi-player bookkeeping)
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS home_games (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      venue TEXT DEFAULT '',
+      date TEXT NOT NULL,
+      unit TEXT NOT NULL DEFAULT 'currency',
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at INTEGER NOT NULL,
+      completed_at INTEGER
+    );
+  `);
+
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS home_game_players (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      game_id INTEGER NOT NULL,
+      display_name TEXT NOT NULL,
+      leaving_at INTEGER,
+      notification_id TEXT,
+      settled INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+  `);
+  try { db.execSync(`ALTER TABLE home_game_players ADD COLUMN settled INTEGER NOT NULL DEFAULT 0`); } catch (_) {}
+
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS home_game_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      game_id INTEGER NOT NULL,
+      player_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      amount REAL NOT NULL,
+      note TEXT DEFAULT '',
+      confirmed INTEGER DEFAULT 1,
+      timestamp INTEGER NOT NULL
+    );
+  `);
+
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS home_game_expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      game_id INTEGER NOT NULL,
+      category TEXT NOT NULL,
+      amount REAL NOT NULL,
+      payee_name TEXT DEFAULT '',
+      note TEXT DEFAULT '',
+      timestamp INTEGER NOT NULL
+    );
+  `);
+
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS home_game_rake (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      game_id INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      note TEXT DEFAULT '',
+      timestamp INTEGER NOT NULL
+    );
+  `);
+
+  // Casino balance tracker (front money / markers held on account at a casino)
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS casinos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT '',
+      name_key TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+  `);
+
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS casino_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      casino_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      amount REAL NOT NULL,
+      date TEXT NOT NULL,
+      note TEXT DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+  `);
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -126,7 +211,6 @@ export type Session = {
   entries?: number;
   position?: number;
   payout?: number;
-  notes?: string;
   rebuys?: string; // JSON array of amounts e.g. "[100, 200]"
 };
 
@@ -163,17 +247,16 @@ export const addTournament = (t: {
   duration: number;
   venue: string;
   state: string;
-  notes: string;
   date: string;
 }) => {
   const profit = t.payout - t.buyIn;
   const r = db.runSync(
     `INSERT INTO sessions
        (type, buyIn, cashOut, payout, profit, duration, venue, state,
-        tournamentName, entries, position, notes, date, status)
-     VALUES ('tournament', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')`,
+        tournamentName, entries, position, date, status)
+     VALUES ('tournament', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')`,
     [t.buyIn, t.payout, t.payout, profit, t.duration,
-     t.venue, t.state, t.tournamentName, t.entries, t.position, t.notes, t.date]
+     t.venue, t.state, t.tournamentName, t.entries, t.position, t.date]
   );
   return r.lastInsertRowId;
 };
@@ -242,34 +325,28 @@ export const updateSession = (
     entries?: number;
     position?: number;
     payout?: number;
-    notes?: string;
   }
 ) => {
   if (data.type === "tournament") {
     db.runSync(
       `UPDATE sessions
        SET type='tournament', buyIn=?, payout=?, cashOut=?, profit=?, duration=?, date=?,
-           venue=?, state=?, tournamentName=?, entries=?, position=?, notes=?
+           venue=?, state=?, tournamentName=?, entries=?, position=?
        WHERE id=?`,
       [data.buyIn, data.payout ?? 0, data.payout ?? 0, data.profit,
        data.duration, data.date, data.venue, data.state,
-       data.tournamentName ?? "", data.entries ?? 0, data.position ?? 0,
-       data.notes ?? "", id]
+       data.tournamentName ?? "", data.entries ?? 0, data.position ?? 0, id]
     );
   } else {
     db.runSync(
       `UPDATE sessions
        SET type='cash', stakes=?, venue=?, profit=?, duration=?, date=?,
-           buyIn=?, cashOut=?, state=?, notes=?
+           buyIn=?, cashOut=?, state=?
        WHERE id=?`,
       [data.stakes ?? "", data.venue, data.profit, data.duration, data.date,
-       data.buyIn, data.cashOut ?? 0, data.state, data.notes ?? "", id]
+       data.buyIn, data.cashOut ?? 0, data.state, id]
     );
   }
-};
-
-export const saveNotes = (id: number, notes: string): void => {
-  db.runSync(`UPDATE sessions SET notes = ? WHERE id = ?`, [notes, id]);
 };
 
 export const parseRebuys = (session: { rebuys?: string }): number[] => {
@@ -391,6 +468,21 @@ export const setSetting = (key: string, value: string): void => {
 
 export const clearAllSessions = (): void => {
   db.runSync(`DELETE FROM sessions WHERE ${COMPLETED}`);
+};
+
+// ─── Dashboard personalization ───────────────────────────────────────────────
+
+export type DashboardSection =
+  | "quickActions" | "nextUp" | "stakes" | "goals" | "recentSessions" | "handNotes" | "promotions" | "handReview" | "todaysTournaments";
+
+export const getDashboardHiddenSections = (): DashboardSection[] => {
+  try { return JSON.parse(getSetting("dashboardHiddenSections") ?? "[]"); } catch { return []; }
+};
+
+export const setDashboardSectionVisible = (section: DashboardSection, visible: boolean): void => {
+  const hidden = new Set(getDashboardHiddenSections());
+  if (visible) hidden.delete(section); else hidden.add(section);
+  setSetting("dashboardHiddenSections", JSON.stringify([...hidden]));
 };
 
 
@@ -524,6 +616,31 @@ export const setTournamentStakeDeal = (id: number, dealId: string): void => {
   db.runSync(`UPDATE tournament_events SET stake_deal_id = ? WHERE id = ?`, [dealId, id]);
 };
 
+// Removes past tournament events from local storage.
+// Events with a stake deal attached lose no data by being pruned — the deal itself
+// (tournament_name/venue/date) lives independently in Supabase's stake_deals table
+// and keeps surfacing in the seller's/buyers' marketplace views — so those are
+// pruned as soon as they're past. Events with no deal get a grace window so users
+// can still log a session/notes against a tournament that just ended.
+export const pruneExpiredTournamentEvents = (graceDays = 2): number[] => {
+  const todayYMD = new Date().toISOString().slice(0, 10);
+  const grace = new Date();
+  grace.setDate(grace.getDate() - graceDays);
+  const graceYMD = grace.toISOString().slice(0, 10);
+
+  const rows = db.getAllSync(
+    `SELECT id FROM tournament_events
+     WHERE (stake_deal_id IS NOT NULL AND stake_deal_id != '' AND date < ?)
+        OR ((stake_deal_id IS NULL OR stake_deal_id = '') AND date < ?)`,
+    [todayYMD, graceYMD]
+  ) as { id: number }[];
+
+  if (rows.length === 0) return [];
+  const ids = rows.map((r) => r.id);
+  db.runSync(`DELETE FROM tournament_events WHERE id IN (${ids.map(() => "?").join(",")})`, ids);
+  return ids;
+};
+
 // ─── Player Notes ─────────────────────────────────────────────────────────────
 
 export type PlayerNote = {
@@ -559,6 +676,353 @@ export const deletePlayerNote = (id: number): void => {
 export const getPlayerNotes = (): PlayerNote[] => {
   const rows = db.getAllSync(`SELECT * FROM player_notes ORDER BY updated_at DESC`) as any[];
   return rows.map((r) => ({ ...r, styles: JSON.parse(r.styles || "[]") }));
+};
+
+// ─── Home Games ───────────────────────────────────────────────────────────────
+
+export type HomeGameUnit = "currency" | "chips";
+export type HomeGameStatus = "active" | "completed";
+export type HomeGameTxnType = "buy_in" | "rebuy" | "cash_out" | "adjustment";
+export type HomeGameExpenseCategory = "food" | "transport" | "drinks" | "dealer" | "other";
+
+export type HomeGame = {
+  id: number;
+  name: string;
+  venue: string;
+  date: string;
+  unit: HomeGameUnit;
+  status: HomeGameStatus;
+  created_at: number;
+  completed_at: number | null;
+};
+
+export type HomeGamePlayer = {
+  id: number;
+  game_id: number;
+  display_name: string;
+  leaving_at: number | null;
+  notification_id: string | null;
+  settled: number;
+  created_at: number;
+};
+
+export type HomeGameTransaction = {
+  id: number;
+  game_id: number;
+  player_id: number;
+  type: HomeGameTxnType;
+  amount: number;
+  note: string;
+  confirmed: number;
+  timestamp: number;
+};
+
+export type HomeGameExpense = {
+  id: number;
+  game_id: number;
+  category: HomeGameExpenseCategory;
+  amount: number;
+  payee_name: string;
+  note: string;
+  timestamp: number;
+};
+
+export type HomeGameRake = {
+  id: number;
+  game_id: number;
+  amount: number;
+  note: string;
+  timestamp: number;
+};
+
+export type HomeGamePlayerTotals = {
+  playerId: number;
+  name: string;
+  buyIn: number;
+  cashOut: number;
+  net: number;
+};
+
+export const startHomeGame = (data: {
+  name: string;
+  venue: string;
+  date: string;
+  unit: HomeGameUnit;
+}): number => {
+  const result = db.runSync(
+    `INSERT INTO home_games (name, venue, date, unit, status, created_at)
+     VALUES (?, ?, ?, ?, 'active', ?)`,
+    [data.name.trim(), data.venue.trim(), data.date, data.unit, Date.now()]
+  );
+  return result.lastInsertRowId;
+};
+
+export const getActiveHomeGame = (): HomeGame | null =>
+  db.getFirstSync(`SELECT * FROM home_games WHERE status = 'active' LIMIT 1`) as HomeGame | null;
+
+export const getHomeGames = (): HomeGame[] =>
+  db.getAllSync(`SELECT * FROM home_games ORDER BY date DESC, id DESC`) as HomeGame[];
+
+export const getHomeGame = (id: number): HomeGame | null =>
+  db.getFirstSync(`SELECT * FROM home_games WHERE id = ?`, [id]) as HomeGame | null;
+
+export const endHomeGame = (id: number): void => {
+  db.runSync(
+    `UPDATE home_games SET status = 'completed', completed_at = ? WHERE id = ?`,
+    [Date.now(), id]
+  );
+};
+
+export const deleteHomeGame = (id: number): void => {
+  db.runSync(`DELETE FROM home_game_transactions WHERE game_id = ?`, [id]);
+  db.runSync(`DELETE FROM home_game_expenses WHERE game_id = ?`, [id]);
+  db.runSync(`DELETE FROM home_game_rake WHERE game_id = ?`, [id]);
+  db.runSync(`DELETE FROM home_game_players WHERE game_id = ?`, [id]);
+  db.runSync(`DELETE FROM home_games WHERE id = ?`, [id]);
+};
+
+export const addHomeGamePlayer = (gameId: number, displayName: string): number => {
+  const result = db.runSync(
+    `INSERT INTO home_game_players (game_id, display_name, created_at) VALUES (?, ?, ?)`,
+    [gameId, displayName.trim(), Date.now()]
+  );
+  return result.lastInsertRowId;
+};
+
+export const getHomeGamePlayers = (gameId: number): HomeGamePlayer[] =>
+  db.getAllSync(
+    `SELECT * FROM home_game_players WHERE game_id = ? ORDER BY id ASC`, [gameId]
+  ) as HomeGamePlayer[];
+
+export const renameHomeGamePlayer = (id: number, displayName: string): void => {
+  db.runSync(`UPDATE home_game_players SET display_name = ? WHERE id = ?`, [displayName.trim(), id]);
+};
+
+export const deleteHomeGamePlayer = (id: number): void => {
+  db.runSync(`DELETE FROM home_game_transactions WHERE player_id = ?`, [id]);
+  db.runSync(`DELETE FROM home_game_players WHERE id = ?`, [id]);
+};
+
+export const setPlayerLeavingTimer = (id: number, leavingAt: number, notificationId: string): void => {
+  db.runSync(
+    `UPDATE home_game_players SET leaving_at = ?, notification_id = ? WHERE id = ?`,
+    [leavingAt, notificationId, id]
+  );
+};
+
+export const clearPlayerLeavingTimer = (id: number): void => {
+  db.runSync(
+    `UPDATE home_game_players SET leaving_at = NULL, notification_id = NULL WHERE id = ?`,
+    [id]
+  );
+};
+
+export const setPlayerSettled = (id: number, settled: boolean): void => {
+  db.runSync(`UPDATE home_game_players SET settled = ? WHERE id = ?`, [settled ? 1 : 0, id]);
+};
+
+export const addHomeGameTransaction = (
+  gameId: number,
+  playerId: number,
+  type: HomeGameTxnType,
+  amount: number,
+  note: string = ""
+): number => {
+  const result = db.runSync(
+    `INSERT INTO home_game_transactions (game_id, player_id, type, amount, note, confirmed, timestamp)
+     VALUES (?, ?, ?, ?, ?, 1, ?)`,
+    [gameId, playerId, type, amount, note, Date.now()]
+  );
+  return result.lastInsertRowId;
+};
+
+export const addHomeGameAdjustment = (
+  gameId: number,
+  playerId: number,
+  type: HomeGameTxnType,
+  amount: number,
+  note: string,
+  confirmed: boolean
+): number => {
+  const result = db.runSync(
+    `INSERT INTO home_game_transactions (game_id, player_id, type, amount, note, confirmed, timestamp)
+     VALUES (?, ?, 'adjustment', ?, ?, ?, ?)`,
+    [gameId, playerId, amount, note, confirmed ? 1 : 0, Date.now()]
+  );
+  return result.lastInsertRowId;
+};
+
+export const getHomeGameTransactions = (gameId: number): HomeGameTransaction[] =>
+  db.getAllSync(
+    `SELECT * FROM home_game_transactions WHERE game_id = ? ORDER BY timestamp ASC`, [gameId]
+  ) as HomeGameTransaction[];
+
+export const getPlayerTotals = (gameId: number): HomeGamePlayerTotals[] => {
+  const rows = db.getAllSync(
+    `SELECT
+       p.id as playerId,
+       p.display_name as name,
+       COALESCE(SUM(CASE WHEN t.type IN ('buy_in','rebuy') THEN t.amount ELSE 0 END), 0) as buyIn,
+       COALESCE(SUM(CASE WHEN t.type = 'cash_out' THEN t.amount ELSE 0 END), 0) as cashOut,
+       COALESCE(SUM(CASE WHEN t.type = 'adjustment' THEN t.amount ELSE 0 END), 0) as adjustment
+     FROM home_game_players p
+     LEFT JOIN home_game_transactions t ON t.player_id = p.id
+     WHERE p.game_id = ?
+     GROUP BY p.id
+     ORDER BY p.id ASC`,
+    [gameId]
+  ) as (HomeGamePlayerTotals & { adjustment: number })[];
+
+  return rows.map((r) => ({
+    playerId: r.playerId,
+    name: r.name,
+    buyIn: r.buyIn,
+    cashOut: r.cashOut,
+    net: r.cashOut - r.buyIn + r.adjustment,
+  }));
+};
+
+export const addHomeGameExpense = (
+  gameId: number,
+  category: HomeGameExpenseCategory,
+  amount: number,
+  payeeName: string = "",
+  note: string = ""
+): number => {
+  const result = db.runSync(
+    `INSERT INTO home_game_expenses (game_id, category, amount, payee_name, note, timestamp)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [gameId, category, amount, payeeName.trim(), note, Date.now()]
+  );
+  return result.lastInsertRowId;
+};
+
+export const getHomeGameExpenses = (gameId: number): HomeGameExpense[] =>
+  db.getAllSync(
+    `SELECT * FROM home_game_expenses WHERE game_id = ? ORDER BY timestamp ASC`, [gameId]
+  ) as HomeGameExpense[];
+
+export const getHomeGameExpensesTotal = (gameId: number): number => {
+  const row = db.getFirstSync(
+    `SELECT SUM(amount) as total FROM home_game_expenses WHERE game_id = ?`, [gameId]
+  ) as { total: number | null } | null;
+  return row?.total ?? 0;
+};
+
+export const addHomeGameRake = (gameId: number, amount: number, note: string = ""): number => {
+  const result = db.runSync(
+    `INSERT INTO home_game_rake (game_id, amount, note, timestamp) VALUES (?, ?, ?, ?)`,
+    [gameId, amount, note, Date.now()]
+  );
+  return result.lastInsertRowId;
+};
+
+export const getHomeGameRakeTotal = (gameId: number): number => {
+  const row = db.getFirstSync(
+    `SELECT SUM(amount) as total FROM home_game_rake WHERE game_id = ?`, [gameId]
+  ) as { total: number | null } | null;
+  return row?.total ?? 0;
+};
+
+export const getHomeGameRakeEntries = (gameId: number): HomeGameRake[] =>
+  db.getAllSync(
+    `SELECT * FROM home_game_rake WHERE game_id = ? ORDER BY timestamp ASC`, [gameId]
+  ) as HomeGameRake[];
+
+// ─── Casino Balance ─────────────────────────────────────────────────────────────
+
+export type CasinoTxnType = "deposit" | "withdraw";
+
+export type Casino = {
+  id: number;
+  name: string;
+  state: string;
+  name_key: string;
+  created_at: number;
+};
+
+export type CasinoWithBalance = Casino & { balance: number };
+
+export type CasinoTransaction = {
+  id: number;
+  casino_id: number;
+  type: CasinoTxnType;
+  amount: number;
+  date: string;
+  note: string;
+  created_at: number;
+};
+
+const casinoNameKey = (name: string, state: string): string =>
+  `${name.trim().toLowerCase()}|${state.trim().toLowerCase()}`;
+
+export const findOrCreateCasino = (name: string, state: string): number => {
+  const key = casinoNameKey(name, state);
+  const existing = db.getFirstSync(
+    `SELECT id FROM casinos WHERE name_key = ?`, [key]
+  ) as { id: number } | null;
+  if (existing) return existing.id;
+
+  const result = db.runSync(
+    `INSERT INTO casinos (name, state, name_key, created_at) VALUES (?, ?, ?, ?)`,
+    [name.trim(), state.trim(), key, Date.now()]
+  );
+  return result.lastInsertRowId;
+};
+
+export const getCasino = (id: number): Casino | null =>
+  db.getFirstSync(`SELECT * FROM casinos WHERE id = ?`, [id]) as Casino | null;
+
+export const getCasinoBalance = (casinoId: number): number => {
+  const row = db.getFirstSync(
+    `SELECT SUM(CASE WHEN type = 'deposit' THEN amount ELSE -amount END) as balance
+     FROM casino_transactions WHERE casino_id = ?`,
+    [casinoId]
+  ) as { balance: number | null } | null;
+  return row?.balance ?? 0;
+};
+
+export const getCasinos = (): CasinoWithBalance[] => {
+  const rows = db.getAllSync(
+    `SELECT c.*,
+       COALESCE(SUM(CASE WHEN t.type = 'deposit' THEN t.amount ELSE -t.amount END), 0) as balance,
+       MAX(t.created_at) as last_activity
+     FROM casinos c
+     LEFT JOIN casino_transactions t ON t.casino_id = c.id
+     GROUP BY c.id
+     ORDER BY COALESCE(last_activity, c.created_at) DESC`
+  ) as (CasinoWithBalance & { last_activity: number | null })[];
+  return rows.map(({ last_activity, ...c }) => c);
+};
+
+export const addCasinoTransaction = (
+  casinoId: number,
+  type: CasinoTxnType,
+  amount: number,
+  date: string,
+  note: string = ""
+): number => {
+  const result = db.runSync(
+    `INSERT INTO casino_transactions (casino_id, type, amount, date, note, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [casinoId, type, amount, date, note, Date.now()]
+  );
+  return result.lastInsertRowId;
+};
+
+export const getCasinoTransactions = (casinoId: number): CasinoTransaction[] =>
+  db.getAllSync(
+    `SELECT * FROM casino_transactions WHERE casino_id = ? ORDER BY date DESC, created_at DESC`,
+    [casinoId]
+  ) as CasinoTransaction[];
+
+export const deleteCasinoTransaction = (id: number): void => {
+  db.runSync(`DELETE FROM casino_transactions WHERE id = ?`, [id]);
+};
+
+export const deleteCasino = (id: number): void => {
+  db.runSync(`DELETE FROM casino_transactions WHERE casino_id = ?`, [id]);
+  db.runSync(`DELETE FROM casinos WHERE id = ?`, [id]);
 };
 
 // Auto-initialize on import so getSetting is always safe to call

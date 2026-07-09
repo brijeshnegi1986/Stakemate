@@ -1,41 +1,34 @@
-import { HandAnalysisModal } from "@/components/HandAnalysisModal";
 import { CardText } from "@/components/CardText";
 import { useAuth } from "@/context/AuthContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { createPost } from "@/lib/social";
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Keyboard,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { deleteSession, getRebuysTotal, parseRebuys, saveNotes, saveNoteEntry } from "../db/database";
-import { syncNoteToCloud, deleteSessionFromCloud } from "@/lib/sync";
+import { deleteSession, getRebuysTotal, parseRebuys } from "../db/database";
+import { deleteSessionFromCloud } from "@/lib/sync";
 
 export default function SessionDetailScreen() {
   const { session: sessionParam } = useLocalSearchParams();
   const session = sessionParam ? JSON.parse(sessionParam as string) : null;
-  const { colors, spacing, radius, typography } = usePokerTheme();
+  const { colors, spacing, typography } = usePokerTheme();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
-  const [notes, setNotes] = useState<string>(session?.notes ?? "");
-  const [notesChanged, setNotesChanged] = useState(false);
-  const [handReviewVisible, setHandReviewVisible] = useState(false);
   const [shareVisible, setShareVisible] = useState(false);
   const [shareCaption, setShareCaption] = useState("");
   const [sharing, setSharing] = useState(false);
@@ -49,22 +42,6 @@ export default function SessionDetailScreen() {
   const profit: number = session.profit ?? 0;
   const profitColor = profit >= 0 ? colors.text.success : colors.text.danger;
   const cardBorderColor = profit >= 0 ? colors.border.success : colors.border.danger;
-
-  const handleSaveNotes = () => {
-    const rawNotes = notes;
-    saveNotes(session.id, rawNotes);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setNotesChanged(false);
-    Keyboard.dismiss();
-    try {
-      const noteId = saveNoteEntry({
-        sessionId: session.id, sessionDate: session.date,
-        sessionVenue: session.venue ?? "", sessionProfit: session.profit ?? 0,
-        sessionType: session.type ?? "cash", rawNotes, enhancedNotes: null,
-      });
-      if (user?.id) syncNoteToCloud(user.id, noteId).catch(console.error);
-    } catch {}
-  };
 
   const handleDelete = () => {
     Alert.alert("Delete Session", "This cannot be undone.", [
@@ -116,6 +93,28 @@ export default function SessionDetailScreen() {
     }
   };
 
+  const handleShareResult = async () => {
+    try {
+      const title = isTournament
+        ? (session.tournamentName || "Tournament")
+        : (session.stakes ? `${session.stakes} NLH` : "Cash Game");
+      const netResult = Number(profit) || 0;
+      const lines = [
+        `🃏 ${title}`,
+        `📅 ${formatDate(session.date)}`,
+        session.venue ? `📍 ${session.venue}` : null,
+        `💰 Buy-in: $${session.buyIn}`,
+        `${netResult >= 0 ? "📈" : "📉"} ${isTournament ? "Net result" : "Profit"}: ${netResult >= 0 ? "+" : "-"}$${Math.abs(netResult).toFixed(0)}`,
+        `\nTracked on Stakemate 🃏`,
+      ].filter(Boolean).join("\n");
+      await Share.share({
+        message: lines,
+        url: "https://apps.apple.com/app/id6772975225",
+        title: "Stakemate — Poker Bankroll Tracker",
+      });
+    } catch { /* cancelled */ }
+  };
+
   const formatDate = (iso: string) =>
     new Date(iso).toLocaleDateString("en-AU", {
       day: "numeric",
@@ -132,10 +131,7 @@ export default function SessionDetailScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.bg.secondary }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
       <Stack.Screen
         options={{
           headerRight: () => (
@@ -165,7 +161,6 @@ export default function SessionDetailScreen() {
           ),
         }}
       />
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
       <View style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: insets.bottom + 40 }}
@@ -291,82 +286,6 @@ export default function SessionDetailScreen() {
               </>
             )}
           </View>
-
-          {/* ── Notes ── */}
-          <View style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: spacing.sm,
-          }}>
-            <Text style={sectionLabel}>Notes</Text>
-            {notesChanged && (
-              <TouchableOpacity
-                onPress={handleSaveNotes}
-                style={{
-                  backgroundColor: colors.bg.brand,
-                  borderRadius: radius.full,
-                  paddingHorizontal: spacing.md,
-                  paddingVertical: spacing.xs,
-                }}
-              >
-                <Text style={{ color: colors.text.onBrand, ...typography.caption, fontWeight: "700" }}>
-                  Save
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          <View style={{
-            backgroundColor: colors.bg.primary,
-            borderRadius: 16,
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: notesChanged ? colors.border.brand : colors.border.default,
-            padding: spacing.lg,
-            minHeight: 100,
-          }}>
-            <TextInput
-              multiline
-              placeholder="Add notes about this session..."
-              placeholderTextColor={colors.text.disabled}
-              value={notes}
-              onChangeText={(t) => { setNotes(t); setNotesChanged(true); }}
-              style={{
-                color: colors.text.primary,
-                ...typography.bodySm,
-                lineHeight: 22,
-                minHeight: 80,
-                textAlignVertical: "top",
-              }}
-            />
-          </View>
-
-          {/* Review Hand button — always shown when notes are long enough */}
-          {notes.trim().length > 20 && !notesChanged && (
-            <TouchableOpacity
-              onPress={() => setHandReviewVisible(true)}
-              activeOpacity={0.85}
-              style={{
-                flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
-                marginTop: spacing.md,
-                borderRadius: 12,
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: colors.border.brand,
-                paddingVertical: spacing.md,
-                backgroundColor: colors.bg.brand + "10",
-              }}
-            >
-              <MaterialCommunityIcons name="cards-playing-outline" size={16} color={colors.text.brand} />
-              <Text style={{ color: colors.text.brand, fontSize: 14, fontWeight: "700" }}>
-                Review Hand with AI
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          <HandAnalysisModal
-            visible={handReviewVisible}
-            notes={notes}
-            onClose={() => setHandReviewVisible(false)}
-          />
         </ScrollView>
 
 
@@ -374,7 +293,7 @@ export default function SessionDetailScreen() {
         <Modal visible={shareVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShareVisible(false)}>
           <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
             {/* iOS nav header */}
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.strong, backgroundColor: colors.bg.primary, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 3, zIndex: 1 }}>
               <TouchableOpacity onPress={() => setShareVisible(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 72 }}>
                 <Text style={{ fontSize: 16, color: colors.text.secondary }}>Cancel</Text>
               </TouchableOpacity>
@@ -449,12 +368,30 @@ export default function SessionDetailScreen() {
                     </>
                 }
               </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleShareResult}
+                activeOpacity={0.85}
+                style={{
+                  marginTop: 10,
+                  borderRadius: 14,
+                  paddingVertical: 16,
+                  alignItems: "center",
+                  flexDirection: "row",
+                  justifyContent: "center",
+                  gap: 8,
+                  borderWidth: 1.5,
+                  borderColor: colors.border.brand,
+                }}
+              >
+                <Ionicons name="share-outline" size={18} color={colors.text.brand} />
+                <Text style={{ color: colors.text.brand, fontSize: 16, fontWeight: "700" }}>Share Externally</Text>
+              </TouchableOpacity>
             </ScrollView>
           </View>
         </Modal>
       </View>
-      </TouchableWithoutFeedback>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

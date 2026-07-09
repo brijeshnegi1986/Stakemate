@@ -82,7 +82,7 @@ function PageSheet({
     >
       <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
         {/* Navigation bar */}
-        <View style={[styles.navBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+        <View style={[styles.navBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
             <Ionicons name="close" size={32} color={colors.text.secondary} />
           </TouchableOpacity>
@@ -485,7 +485,7 @@ export function VenueSheet({
     >
       <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg.secondary }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         {/* Nav bar */}
-        <View style={[styles.navBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+        <View style={[styles.navBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
             <Ionicons name="close" size={32} color={colors.text.secondary} />
           </TouchableOpacity>
@@ -649,13 +649,19 @@ const styles = StyleSheet.create({
   fieldLabel:  { fontSize: 14, fontWeight: "500", width: 70 },
   fieldValue:  { flex: 1, fontSize: 14, fontWeight: "600", textAlign: "right", marginRight: 4 },
 
-  // Page sheet nav bar
+  // Page sheet nav bar — visually raised above the content below it
   navBar: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   navSide:   { width: 44, alignItems: "flex-start", justifyContent: "center" },
   navTitle:  { flex: 1, fontSize: 17, fontWeight: "600", textAlign: "center", color: "#0f172b" },

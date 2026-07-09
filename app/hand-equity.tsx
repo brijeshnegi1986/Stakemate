@@ -33,7 +33,7 @@ function CardPicker({
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: "#f8fafc" }}>
         {/* Header */}
-        <View style={[styles.pickerHeader, { backgroundColor: "#ffffff", borderBottomColor: "#e2e8f0" }]}>
+        <View style={[styles.pickerHeader, { backgroundColor: "#ffffff", borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Ionicons name="close" size={32} color="#64748b" />
           </TouchableOpacity>
@@ -397,7 +397,7 @@ const styles = StyleSheet.create({
   btn:          { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 14, paddingHorizontal: 14 },
   btnText:      { color: "#fff", fontSize: 15, fontWeight: "700" },
   legend:       { borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, padding: 14 },
-  pickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  pickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 3, zIndex: 1 },
   pickerTitle:  { fontSize: 17, fontWeight: "600" },
   rankGrid:     { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   cardBtn:      { width: 44, height: 56, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center", gap: 1 },

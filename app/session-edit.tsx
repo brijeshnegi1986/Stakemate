@@ -35,7 +35,6 @@ export default function SessionEditScreen() {
   const [entries, setEntries]           = useState(editing?.entries ? String(editing.entries) : "");
   const [position, setPosition]         = useState(editing?.position ? String(editing.position) : "");
   const [payout, setPayout]             = useState(editing?.payout ? String(editing.payout) : "");
-  const [notes, setNotes]               = useState<string>(editing?.notes ?? "");
 
   const [buyInOpen,    setBuyInOpen]    = useState(false);
   const [stakesOpen,   setStakesOpen]   = useState(false);
@@ -72,7 +71,6 @@ export default function SessionEditScreen() {
       date:     editing.date,
       venue:    venue.trim(),
       state:    stateRegion,
-      notes:    notes.trim(),
     };
 
     try {
@@ -327,32 +325,6 @@ export default function SessionEditScreen() {
               onPress={() => setVenueOpen(true)}
               colors={colors}
               isLast
-            />
-          </View>
-
-          {/* ── Notes ── */}
-          <Text style={{ color: colors.text.tertiary, fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", fontWeight: "600", marginBottom: spacing.sm }}>
-            Notes
-          </Text>
-          <View style={{
-            ...inputCard,
-            borderColor: notes.length > 0 ? colors.border.brand : colors.border.default,
-            padding: spacing.lg,
-            marginBottom: spacing["2xl"],
-          }}>
-            <TextInput
-              multiline
-              placeholder="Add notes about this session..."
-              placeholderTextColor={colors.text.disabled}
-              value={notes}
-              onChangeText={setNotes}
-              style={{
-                color: colors.text.primary,
-                ...inputTypo.bodySm,
-                lineHeight: 22,
-                minHeight: 80,
-                textAlignVertical: "top",
-              }}
             />
           </View>
 

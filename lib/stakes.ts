@@ -536,7 +536,11 @@ export async function shareStakeDealExternal(deal: {
     .filter((l) => l !== null)
     .join("\n");
 
-  await Share.share({ message: lines });
+  await Share.share({
+    message: lines,
+    url: "https://apps.apple.com/app/id6772975225",
+    title: "Stakemate — Poker Bankroll Tracker",
+  });
 }
 
 // ─── Result & Settlement ──────────────────────────────────────────────────────

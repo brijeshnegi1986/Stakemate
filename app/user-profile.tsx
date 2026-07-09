@@ -410,7 +410,11 @@ export default function UserProfileScreen() {
   const handleShare = async () => {
     const name = profileData?.display_name || profileData?.username || "this player";
     try {
-      await Share.share({ message: `Check out ${name} on Stakemate!` });
+      await Share.share({
+        message: `Check out ${name} on Stakemate! 🃏`,
+        url: "https://apps.apple.com/app/id6772975225",
+        title: "Stakemate — Poker Bankroll Tracker",
+      });
     } catch { /* cancelled */ }
   };
 
@@ -466,6 +470,8 @@ export default function UserProfileScreen() {
     lastSeenAt:      profileData.last_seen_at,
     socialLinkCount,
     stakeDealsCount: profileData.stake_deals_count,
+    isPro:           profileData.subscription_tier === "pro" || profileData.subscription_tier === "elite",
+    isElite:         profileData.subscription_tier === "elite",
   });
 
   // ── Header (stable JSX — not an inline component function) ───────────────

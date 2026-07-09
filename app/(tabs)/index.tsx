@@ -2,9 +2,11 @@ import { HandReviewLauncher } from "@/components/HandReviewLauncher";
 import { SeriesCarousel } from "@/components/SeriesCarousel";
 import { SignInSheet } from "@/components/SignInSheet";
 import { useAuth } from "@/context/AuthContext";
+import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { getUnreadCount } from "@/lib/appNotifications";
 import { getMyStakeClaims, getMyStakeDeals, MyStakeClaim, StakeDeal } from "@/lib/stakes";
+import { fetchOfficialTournaments, OfficialTournament } from "@/lib/tournaments";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as Notifications from "expo-notifications";
@@ -21,7 +23,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
+  DashboardSection,
   getActiveSession,
+  getDashboardHiddenSections,
   getNoteHistory,
   getSessions,
   getSetting,
@@ -108,6 +112,7 @@ function groupByBanner(events: TournamentEvent[]): NextUpGroup[] {
 export default function HomeScreen() {
   const { colors } = usePokerTheme();
   const { profile, session, refreshProfile, isSyncing } = useAuth();
+  const { isPro, isElite } = useSubscription();
   const insets = useSafeAreaInsets();
 
   const [sessions, setSessions]           = useState<Session[]>([]);
@@ -117,18 +122,45 @@ export default function HomeScreen() {
   const [myDeals,  setMyDeals]            = useState<StakeDeal[]>([]);
   const [myClaims, setMyClaims]           = useState<MyStakeClaim[]>([]);
   const [upcomingTourneys, setUpcomingTourneys] = useState<TournamentEvent[]>([]);
+  const [todaysTournaments, setTodaysTournaments] = useState<OfficialTournament[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showSignIn, setShowSignIn]           = useState(false);
   const [showHandReview, setShowHandReview]   = useState(false);
   const [recentNotes, setRecentNotes]         = useState<NoteEntry[]>([]);
+  const [hiddenSections, setHiddenSections]   = useState<Set<DashboardSection>>(new Set());
+
+  const isVisible = (section: DashboardSection) => !hiddenSections.has(section);
 
   const meta = CURRENCY_META[currency] ?? CURRENCY_META.AUD;
+
+  // ── Weekly goals ──────────────────────────────────────────────────────────
+  const goalHours    = parseFloat(getSetting("goal_weekly_hours")    ?? "0") || 0;
+  const goalProfit   = parseFloat(getSetting("goal_weekly_profit")   ?? "0") || 0;
+  const goalSessions = parseFloat(getSetting("goal_weekly_sessions") ?? "0") || 0;
+
+  const hasGoals = goalHours > 0 || goalProfit > 0 || goalSessions > 0;
+
+  // Current calendar week (Mon–Sun)
+  const weekSessions = (() => {
+    const now = new Date();
+    const day = now.getDay(); // 0=Sun
+    const diffToMon = (day === 0 ? -6 : 1 - day);
+    const mon = new Date(now); mon.setDate(now.getDate() + diffToMon); mon.setHours(0,0,0,0);
+    const monYMD = mon.toISOString().split("T")[0];
+    const sunYMD = new Date(mon.getTime() + 6 * 86400000).toISOString().split("T")[0];
+    return sessions.filter((s) => s.date >= monYMD && s.date <= sunYMD);
+  })();
+
+  const weekHours    = weekSessions.reduce((s, x) => s + (x.duration ?? 0), 0);
+  const weekProfit   = weekSessions.reduce((s, x) => s + (x.profit ?? 0), 0);
+  const weekCount    = weekSessions.length;
 
   useFocusEffect(
     useCallback(() => {
       setSessions(getSessions() || []);
       setCurrency(getSetting("currency") ?? "AUD");
       setActiveSession(getActiveSession());
+      setHiddenSections(new Set(getDashboardHiddenSections()));
       refreshProfile();
       const todayYMD = new Date().toISOString().split("T")[0];
       const allEvents = getTournamentEvents();
@@ -154,6 +186,16 @@ export default function HomeScreen() {
         Notifications.setBadgeCountAsync(count).catch(() => {});
       }).catch(() => {});
     }, [profile?.id])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (getDashboardHiddenSections().includes("todaysTournaments")) return;
+      const todayYMD = new Date().toISOString().split("T")[0];
+      fetchOfficialTournaments()
+        .then((all) => setTodaysTournaments(all.filter((t) => t.tournament_date === todayYMD)))
+        .catch(() => setTodaysTournaments([]));
+    }, [])
   );
 
   // Reload from SQLite once cloud sync completes
@@ -327,35 +369,40 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {/* ── Series promotional banners ── */}
+        {isVisible("promotions") && <SeriesCarousel />}
+
         {/* ── Quick actions ── */}
-        <View style={styles.quickActions}>
-          <TouchableOpacity
-            onPress={() => router.push("/live")}
-            style={[styles.qaBtn, { backgroundColor: "#22C55E" }]}
-            activeOpacity={0.85}
-          >
-            <View style={styles.qaBtnIcon}>
-              <Ionicons name="radio-button-on" size={14} color="#fff" />
-            </View>
-            <View>
-              <Text style={styles.qaBtnTitle}>Start Live</Text>
-              <Text style={styles.qaBtnSub}>Track real time</Text>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => router.push("/add-session")}
-            style={[styles.qaBtn, { backgroundColor: BRAND }]}
-            activeOpacity={0.85}
-          >
-            <View style={styles.qaBtnIcon}>
-              <Ionicons name="add" size={14} color="#fff" />
-            </View>
-            <View>
-              <Text style={styles.qaBtnTitle}>Add Result</Text>
-              <Text style={styles.qaBtnSub}>Log completed</Text>
-            </View>
-          </TouchableOpacity>
-        </View>
+        {isVisible("quickActions") && (
+          <View style={styles.quickActions}>
+            <TouchableOpacity
+              onPress={() => router.push("/live")}
+              style={[styles.qaBtn, { backgroundColor: "#22C55E" }]}
+              activeOpacity={0.85}
+            >
+              <View style={styles.qaBtnIcon}>
+                <Ionicons name="radio-button-on" size={14} color="#fff" />
+              </View>
+              <View>
+                <Text style={styles.qaBtnTitle}>Start Live</Text>
+                <Text style={styles.qaBtnSub}>Track real time</Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => router.push("/add-session")}
+              style={[styles.qaBtn, { backgroundColor: BRAND }]}
+              activeOpacity={0.85}
+            >
+              <View style={styles.qaBtnIcon}>
+                <Ionicons name="add" size={14} color="#fff" />
+              </View>
+              <View>
+                <Text style={styles.qaBtnTitle}>Add Result</Text>
+                <Text style={styles.qaBtnSub}>Log completed</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* ── Live session banner ── */}
         {activeSession && (
@@ -381,15 +428,63 @@ export default function HomeScreen() {
 
         <View style={styles.body}>
 
+          {/* ── Today's Tournaments (official directory, independent of user's own schedule) ── */}
+          {isVisible("todaysTournaments") && todaysTournaments.length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+                  <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: "#F9731615", alignItems: "center", justifyContent: "center" }}>
+                    <Ionicons name="flame-outline" size={13} color="#F97316" />
+                  </View>
+                  <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Today&apos;s Tournaments</Text>
+                </View>
+                <TouchableOpacity onPress={() => router.navigate({ pathname: "/(tabs)/calendar", params: { initialTab: "tournaments" } })}>
+                  <Text style={[styles.seeAll, { color: BRAND }]}>See all</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={{ gap: 8 }}>
+                {todaysTournaments.slice(0, 5).map((t) => {
+                  const venue = t.venue_info?.name ?? t.venue_name ?? null;
+                  return (
+                    <TouchableOpacity
+                      key={t.id}
+                      onPress={() => router.navigate({ pathname: "/(tabs)/calendar", params: { initialTab: "tournaments" } })}
+                      activeOpacity={0.75}
+                      style={[styles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: "#F9731630", padding: 0, overflow: "hidden" }]}
+                    >
+                      {t.banner_url ? (
+                        <Image source={{ uri: t.banner_url }} style={{ width: "100%", height: 110 }} contentFit="cover" />
+                      ) : null}
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12 }}>
+                        <View style={{ flex: 1, gap: 2 }}>
+                          <Text style={[styles.stakeCardName, { color: colors.text.primary }]} numberOfLines={1}>{t.name}</Text>
+                          {venue ? (
+                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]} numberOfLines={1}>{venue}</Text>
+                          ) : null}
+                          {t.buy_in ? (
+                            <Text style={[styles.stakeCardMeta, { color: colors.text.tertiary }]}>${t.buy_in.toLocaleString()}</Text>
+                          ) : null}
+                        </View>
+                        <View style={[styles.stakeStatusPill, { backgroundColor: "#F9731615" }]}>
+                          <Text style={[styles.stakeStatusText, { color: "#F97316" }]}>{t.tournament_time ?? "Today"}</Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
           {/* ── Next Up tournaments ── */}
-          {upcomingTourneys.length > 0 && (
+          {isVisible("nextUp") && upcomingTourneys.length > 0 && (
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
                   <View style={{ width: 24, height: 24, borderRadius: 6, backgroundColor: "#8B5CF615", alignItems: "center", justifyContent: "center" }}>
                     <Ionicons name="trophy-outline" size={13} color="#8B5CF6" />
                   </View>
-                  <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Next Up</Text>
+                  <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Upcoming Tournaments</Text>
                 </View>
                 <TouchableOpacity onPress={() => router.navigate("/(tabs)/calendar")}>
                   <Text style={[styles.seeAll, { color: BRAND }]}>Schedule</Text>
@@ -407,7 +502,7 @@ export default function HomeScreen() {
                         style={[styles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, padding: 0, overflow: "hidden" }]}
                       >
                         {g.imageUrl ? (
-                          <Image source={{ uri: g.imageUrl }} style={{ width: "100%", height: 120 }} contentFit="cover" />
+                          <Image source={{ uri: g.imageUrl }} style={{ width: "100%", height: 110 }} contentFit="cover" />
                         ) : null}
                         {g.events.map((t, i) => {
                           const label = fmtTourneyDateLabel(t.date);
@@ -449,7 +544,7 @@ export default function HomeScreen() {
                       style={[styles.stakeCard, { backgroundColor: colors.bg.primary, borderColor: isToday ? "#22C55E30" : colors.border.default, padding: 0, overflow: "hidden" }]}
                     >
                       {t.image_url ? (
-                        <Image source={{ uri: t.image_url }} style={{ width: "100%", height: 120 }} contentFit="cover" />
+                        <Image source={{ uri: t.image_url }} style={{ width: "100%", height: 110 }} contentFit="cover" />
                       ) : null}
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12 }}>
                         <View style={{ flex: 1, gap: 2 }}>
@@ -473,7 +568,7 @@ export default function HomeScreen() {
           )}
 
           {/* ── Stakes section ── */}
-          {hasStakes && (
+          {isVisible("stakes") && hasStakes && (
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
@@ -580,7 +675,74 @@ export default function HomeScreen() {
             </View>
           )}
 
+          {/* ── Weekly Goals ── */}
+          {isVisible("goals") && hasGoals && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>This Week</Text>
+                <TouchableOpacity onPress={() => router.push("/settings" as any)}>
+                  <Text style={[styles.seeAll, { color: BRAND }]}>Edit goals</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={[styles.listCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, gap: 14, padding: 14 }]}>
+                {goalHours > 0 && (() => {
+                  const pct = Math.min((weekHours / goalHours) * 100, 100);
+                  const done = weekHours >= goalHours;
+                  return (
+                    <View style={{ gap: 6 }}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                        <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text.secondary }}>⏱ Hours played</Text>
+                        <Text style={{ fontSize: 13, fontWeight: "800", color: done ? "#22C55E" : colors.text.primary }}>
+                          {weekHours.toFixed(1)} / {goalHours}h {done ? "✓" : ""}
+                        </Text>
+                      </View>
+                      <View style={{ height: 6, borderRadius: 3, backgroundColor: colors.bg.secondary }}>
+                        <View style={{ width: `${pct}%`, height: "100%", borderRadius: 3, backgroundColor: done ? "#22C55E" : BRAND }} />
+                      </View>
+                    </View>
+                  );
+                })()}
+                {goalProfit > 0 && (() => {
+                  const pct = Math.min((weekProfit / goalProfit) * 100, 100);
+                  const done = weekProfit >= goalProfit;
+                  const behind = weekProfit < 0;
+                  return (
+                    <View style={{ gap: 6 }}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                        <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text.secondary }}>💰 Profit target</Text>
+                        <Text style={{ fontSize: 13, fontWeight: "800", color: done ? "#22C55E" : behind ? "#EF4444" : colors.text.primary }}>
+                          {weekProfit >= 0 ? "+" : ""}{meta.symbol}{Math.abs(weekProfit).toFixed(0)} / {meta.symbol}{goalProfit} {done ? "✓" : ""}
+                        </Text>
+                      </View>
+                      <View style={{ height: 6, borderRadius: 3, backgroundColor: colors.bg.secondary }}>
+                        <View style={{ width: `${Math.max(pct, 0)}%`, height: "100%", borderRadius: 3, backgroundColor: done ? "#22C55E" : behind ? "#EF4444" : BRAND }} />
+                      </View>
+                    </View>
+                  );
+                })()}
+                {goalSessions > 0 && (() => {
+                  const pct = Math.min((weekCount / goalSessions) * 100, 100);
+                  const done = weekCount >= goalSessions;
+                  return (
+                    <View style={{ gap: 6 }}>
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                        <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text.secondary }}>🃏 Sessions played</Text>
+                        <Text style={{ fontSize: 13, fontWeight: "800", color: done ? "#22C55E" : colors.text.primary }}>
+                          {weekCount} / {goalSessions} {done ? "✓" : ""}
+                        </Text>
+                      </View>
+                      <View style={{ height: 6, borderRadius: 3, backgroundColor: colors.bg.secondary }}>
+                        <View style={{ width: `${pct}%`, height: "100%", borderRadius: 3, backgroundColor: done ? "#22C55E" : BRAND }} />
+                      </View>
+                    </View>
+                  );
+                })()}
+              </View>
+            </View>
+          )}
+
           {/* ── Recent Sessions ── */}
+          {isVisible("recentSessions") && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Recent Sessions</Text>
@@ -640,8 +802,30 @@ export default function HomeScreen() {
               </View>
             )}
           </View>
+          )}
+
+          {/* ── AI Hand Review (visible to all, gated to Pro/Elite) ── */}
+          {isVisible("handReview") && (
+            <TouchableOpacity
+              onPress={() => setShowHandReview(true)}
+              style={[styles.aiReviewBtn, { backgroundColor: "#0891B2" }]}
+              activeOpacity={0.85}
+            >
+              <View style={styles.qaBtnIcon}>
+                <Ionicons name="color-wand-outline" size={14} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.qaBtnTitle}>AI Hand Review</Text>
+                <Text style={styles.qaBtnSub}>Get instant AI coaching on your hands</Text>
+              </View>
+              {!isPro && !isElite && (
+                <Ionicons name="lock-closed" size={16} color="rgba(255,255,255,0.85)" />
+              )}
+            </TouchableOpacity>
+          )}
 
           {/* ── Hand Notes ── */}
+          {isVisible("handNotes") && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: colors.text.primary }]}>Hand Notes</Text>
@@ -689,9 +873,7 @@ export default function HomeScreen() {
               </View>
             )}
           </View>
-
-          {/* ── Series promotional banners ── */}
-          <SeriesCarousel />
+          )}
         </View>
       </ScrollView>
 
@@ -874,6 +1056,14 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.7)",
     fontSize: 11,
     marginTop: 1,
+  },
+  aiReviewBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 24,
   },
 
   // Live banner

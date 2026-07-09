@@ -107,7 +107,7 @@ export function TournamentPickerSheet({ visible, initialValue = "", onClose, onS
       <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
 
         {/* iOS-style nav header */}
-        <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+        <View style={[styles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.navSide}>
             <Text style={[styles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
           </TouchableOpacity>
@@ -237,6 +237,12 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   navSide:   { width: 72 },
   navTitle:  { fontSize: 17, fontWeight: "700" },

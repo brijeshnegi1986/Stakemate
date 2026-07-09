@@ -1921,7 +1921,7 @@ export function SellStakesModal({
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         {/* Header */}
-        <View style={[styles.header, { borderBottomColor: colors.border.default }]}>
+        <View style={[styles.header, { borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity
             style={styles.headerBtn}
             onPress={showBack ? handleBack : onClose}
@@ -2037,6 +2037,12 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   headerBtn:    { width: 40, alignItems: "center" },
   headerCenter: { flex: 1, alignItems: "center" },

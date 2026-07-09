@@ -208,7 +208,13 @@ export function NoteEditorModal({
         <View style={{
           flexDirection: "row", alignItems: "center",
           paddingHorizontal: 16, paddingVertical: 14,
-          borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border.default,
+          borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border.strong,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.08,
+          shadowRadius: 4,
+          elevation: 3,
+          zIndex: 1,
         }}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 44 }}>
             <Ionicons name="close" size={32} color={colors.text.secondary} />
@@ -456,7 +462,16 @@ function ShareNoteModal({
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
         {/* iOS nav header */}
-        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default, backgroundColor: colors.bg.primary }}>
+        <View style={{
+          flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14,
+          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.strong, backgroundColor: colors.bg.primary,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.08,
+          shadowRadius: 4,
+          elevation: 3,
+          zIndex: 1,
+        }}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ width: 44 }}>
             <Ionicons name="close" size={32} color={colors.text.secondary} />
           </TouchableOpacity>

@@ -160,7 +160,7 @@ function ComposeModal({
       >
 
         {/* ── Nav header ── */}
-        <View style={[styles.composeNav, { paddingTop: 16, borderBottomColor: colors.border.default }]}>
+        <View style={[styles.composeNav, { paddingTop: 16, borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity onPress={resetAndClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={[styles.composeCancelText, { color: colors.text.secondary }]}>Cancel</Text>
           </TouchableOpacity>
@@ -353,7 +353,7 @@ function CommentsModal({
       >
 
         {/* ── Navigation header ── */}
-        <View style={[styles.commentsNavHeader, { paddingTop: 16, borderBottomColor: colors.border.default }]}>
+        <View style={[styles.commentsNavHeader, { paddingTop: 16, borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.commentsBackBtn}>
             <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
           </TouchableOpacity>
@@ -481,7 +481,12 @@ function PostCard({
   const isOwn = post.user_id === currentUserId;
   const displayName = post.profile.display_name || post.profile.username || "Player";
   const handle = post.profile.username ? `@${post.profile.username}` : null;
-  const authorBadge = topBadge({ createdAt: post.profile.created_at, lastSeenAt: post.profile.last_seen_at });
+  const authorBadge = topBadge({
+    createdAt:  post.profile.created_at,
+    lastSeenAt: post.profile.last_seen_at,
+    isPro:      post.profile.subscription_tier === "pro" || post.profile.subscription_tier === "elite",
+    isElite:    post.profile.subscription_tier === "elite",
+  });
   const profit = post.amount ?? 0;
   const profitColor = profit >= 0 ? "#22C55E" : "#EF4444";
   const profitStr = `${profit >= 0 ? "+" : "-"}$${Math.abs(profit).toLocaleString("en-AU")}`;
@@ -1396,7 +1401,11 @@ export default function SocialScreen() {
 
   const handleInvite = async () => {
     try {
-      await Share.share({ message: "Join me on Stakemate — the best poker bankroll tracker! https://stakemate.app" });
+      await Share.share({
+        message: "🃏 Join me on Stakemate — the best poker bankroll tracker!",
+        url: "https://apps.apple.com/app/id6772975225",
+        title: "Stakemate — Poker Bankroll Tracker",
+      });
     } catch { /* cancelled */ }
   };
 
@@ -1840,6 +1849,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   composeCancelText: { fontSize: 15 },
   composeTitle: { fontSize: 16, fontWeight: "700" },
@@ -1888,6 +1903,12 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   commentsBackBtn: { width: 38, alignItems: "flex-start" },
   commentsNavTitle: { fontSize: 17, fontWeight: "700" },

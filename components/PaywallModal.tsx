@@ -31,13 +31,13 @@ const BRAND = "#155DFC";
 const PLAN_META: Record<Plan, { label: string; tagline: string; color: string; accent: string }> = {
   pro: {
     label:   "Pro",
-    tagline: "Serious players, serious stats",
+    tagline: "Serious players, serious stats + AI hand review",
     color:   BRAND,
     accent:  "#4B82FF",
   },
   elite: {
     label:   "Elite",
-    tagline: "Everything Pro + AI coaching",
+    tagline: "Everything Pro + advanced AI tools",
     color:   "#0891B2",
     accent:  "#9B5DF5",
   },
@@ -60,6 +60,7 @@ const PRODUCT_IDS: Record<Plan, Record<Period, string>> = {
 };
 
 const PRO_FEATURES: { text: string; icon: string }[] = [
+  { text: "AI Hand Review",                   icon: "color-wand-outline" },
   { text: "Unlimited sessions & notes",       icon: "infinite-outline" },
   { text: "Full analytics & charts",          icon: "bar-chart-outline" },
   { text: "Hourly rate & win rate tracking",  icon: "trending-up-outline" },
@@ -74,8 +75,6 @@ const PRO_FEATURES: { text: string; icon: string }[] = [
 ];
 
 const ELITE_ONLY: { text: string; icon: string }[] = [
-  { text: "AI hand exploit analysis",         icon: "hardware-chip-outline" },
-  { text: "AI session coaching",              icon: "chatbubble-ellipses-outline" },
   { text: "AI note enhance & compress",       icon: "sparkles-outline" },
   { text: "Publish tournaments to community", icon: "megaphone-outline" },
 ];
@@ -303,6 +302,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingBottom: 28,
     position: "relative",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   closeBtn: {
     position: "absolute",

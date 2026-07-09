@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { pullFromCloud, pushAllToCloud, clearLocalUserData } from "@/lib/sync";
+import { pullFromCloud, pushAllToCloud, clearLocalUserData, pruneExpiredTournaments } from "@/lib/sync";
 import { updateLastSeen } from "@/lib/social";
 import { getSetting, setSetting } from "@/db/database";
 import { registerAndSavePushToken } from "@/lib/notifications";
@@ -115,7 +115,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               clearLocalUserData();
               pullFromCloud(session.user.id)
                 .catch(console.error)
-                .finally(() => setIsSyncing(false));
+                .finally(() =>
+                  pruneExpiredTournaments(session.user.id)
+                    .catch(console.error)
+                    .finally(() => setIsSyncing(false))
+                );
             } else {
               // Same account (app update / reinstall / token refresh):
               // Push any local data that may not have synced, then restore from cloud.
@@ -124,7 +128,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 .finally(() =>
                   pullFromCloud(session.user.id)
                     .catch(console.error)
-                    .finally(() => setIsSyncing(false))
+                    .finally(() =>
+                      pruneExpiredTournaments(session.user.id)
+                        .catch(console.error)
+                        .finally(() => setIsSyncing(false))
+                    )
                 );
             }
           } catch (e) {
@@ -167,6 +175,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsSyncing(true);
     await pushAllToCloud(session.user.id).catch(console.error);
     await pullFromCloud(session.user.id).catch(console.error);
+    await pruneExpiredTournaments(session.user.id).catch(console.error);
     setIsSyncing(false);
   }
 

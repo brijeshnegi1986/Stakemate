@@ -6,6 +6,7 @@ import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { getActiveHomeGame } from "../../db/database";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Animated, Linking, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -49,9 +50,8 @@ export default function MoreScreen() {
     try {
       await Share.share({
         message:
-          "🃏 Check out Stakemate — the best poker bankroll tracker!\n\n" +
-          "Track sessions, analyse your game, join the community and find staking opportunities.\n\n" +
-          "Download free: https://apps.apple.com/app/id6772975225",
+          "🃏 Stakemate — The Poker Bankroll Tracker\n\n" +
+          "Track sessions, analyse your game, join the community and find staking opportunities.",
         url: "https://apps.apple.com/app/id6772975225",
         title: "Stakemate — Poker Bankroll Tracker",
       });
@@ -180,6 +180,12 @@ export default function MoreScreen() {
           onPress={() => router.push("/icm-calculator")}
         />
         <MenuRow
+          icon="pie-chart-outline"
+          label="Pot Odds Calculator"
+          iconColor="#22C55E"
+          onPress={() => router.push("/pot-odds")}
+        />
+        <MenuRow
           icon="stats-chart-outline"
           label="Hand Equity"
           iconColor="#EC4899"
@@ -196,6 +202,24 @@ export default function MoreScreen() {
           label="Player Notes"
           iconColor="#0891B2"
           onPress={() => router.push("/player-notes")}
+        />
+        <MenuRow
+          icon="cash-outline"
+          label="Home Games"
+          iconColor="#16A34A"
+          onPress={() => router.push(getActiveHomeGame() ? "/home-games/active" : "/home-games")}
+        />
+        <MenuRow
+          icon="business-outline"
+          label="Casino Balance"
+          iconColor="#8B5CF6"
+          onPress={() => router.push("/casino-balance")}
+        />
+        <MenuRow
+          icon="flag-outline"
+          label="Goals"
+          iconColor="#F59E0B"
+          onPress={() => router.push("/goals")}
         />
         <MenuRow
           icon="storefront-outline"
@@ -221,6 +245,12 @@ export default function MoreScreen() {
       {/* ── General ── */}
       <Text style={[styles.sectionLabel, { color: colors.text.tertiary }]}>General</Text>
       <View style={[styles.card, { backgroundColor: colors.bg.primary, borderColor: colors.border.default }]}>
+        <MenuRow
+          icon="book-outline"
+          label="Tutorials"
+          iconColor="#49E6BA"
+          onPress={() => Linking.openURL("https://stakemate.com.au/tutorial.html?inapp=1")}
+        />
         <MenuRow
           icon="share-social-outline"
           label="Share with Friends"
@@ -249,7 +279,7 @@ export default function MoreScreen() {
           icon="chatbubble-outline"
           label="Send Feedback"
           iconColor={colors.text.secondary}
-          onPress={() => Linking.openURL("mailto:support@stakemate.app?subject=Feedback")}
+          onPress={() => Linking.openURL("mailto:support@stakemate.com.au?subject=Feedback")}
         />
         <MenuRow
           icon="lock-closed-outline"

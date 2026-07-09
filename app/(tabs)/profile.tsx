@@ -1,7 +1,9 @@
 import { PaywallModal } from "@/components/PaywallModal";
+import { ProfileBadge } from "@/components/ProfileBadge";
 import { useAuth } from "@/context/AuthContext";
 import { useSubscription } from "@/context/SubscriptionContext";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { BADGE_DEFS } from "@/lib/badges";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as AppleAuthentication from "expo-apple-authentication";
@@ -439,8 +441,8 @@ export default function ProfileScreen() {
       {/* ── Subscription status ── */}
       {(() => {
         const planConfig = {
-          elite: { label: "Elite", color: "#0891B2", badgeBg: "#0891B218", icon: "crown" as const,   desc: "Full access — AI coaching, all Pro features & more" },
-          pro:   { label: "Pro",   color: BRAND,     badgeBg: BRAND + "18",  icon: "star" as const,   desc: "Dark mode, tournament calendar, marketplace & exports" },
+          elite: { label: "Elite", color: "#0891B2", badgeBg: "#0891B218", icon: "crown" as const,   desc: "Full access — advanced AI tools, all Pro features & more" },
+          pro:   { label: "Pro",   color: BRAND,     badgeBg: BRAND + "18",  icon: "star" as const,   desc: "AI hand review, dark mode, tournament calendar & marketplace" },
           free:  { label: "Free",  color: "#49E6BA", badgeBg: "#49E6BA22",   icon: "account" as const, desc: "Unlimited sessions, analytics, notes & cloud backup" },
         };
         const plan = planConfig[tier] ?? planConfig.free;
@@ -501,6 +503,11 @@ export default function ProfileScreen() {
         <Text style={[styles.avatarName, { color: colors.text.primary }]}>
           {profile?.display_name || "Your Profile"}
         </Text>
+        {(isElite || isPro) && (
+          <View style={{ marginTop: 4 }}>
+            <ProfileBadge badge={isElite ? BADGE_DEFS.elite : BADGE_DEFS.pro} size="full" />
+          </View>
+        )}
         {profile?.username ? (
           <Text style={[styles.avatarUsername, { color: colors.text.brand }]}>@{profile.username}</Text>
         ) : null}

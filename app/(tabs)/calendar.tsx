@@ -44,6 +44,7 @@ import {
   Modal,
   Platform,
   ScrollView,
+  Share,
   StyleSheet,
   Switch,
   Text,
@@ -51,7 +52,6 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
-  Share,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -186,10 +186,10 @@ export default function CalendarScreen() {
   const insets = useSafeAreaInsets();
   const { user, profile, isSyncing } = useAuth();
   const { isPro, isElite } = useSubscription();
-  const { openSeries } = useLocalSearchParams<{ openSeries?: string }>();
+  const { openSeries, initialTab } = useLocalSearchParams<{ openSeries?: string; initialTab?: string }>();
 
   const today = new Date();
-  const [calTab, setCalTab]                     = useState<CalTab>("schedule");
+  const [calTab, setCalTab]                     = useState<CalTab>(initialTab === "tournaments" ? "tournaments" : "schedule");
   const [viewYear, setViewYear]                 = useState(today.getFullYear());
   const [viewMonth, setViewMonth]               = useState(today.getMonth());
   const [selectedDate, setSelectedDate]         = useState<string | null>(null);
@@ -225,6 +225,12 @@ export default function CalendarScreen() {
   useEffect(() => {
     if (openSeries) setSelectedSeries(openSeries);
   }, [openSeries]);
+
+  // Auto-switch to the Tournaments tab when navigated here with initialTab=tournaments
+  // (e.g. from the home screen's Today's Tournaments "See all")
+  useEffect(() => {
+    if (initialTab === "tournaments") setCalTab("tournaments");
+  }, [initialTab]);
   const [scheduleView, setScheduleView]         = useState<"list" | "month">("list");
   const [hidePastEvents, setHidePastEvents]     = useState(() => getSetting("hidePastEvents") !== "false");
   const [calAccessGranted, setCalAccessGranted] = useState<boolean | null>(null);
@@ -871,12 +877,12 @@ export default function CalendarScreen() {
                 </View>
               )}
 
-              {/* Past */}
+              {/* Past — events with a stake deal attached move to the stakes/marketplace
+                  views for the seller and any buyers, so they're excluded here. */}
               {(() => {
-                const pastWithDeal    = pastEvents.filter((e) => !!e.stake_deal_id);
                 const pastWithoutDeal = pastEvents.filter((e) => !e.stake_deal_id);
-                const visiblePast     = hidePastEvents ? pastWithDeal : pastEvents;
-                if (visiblePast.length === 0) return null;
+                const visiblePast     = hidePastEvents ? [] : pastWithoutDeal;
+                if (pastWithoutDeal.length === 0) return null;
                 return (
                   <View style={styles.section}>
                     <Text style={[styles.sectionTitle, { color: colors.text.secondary, marginBottom: 10 }]}>Past</Text>
@@ -887,13 +893,13 @@ export default function CalendarScreen() {
                         onSellStakes={() => handleSellStakesPress(e)} onCalendarSync={() => {}}
                       />
                     ))}
-                    {hidePastEvents && pastWithoutDeal.length > 0 && (
+                    {hidePastEvents && (
                       <TouchableOpacity
                         onPress={() => setHidePastEvents(false)}
                         style={{ paddingVertical: 10, alignItems: "center" }}
                       >
                         <Text style={{ fontSize: 12, color: colors.text.tertiary }}>
-                          +{pastWithoutDeal.length} more past event{pastWithoutDeal.length > 1 ? "s" : ""} hidden — <Text style={{ color: BRAND }}>Show all</Text>
+                          {pastWithoutDeal.length} past event{pastWithoutDeal.length > 1 ? "s" : ""} hidden — <Text style={{ color: BRAND }}>Show all</Text>
                         </Text>
                       </TouchableOpacity>
                     )}
@@ -1159,7 +1165,7 @@ export default function CalendarScreen() {
           });
         }}
       >
-        <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+        <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity style={{ width: 72 }} onPress={() => setShowStateFilter(false)}>
             <Text style={{ fontSize: 16, color: BRAND }}>Cancel</Text>
           </TouchableOpacity>
@@ -1257,7 +1263,7 @@ export default function CalendarScreen() {
 
         {/* State sub-sheet */}
         <Modal visible={showStateSubSheet} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowStateSubSheet(false)}>
-          <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
             <TouchableOpacity style={{ width: 72 }} onPress={() => setShowStateSubSheet(false)}>
               <Text style={{ fontSize: 16, color: BRAND }}>Back</Text>
             </TouchableOpacity>
@@ -1288,7 +1294,7 @@ export default function CalendarScreen() {
 
         {/* Organiser sub-sheet */}
         <Modal visible={showOrganiserSubSheet} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowOrganiserSubSheet(false)}>
-          <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
             <TouchableOpacity style={{ width: 72 }} onPress={() => setShowOrganiserSubSheet(false)}>
               <Text style={{ fontSize: 16, color: BRAND }}>Back</Text>
             </TouchableOpacity>
@@ -1320,7 +1326,7 @@ export default function CalendarScreen() {
         {/* Date pickers */}
         {showDateFromPicker && (
           <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowDateFromPicker(false)}>
-            <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+            <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
               <TouchableOpacity style={{ width: 72 }} onPress={() => setShowDateFromPicker(false)}>
                 <Text style={{ fontSize: 16, color: BRAND }}>Cancel</Text>
               </TouchableOpacity>
@@ -1346,7 +1352,7 @@ export default function CalendarScreen() {
         )}
         {showDateToPicker && (
           <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowDateToPicker(false)}>
-            <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+            <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
               <TouchableOpacity style={{ width: 72 }} onPress={() => setShowDateToPicker(false)}>
                 <Text style={{ fontSize: 16, color: BRAND }}>Cancel</Text>
               </TouchableOpacity>
@@ -1514,7 +1520,7 @@ function AddTournamentModal({
       <View style={[addStyles.page, { backgroundColor: colors.bg.tertiary }]}>
 
         {/* Nav header */}
-        <View style={[addStyles.navHeader, { paddingTop: 16, backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+        <View style={[addStyles.navHeader, { paddingTop: 16, backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={addStyles.backBtn}>
             <Ionicons name="arrow-back" size={22} color={colors.text.primary} />
           </TouchableOpacity>
@@ -2119,7 +2125,7 @@ function EditSubmissionModal({
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={[pubStyles.page, { backgroundColor: colors.bg.tertiary }]}>
         {/* Nav header */}
-        <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+        <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity onPress={onClose} style={pubStyles.navSide} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={[pubStyles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
           </TouchableOpacity>
@@ -2286,7 +2292,7 @@ function EditSubmissionModal({
       {/* Venue picker modal */}
       <Modal visible={showVenuePicker} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => { setShowVenuePicker(false); setVenueSearch(""); }}>
         <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
-          <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
             <TouchableOpacity onPress={() => { setShowVenuePicker(false); setVenueSearch(""); }} style={pubStyles.navSide} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Text style={[pubStyles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
             </TouchableOpacity>
@@ -2553,7 +2559,7 @@ function PublishTournamentModal({
       <View style={[pubStyles.page, { backgroundColor: colors.bg.tertiary }]}>
 
         {/* Nav header */}
-        <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+        <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity onPress={handleClose} style={pubStyles.navSide} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={[pubStyles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
           </TouchableOpacity>
@@ -3016,7 +3022,7 @@ function PublishTournamentModal({
         onRequestClose={() => { setShowSeriesPicker(false); setSeriesPickerSearch(""); }}
       >
         <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
-          <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
             <TouchableOpacity onPress={() => { setShowSeriesPicker(false); setSeriesPickerSearch(""); }} style={pubStyles.navSide} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Text style={[pubStyles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
             </TouchableOpacity>
@@ -3091,7 +3097,7 @@ function PublishTournamentModal({
       >
         <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
           {/* Header */}
-          <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+          <View style={[pubStyles.navHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
             <TouchableOpacity onPress={() => { setVenuePickerFor(null); setVenueSearch(""); }} style={pubStyles.navSide} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Text style={[pubStyles.navCancel, { color: colors.text.secondary }]}>Cancel</Text>
             </TouchableOpacity>
@@ -3283,7 +3289,7 @@ function SeriesCard({ group, colors, onPress, onEditSeries, onUnpublishSeries, o
       {/* Banner */}
       <View style={{ position: "relative" }}>
         {group.imageUrl ? (
-          <Image source={{ uri: group.imageUrl }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+          <Image source={{ uri: group.imageUrl }} style={{ width: "100%", height: 110 }} resizeMode="cover" />
         ) : (
           <View style={{ width: "100%", height: 72, backgroundColor: BRAND + "12", alignItems: "center", justifyContent: "center" }}>
             <Ionicons name="trophy" size={28} color={BRAND} />
@@ -3393,7 +3399,7 @@ function SeriesDetailModal({
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: colors.bg.secondary }}>
         {/* Header */}
-        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.default }}>
+        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14, backgroundColor: colors.bg.primary, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border.strong, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 3, zIndex: 1 }}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={{ marginLeft: 4 }}>
             <Ionicons name="close" size={32} color={colors.text.secondary} />
           </TouchableOpacity>
@@ -3406,7 +3412,7 @@ function SeriesDetailModal({
 
         {/* Full-width series banner */}
         {group.imageUrl ? (
-          <Image source={{ uri: group.imageUrl }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+          <Image source={{ uri: group.imageUrl }} style={{ width: "100%", height: 110 }} resizeMode="cover" />
         ) : null}
 
         {/* Filter pills — only show if series has satellites */}
@@ -3601,7 +3607,7 @@ function OfficialTournamentCard({
       {/* Full-width banner image with logo badges */}
       {hasBanner && (
         <View style={{ position: "relative" }}>
-          <Image source={{ uri: bannerUrl! }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+          <Image source={{ uri: bannerUrl! }} style={{ width: "100%", height: 110 }} resizeMode="cover" />
           {/* Single logo badge at bottom-left of banner: organiser takes priority */}
           {bannerBadgeUrl && (
             <View style={{ position: "absolute", bottom: -16, left: 14, width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg.primary, shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 3, overflow: "hidden" }}>
@@ -3879,7 +3885,7 @@ function BuyStakesFromFeedModal({
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: colors.bg.primary }}>
         {/* Nav header */}
-        <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+        <View style={[styles.filterNavBar, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity style={{ width: 72 }} onPress={onClose}>
             <Text style={{ fontSize: 16, color: BRAND }}>Cancel</Text>
           </TouchableOpacity>
@@ -4134,7 +4140,7 @@ function CommunityTournamentCard({
   return (
     <View style={[styles.communityCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, flexDirection: "column", padding: 0, overflow: "hidden" }]}>
       {post.image_url ? (
-        <Image source={{ uri: post.image_url }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+        <Image source={{ uri: post.image_url }} style={{ width: "100%", height: 110 }} resizeMode="cover" />
       ) : null}
       {AuthorRow}
       <View style={[styles.officialDivider, { backgroundColor: colors.border.subtle, marginHorizontal: 12 }]} />
@@ -4177,7 +4183,7 @@ function SavedTournamentCard({ post, colors, onUnsave }: { post: SocialPost; col
   return (
     <View style={[styles.communityCard, { backgroundColor: colors.bg.primary, borderColor: colors.border.default, flexDirection: "column", padding: 0, overflow: "hidden" }]}>
       {post.image_url ? (
-        <Image source={{ uri: post.image_url }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+        <Image source={{ uri: post.image_url }} style={{ width: "100%", height: 110 }} resizeMode="cover" />
       ) : null}
       <View style={{ flexDirection: "row", alignItems: "flex-start", padding: 12, gap: 10 }}>
         <View style={[styles.communityBadge, { backgroundColor: PURPLE + "15" }]}>
@@ -4268,7 +4274,7 @@ function EventCard({
         past && { opacity: 0.55 },
       ]}>
         {hasImage && (
-          <Image source={{ uri: event.image_url }} style={{ width: "100%", height: 120 }} resizeMode="cover" />
+          <Image source={{ uri: event.image_url }} style={{ width: "100%", height: 110 }} resizeMode="cover" />
         )}
         <View style={{ flexDirection: "row", alignItems: "flex-start", padding: 14, gap: 10 }}>
           <View style={[styles.eventDot, { backgroundColor: past ? colors.text.tertiary : BRAND, marginTop: 6 }]} />
@@ -4367,9 +4373,13 @@ function EventCard({
                 `📅 ${date}`,
                 event.venue ? `📍 ${event.venue}` : null,
                 event.buyin ? `💰 Buy-in: ${event.buyin}` : null,
-                `\nTracking this on Stakemate – the poker staking app\nhttps://stakemate.com.au`,
+                `\nTracking this on Stakemate – the poker staking app`,
               ].filter(Boolean).join("\n");
-              Share.share({ message: lines });
+              Share.share({
+                message: lines,
+                url: "https://apps.apple.com/app/id6772975225",
+                title: "Stakemate — Poker Bankroll Tracker",
+              });
             },
           },
           {
@@ -4434,7 +4444,7 @@ function ShareTournamentModal({
 
   return (
     <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={[styles.shareTmNavHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+      <View style={[styles.shareTmNavHeader, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
         <TouchableOpacity style={styles.shareTmNavSide} onPress={onClose}>
           <Text style={[styles.shareTmNavCancel, { color: BRAND }]}>Cancel</Text>
         </TouchableOpacity>
@@ -4695,6 +4705,12 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center",
     paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   shareTmNavSide: { width: 72 },
   shareTmNavTitle: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "700" },
@@ -4705,6 +4721,12 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   filterNavTitle: { fontSize: 17, fontWeight: "700" },
   filterSectionLabel: {
@@ -4936,6 +4958,12 @@ const addStyles = StyleSheet.create({
   navHeader: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   backBtn: { width: 38, alignItems: "flex-start" },
   navTitle: { fontSize: 17, fontWeight: "700" },
@@ -5016,6 +5044,12 @@ const pubStyles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   navSide: { width: 72 },
   navTitle: { fontSize: 17, fontWeight: "700" },

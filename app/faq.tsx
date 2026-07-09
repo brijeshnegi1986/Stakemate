@@ -137,7 +137,7 @@ export default function FAQScreen() {
 
       <Text style={[styles.footer, { color: colors.text.tertiary }]}>
         Still have questions?{"  "}
-        <Text style={{ color: BRAND, fontWeight: "600" }}>support@stakemate.app</Text>
+        <Text style={{ color: BRAND, fontWeight: "600" }}>support@stakemate.com.au</Text>
       </Text>
     </ScrollView>
   );

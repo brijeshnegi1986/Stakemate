@@ -79,7 +79,7 @@ function PlayerNoteForm({
       <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg.secondary }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
 
         {/* Header */}
-        <View style={[styles.header, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.default }]}>
+        <View style={[styles.header, { backgroundColor: colors.bg.primary, borderBottomColor: colors.border.strong }]}>
           <TouchableOpacity onPress={handleClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Ionicons name="close" size={32} color={colors.text.secondary} />
           </TouchableOpacity>
@@ -328,6 +328,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+    zIndex: 1,
   },
   headerTitle: { fontSize: 17, fontWeight: "600" },
 

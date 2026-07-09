@@ -23,13 +23,12 @@ import {
   getActiveSession,
   getRebuysTotal,
   parseRebuys,
-  saveNotes,
   Session,
 } from "../../db/database";
 
 const BREAK_OPTIONS = [15, 20, 30, 45];
 
-type ActiveModal = "break" | "notes" | "rebuy" | null;
+type ActiveModal = "break" | "rebuy" | null;
 
 function formatElapsed(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -61,11 +60,7 @@ export default function ActiveSessionScreen() {
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
 
   // Break modal fields
-  const [breakNote, setBreakNote]       = useState("");
   const [breakDuration, setBreakDuration] = useState<number | null>(null);
-
-  // Notes modal fields
-  const [editingNotes, setEditingNotes] = useState("");
 
   // Rebuy modal fields
   const [rebuyAmount, setRebuyAmount] = useState("");
@@ -144,7 +139,6 @@ export default function ActiveSessionScreen() {
 
   const closeModal = () => {
     setActiveModal(null);
-    setBreakNote("");
     setBreakDuration(null);
     setRebuyAmount("");
   };
@@ -168,35 +162,12 @@ export default function ActiveSessionScreen() {
 
   const handleStartBreak = () => {
     if (!breakDuration || !session) return;
-    if (breakNote.trim()) {
-      const time = new Date().toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" });
-      const entry = `[Break ${time}] ${breakNote.trim()}`;
-      const existing = session.notes ?? "";
-      const combined = existing ? `${existing}\n${entry}` : entry;
-      saveNotes(session.id, combined);
-      setSession({ ...session, notes: combined });
-    }
     breakEndsAtRef.current = Date.now() + breakDuration * 60 * 1000;
     setBreakRemaining(breakDuration * 60);
     setIsOnBreak(true);
     closeModal();
     pulseBadge();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-  };
-
-  // ── Notes ──
-  const handleOpenNotes = () => {
-    setEditingNotes(session?.notes ?? "");
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setActiveModal("notes");
-  };
-
-  const handleSaveNotes = () => {
-    if (!session) return;
-    saveNotes(session.id, editingNotes);
-    setSession({ ...session, notes: editingNotes });
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    closeModal();
   };
 
   // ── Rebuy ──
@@ -403,20 +374,6 @@ export default function ActiveSessionScreen() {
           scaleAnim={breakBtnScale}
         />
 
-        {/* Notes FAB */}
-        <SmallFAB
-          icon="pencil-outline"
-          label="Notes"
-          onPress={handleOpenNotes}
-          active={!!(session.notes)}
-          activeColor={colors.bg.secondary}
-          activeBorder={colors.border.brand}
-          activeIcon={colors.text.brand}
-          colors={colors}
-          spacing={spacing}
-          typography={typography}
-        />
-
         {/* Rebuy FAB */}
         <SmallFAB
           icon="cash-outline"
@@ -487,23 +444,6 @@ export default function ActiveSessionScreen() {
               Take a Break
             </Text>
 
-            <Text style={[sectionLabel(colors, typography), { marginBottom: spacing.sm }]}>Note (optional)</Text>
-            <View style={{
-              backgroundColor: colors.bg.secondary, borderRadius: radius.lg, borderWidth: 1,
-              borderColor: breakNote.length > 0 ? colors.border.brand : colors.border.default,
-              paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
-              marginBottom: spacing["2xl"], minHeight: 72,
-            }}>
-              <TextInput
-                multiline
-                placeholder="Anything to note during the break..."
-                placeholderTextColor={colors.text.disabled}
-                value={breakNote}
-                onChangeText={setBreakNote}
-                style={{ color: colors.text.primary, ...inputTypo.bodySm, lineHeight: 22, textAlignVertical: "top" }}
-              />
-            </View>
-
             <Text style={[sectionLabel(colors, typography), { marginBottom: spacing.sm }]}>Duration</Text>
             <View style={{ flexDirection: "row", gap: spacing.sm, marginBottom: spacing["2xl"] }}>
               {BREAK_OPTIONS.map((m) => (
@@ -549,47 +489,6 @@ export default function ActiveSessionScreen() {
                 }}>
                   Start Break
                 </Text>
-              </TouchableOpacity>
-            </View>
-          </>
-        )}
-
-        {/* ══════════ NOTES MODAL ══════════ */}
-        {activeModal === "notes" && (
-          <>
-            <Text style={{ color: colors.text.primary, ...typography.heading3, fontWeight: "700", marginBottom: spacing.lg }}>
-              Session Notes
-            </Text>
-
-            <View style={{
-              backgroundColor: colors.bg.secondary, borderRadius: radius.lg, borderWidth: 1,
-              borderColor: editingNotes.length > 0 ? colors.border.brand : colors.border.default,
-              paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
-              marginBottom: spacing["2xl"], minHeight: 140,
-            }}>
-              <TextInput
-                multiline
-                autoFocus
-                placeholder="Write notes about this session..."
-                placeholderTextColor={colors.text.disabled}
-                value={editingNotes}
-                onChangeText={setEditingNotes}
-                style={{ color: colors.text.primary, ...inputTypo.bodySm, lineHeight: 22, textAlignVertical: "top", minHeight: 120 }}
-              />
-            </View>
-
-            <View style={{ flexDirection: "row", gap: spacing.md }}>
-              <TouchableOpacity
-                onPress={closeModal}
-                style={{ flex: 1, paddingVertical: spacing.lg, borderRadius: radius.md, alignItems: "center", borderWidth: 1, borderColor: colors.border.default }}
-              >
-                <Text style={{ color: colors.text.secondary, fontWeight: "600", ...typography.body }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleSaveNotes}
-                style={{ flex: 2, paddingVertical: spacing.lg, borderRadius: radius.md, alignItems: "center", backgroundColor: colors.bg.brand }}
-              >
-                <Text style={{ color: colors.text.onBrand, fontWeight: "700", ...typography.body }}>Save Notes</Text>
               </TouchableOpacity>
             </View>
           </>

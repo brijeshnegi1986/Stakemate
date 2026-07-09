@@ -65,7 +65,7 @@ We retain your account data for as long as your account is active. You may reque
 • Opt out of marketing emails via the notification toggle on the Profile screen.
 • Withdraw consent at any time without affecting the lawfulness of prior processing.
 
-Requests are processed within 30 days. To exercise any right, email privacy@stakemate.app.`,
+Requests are processed within 30 days. To exercise any right, email support@stakemate.com.au.`,
   },
   {
     heading: "7. Children's Privacy",
@@ -77,7 +77,7 @@ Requests are processed within 30 days. To exercise any right, email privacy@stak
   },
   {
     heading: "9. Contact Us",
-    body: `For privacy-related questions or requests:\n\nEmail: privacy@stakemate.app\nApp: Profile → Send Feedback`,
+    body: `For privacy-related questions or requests:\n\nEmail: support@stakemate.com.au\nApp: Profile → Send Feedback`,
   },
 ];
 

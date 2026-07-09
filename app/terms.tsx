@@ -27,7 +27,7 @@ Stakemate is a bankroll tracking and analytics tool. It does not facilitate, pro
 You are responsible for:
 • Keeping your login credentials confidential.
 • All activity that occurs under your account.
-• Notifying us immediately at support@stakemate.app if you suspect unauthorised access.
+• Notifying us immediately at support@stakemate.com.au if you suspect unauthorised access.
 
 We reserve the right to terminate accounts that violate these Terms.`,
   },
@@ -83,7 +83,7 @@ Our total liability to you for any claim arising from these Terms or your use of
   },
   {
     heading: "11. Contact",
-    body: `Questions about these Terms?\n\nEmail: legal@stakemate.app\nApp: Profile → Send Feedback`,
+    body: `Questions about these Terms?\n\nEmail: support@stakemate.com.au\nApp: Profile → Send Feedback`,
   },
 ];
 

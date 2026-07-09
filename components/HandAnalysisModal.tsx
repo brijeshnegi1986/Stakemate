@@ -2,6 +2,7 @@ import { BACKEND_URL } from "@/constants/config";
 import { CardText } from "@/components/CardText";
 import { updateNoteEntry } from "@/db/database";
 import { usePokerTheme } from "@/hooks/use-poker-theme";
+import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useState } from "react";
 import {
@@ -37,6 +38,10 @@ const GRADE_CONFIG: Record<string, { color: string; label: string; bg: string }>
 };
 
 const STREETS = ["preflop", "flop", "turn", "river"] as const;
+
+// Thrown for errors with a message already safe to show the user as-is
+// (sign-in required, subscription required, usage cap reached).
+class FriendlyError extends Error {}
 
 // ── Street Card ───────────────────────────────────────────────────────────────
 
@@ -137,6 +142,7 @@ export function HandAnalysisModal({ visible, notes, noteId, savedAnalysis, onClo
   const [loading, setLoading]     = useState(false);
   const [analysis, setAnalysis]   = useState<HandAnalysis | null>(null);
   const [error, setError]         = useState<string | null>(null);
+  const [usage, setUsage]         = useState<{ count: number | null; limit: number | null } | null>(null);
 
   async function analyze() {
     if (!notes.trim()) return;
@@ -144,18 +150,36 @@ export function HandAnalysisModal({ visible, notes, noteId, savedAnalysis, onClo
     setError(null);
     setAnalysis(null);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setError("Sign in to use AI Hand Review.");
+        setLoading(false);
+        return;
+      }
+
       const res = await fetch(`${BACKEND_URL}/api/analyze`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({ userMessage: notes }),
       });
 
       if (!res.ok) {
-        const errBody = await res.text().catch(() => "");
-        throw new Error(`Server returned ${res.status}: ${errBody}`);
+        const body = await res.json().catch(() => null);
+        if (res.status === 429 && body?.message) {
+          setUsage(body.usage ?? null);
+          throw new FriendlyError(body.message);
+        }
+        if ((res.status === 401 || res.status === 403) && body?.message) {
+          throw new FriendlyError(body.message);
+        }
+        throw new Error(`Server returned ${res.status}`);
       }
 
       const data = await res.json();
+      if (data.usage) setUsage(data.usage);
       let rawText: string = data.text ?? "";
 
       // Strip markdown code fences if Claude wrapped the JSON
@@ -175,11 +199,15 @@ export function HandAnalysisModal({ visible, notes, noteId, savedAnalysis, onClo
       }
     } catch (e: any) {
       console.error("Hand analysis error:", e?.message ?? e);
-      setError(
-        e?.message?.includes("Network request failed")
-          ? "No internet connection. Please try again when online."
-          : "Analysis failed. Try again or make sure your notes describe a specific hand."
-      );
+      if (e instanceof FriendlyError) {
+        setError(e.message);
+      } else {
+        setError(
+          e?.message?.includes("Network request failed")
+            ? "No internet connection. Please try again when online."
+            : "Analysis failed. Try again or make sure your notes describe a specific hand."
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -213,7 +241,13 @@ export function HandAnalysisModal({ visible, notes, noteId, savedAnalysis, onClo
         <View style={{
           flexDirection: "row", alignItems: "center", justifyContent: "space-between",
           paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14,
-          borderBottomWidth: 1, borderColor: colors.border.default,
+          borderBottomWidth: 1, borderColor: colors.border.strong,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.08,
+          shadowRadius: 4,
+          elevation: 3,
+          zIndex: 1,
         }}>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <Text style={{ color: colors.text.brand, fontSize: 16, fontWeight: "600" }}>Close</Text>
@@ -248,6 +282,13 @@ export function HandAnalysisModal({ visible, notes, noteId, savedAnalysis, onClo
             </Text>
             <CardText text={notes} baseColor={colors.text.secondary} style={{ fontSize: 13 }} />
           </View>
+
+          {/* Monthly usage (Pro tier only — Elite is unlimited) */}
+          {usage?.limit != null && (
+            <Text style={{ color: colors.text.tertiary, fontSize: 11, marginTop: -12, marginBottom: 20, textAlign: "center" }}>
+              {usage.count} of {usage.limit} AI Hand Reviews used this month
+            </Text>
+          )}
 
           {/* Loading */}
           {loading && (

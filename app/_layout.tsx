@@ -29,13 +29,16 @@ import { useEffect } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
-import { initDB } from "../db/database";
+import { initDB, pruneExpiredTournamentEvents } from "../db/database";
 
 function RootLayoutContent() {
   const { colors: themeColors, isDark } = useThemeContext();
 
   useEffect(() => {
     initDB();
+    // Local-only cleanup so it also runs for guests / before any auth sync fires.
+    // Signed-in users get the cloud mirror pruned in AuthContext via pruneExpiredTournaments.
+    pruneExpiredTournamentEvents();
   }, []);
 
   const navigationTheme = {
@@ -105,6 +108,7 @@ function RootLayoutContent() {
           <Stack.Screen name="welcome" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)"  options={{ headerShown: false }} />
           <Stack.Screen name="live"    options={{ presentation: "modal", headerShown: false }} />
+          <Stack.Screen name="home-games" options={{ presentation: "modal", headerShown: false }} />
           <Stack.Screen name="sign-in" options={{ presentation: "modal", headerShown: false }} />
 
           <Stack.Screen name="add-session"    options={modalOptions("Add Completed Session")} />
@@ -118,9 +122,19 @@ function RootLayoutContent() {
           <Stack.Screen name="player-notes"       options={modalOptions("Player Notes")} />
           <Stack.Screen name="icm-calculator"    options={modalOptions("ICM Calculator")} />
           <Stack.Screen name="hand-equity"       options={modalOptions("Hand Equity")} />
+          <Stack.Screen name="pot-odds"          options={modalOptions("Pot Odds Calculator")} />
+          <Stack.Screen name="goals"             options={modalOptions("Goals")} />
+          <Stack.Screen name="dashboard-customize" options={modalOptions("Customize Dashboard")} />
+          <Stack.Screen name="casino-balance-entry" options={modalOptions("Add Casino Entry")} />
 
           <Stack.Screen name="session-detail" options={pushOptions("Session Detail")} />
           <Stack.Screen name="session-edit"   options={pushOptions("Edit Session")} />
+
+          <Stack.Screen name="home-game-history" options={pushOptions("Home Games")} />
+          <Stack.Screen name="home-game-detail"  options={pushOptions("Home Game Detail")} />
+
+          <Stack.Screen name="casino-balance"        options={pushOptions("Casino Balance")} />
+          <Stack.Screen name="casino-balance-detail" options={pushOptions("Casino Detail")} />
 
           <Stack.Screen name="notifications"  options={{ ...pushOptions("Notifications"), headerShown: false }} />
           <Stack.Screen name="user-profile"   options={{ headerShown: false, animation: "slide_from_right" }} />

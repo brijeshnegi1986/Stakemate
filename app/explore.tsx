@@ -19,7 +19,7 @@ const FREE_FEATURES = [
   { icon: "timer-outline"           as const, color: GREEN,   title: "Live Session Timer", desc: "Start a live session and track it in real time. Log rebuys, take breaks — saves everything automatically." },
   { icon: "trending-up-outline"     as const, color: PURPLE,  title: "Bankroll Chart & Analytics", desc: "Running bankroll curve, hourly rate, win rate, avg session, best/worst sessions — all fully free." },
   { icon: "flame-outline"           as const, color: ORANGE,  title: "Streak Tracking", desc: "Track winning and losing streaks to spot patterns and manage your mental game." },
-  { icon: "document-text-outline"   as const, color: MINT,    title: "Hand Notes", desc: "Write detailed hand notes for any session. AI can compress and enhance them (Elite)." },
+  { icon: "document-text-outline"   as const, color: MINT,    title: "Hand Notes", desc: "Write detailed hand notes for any session. AI can review (Pro) or compress and enhance them (Elite)." },
   { icon: "people-outline"          as const, color: PURPLE,  title: "Player Notes", desc: "Store reads on players you've encountered — name, venue, playing style tags and observations." },
   { icon: "swap-horizontal-outline" as const, color: MINT,    title: "Currency Converter", desc: "Live exchange rates across AUD, USD, GBP, NZD, ZAR, EUR, SGD and HKD. Updated daily." },
   { icon: "globe-outline"           as const, color: BRAND,   title: "Community Feed", desc: "Share sessions, hands and results with the Stakemate community. Follow players, like and comment — free with a sign-in." },
@@ -30,6 +30,7 @@ const FREE_FEATURES = [
 ];
 
 const PRO_FEATURES = [
+  { icon: "color-wand-outline"     as const, color: PINK,   title: "AI Hand Review", desc: "Describe a hand and get instant exploitative analysis — bet sizing, range considerations, street-by-street coaching." },
   { icon: "calendar-outline"       as const, color: PURPLE, title: "Tournament Calendar", desc: "Add and manage your tournament schedule. Sync to your device calendar and receive reminders before each event." },
   { icon: "storefront-outline"     as const, color: PURPLE, title: "Staking Marketplace", desc: "Buy and sell tournament action with verified players. List your stake, set your terms, manage claims." },
   { icon: "document-text-outline"  as const, color: GREEN,  title: "PDF Export", desc: "Export your full session history as a formatted PDF report — P&L summary, win rate, hourly rate and session table." },
@@ -37,7 +38,6 @@ const PRO_FEATURES = [
 ];
 
 const ELITE_FEATURES = [
-  { icon: "hardware-chip-outline"        as const, color: PINK,  title: "AI Hand Review", desc: "Describe a hand and get instant exploitative analysis — bet sizing, range considerations, street-by-street coaching." },
   { icon: "sparkles-outline"            as const, color: PINK,  title: "AI Note Enhance & Compress", desc: "AI rewrites and compresses your raw hand notes into structured, actionable reads." },
   { icon: "megaphone-outline"           as const, color: AMBER, title: "Publish Tournaments", desc: "Publish your own tournaments to the community feed so other players can discover and star them." },
 ];
@@ -136,7 +136,7 @@ export default function ExploreScreen() {
           <Ionicons name="heart-outline" size={18} color={BRAND} />
           <Text style={[styles.footerText, { color: colors.text.secondary }]}>
             Built for poker players worldwide. Questions or feedback?{" "}
-            <Text style={{ color: BRAND, fontWeight: "600" }}>support@stakemate.app</Text>
+            <Text style={{ color: BRAND, fontWeight: "600" }}>support@stakemate.com.au</Text>
           </Text>
         </View>
 

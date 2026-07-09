@@ -23,7 +23,7 @@ const PURPLE = "#0891B2";
 
 export function HandReviewLauncher({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { user } = useAuth();
-  const { isElite } = useSubscription();
+  const { isPro, isElite } = useSubscription();
   const { colors } = usePokerTheme();
   const insets = useSafeAreaInsets();
   const [notes, setNotes]           = useState("");
@@ -49,7 +49,7 @@ export function HandReviewLauncher({ visible, onClose }: { visible: boolean; onC
     );
   }
 
-  if (visible && !isElite) {
+  if (visible && !isPro && !isElite) {
     return (
       <PaywallModal
         visible={visible}

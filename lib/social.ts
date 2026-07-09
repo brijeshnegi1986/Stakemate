@@ -9,6 +9,7 @@ export type SocialProfile = {
   avatar_url: string | null;
   created_at?: string | null;
   last_seen_at?: string | null;
+  subscription_tier?: string | null;
 };
 
 export type ReactionGroup = {
@@ -79,7 +80,7 @@ async function fetchProfiles(userIds: string[]): Promise<Map<string, SocialProfi
   if (!userIds.length) return new Map();
   const { data } = await supabase
     .from("profiles")
-    .select("id, username, display_name, avatar_url, created_at, last_seen_at")
+    .select("id, username, display_name, avatar_url, created_at, last_seen_at, subscription_tier")
     .in("id", userIds);
   const map = new Map<string, SocialProfile>();
   for (const p of data ?? []) map.set(p.id, p);
@@ -466,6 +467,7 @@ export type FullProfile = SocialProfile & {
   live_cashes: number | null;
   live_wins: number | null;
   top_10_results: number | null;
+  subscription_tier: string | null;
 };
 
 export async function getProfileWithCounts(
@@ -475,7 +477,7 @@ export async function getProfileWithCounts(
   const [profileRes, followerRes, followingRes, isFollowingRes, dealsRes] = await Promise.all([
     supabase
       .from("profiles")
-      .select("id, username, display_name, avatar_url, bio, location, created_at, last_seen_at, hendon_mob_url, poker_index_url, twitter_handle, instagram_handle, youtube_handle, twitch_handle, live_earnings, live_cashes, live_wins, top_10_results")
+      .select("id, username, display_name, avatar_url, bio, location, created_at, last_seen_at, hendon_mob_url, poker_index_url, twitter_handle, instagram_handle, youtube_handle, twitch_handle, live_earnings, live_cashes, live_wins, top_10_results, subscription_tier")
       .eq("id", profileId)
       .single(),
     supabase

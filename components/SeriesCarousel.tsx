@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Dimensions, FlatList, StyleSheet, TouchableOpacity, View } from "react-native";
 
 const SLIDE_WIDTH = Dimensions.get("window").width - 32;
-const SLIDE_HEIGHT = 140;
+const SLIDE_HEIGHT = 110;
 const INTERVAL_MS = 3500;
 
 export function SeriesCarousel() {
@@ -79,6 +79,8 @@ export function SeriesCarousel() {
 const styles = StyleSheet.create({
   wrap: {
     marginBottom: 20,
+    paddingHorizontal: 16,
+    alignItems: "center",
   },
   slide: {
     width: SLIDE_WIDTH,

@@ -53,7 +53,6 @@ export default function AddSessionScreen() {
   const [entries, setEntries]         = useState(editing?.entries ? String(editing.entries) : "");
   const [position, setPosition]       = useState(editing?.position ? String(editing.position) : "");
   const [payout, setPayout]           = useState(editing?.payout  ? String(editing.payout)  : "");
-  const [notes]                       = useState(editing?.notes ?? "");
 
   const [buyInOpen,          setBuyInOpen]          = useState(false);
   const [stakesOpen,         setStakesOpen]         = useState(false);
@@ -119,7 +118,6 @@ export default function AddSessionScreen() {
         duration:       duration ?? 0,
         venue:          venue.trim(),
         state:          stateRegion,
-        notes:          notes.trim(),
         date:           editing ? editing.date : new Date().toISOString(),
       };
       try {
@@ -136,7 +134,6 @@ export default function AddSessionScreen() {
             entries: payload.entries,
             position: payload.position,
             payout: payload.payout,
-            notes: payload.notes,
           });
           if (user?.id) syncSessionToCloud(user.id, editing.id).catch(console.error);
         } else {

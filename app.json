@@ -2,7 +2,7 @@
   "expo": {
     "name": "Stakemate",
     "slug": "stakemate",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "pokerroll",
@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "deploymentTarget": "17.0",
       "bundleIdentifier": "com.stakemate.pokerroll",
-      "buildNumber": "1.33",
+      "buildNumber": "1.2",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryAddUsageDescription": "Allow $(PRODUCT_NAME) to save photos to your library"
@@ -96,7 +96,8 @@
           "project": "react-native",
           "organization": "stakemate-wd"
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
